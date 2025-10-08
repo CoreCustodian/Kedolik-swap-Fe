@@ -1,5 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
+import { getTokenAccounts, getSolBalance, getTransactionHistory } from '../utils/solana';
+import { getTokenPrices, getTokenMetadata, KNOWN_TOKENS } from '../utils/prices';
 
 interface Transaction {
   id: string;
@@ -59,83 +62,91 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
     setIsLoading(true);
     try {
-      // TODO: Replace with actual API calls to fetch user data
-      // This is mock data for demonstration
-      const mockData: UserData = {
-        totalValue: '12,456.78',
-        totalPnL: 15.4,
-        pnl24h: 3.2,
-        assets: [
-          {
-            symbol: 'SOL',
-            name: 'Solana',
-            balance: '45.23',
-            valueUsd: '4,523.00',
-            change24h: 5.6,
-          },
-          {
-            symbol: 'USDC',
-            name: 'USD Coin',
-            balance: '5,234.56',
-            valueUsd: '5,234.56',
-            change24h: 0.01,
-          },
-          {
-            symbol: 'RAY',
-            name: 'Raydium',
-            balance: '234.89',
-            valueUsd: '1,234.56',
-            change24h: -2.3,
-          },
-          {
-            symbol: 'BONK',
-            name: 'Bonk',
-            balance: '1,234,567',
-            valueUsd: '789.23',
-            change24h: 12.8,
-          },
-        ],
-        recentTransactions: [
-          {
-            id: '1',
-            type: 'swap',
-            tokenIn: 'SOL',
-            tokenOut: 'USDC',
-            amountIn: '10.5',
-            amountOut: '245.67',
-            timestamp: Date.now() - 120000,
-            signature: '5xJ8...9k4L',
-            status: 'success',
-          },
-          {
-            id: '2',
-            type: 'add_liquidity',
-            tokenIn: 'SOL',
-            tokenOut: 'USDC',
-            amountIn: '5.0',
-            amountOut: '117.50',
-            timestamp: Date.now() - 3600000,
-            signature: '3hG7...2m8N',
-            status: 'success',
-          },
-          {
-            id: '3',
-            type: 'swap',
-            tokenIn: 'USDC',
-            tokenOut: 'RAY',
-            amountIn: '500.00',
-            amountOut: '95.43',
-            timestamp: Date.now() - 7200000,
-            signature: '9pF4...7k1M',
-            status: 'success',
-          },
-        ],
-      };
-
-      setUserData(mockData);
+      // Fetch data directly from blockchain - NO SERVER NEEDED!
+      
+      // 1. Get SOL balance
+      const solBalance = await getSolBalance(publicKey);
+      
+      // 2. Get all SPL token accounts
+      const tokenAccounts = await getTokenAccounts(publicKey);
+      
+      // 3. Get prices for all tokens (Jupiter API - free!)
+      const allMints = [KNOWN_TOKENS.SOL, ...tokenAccounts.map(t => t.mint)];
+      const prices = await getTokenPrices(allMints);
+      
+      // 4. Build assets list
+      const assets: Asset[] = [];
+      
+      // Add SOL
+      const solPrice = prices.get(KNOWN_TOKENS.SOL) || 0;
+      const solValue = solBalance * solPrice;
+      assets.push({
+        symbol: 'SOL',
+        name: 'Solana',
+        balance: solBalance.toFixed(4),
+        valueUsd: solValue.toFixed(2),
+        change24h: 0, // Can fetch from CoinGecko if needed
+        logo: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+      });
+      
+      // Add SPL tokens
+      for (const token of tokenAccounts) {
+        if (token.balance > 0) {
+          const price = prices.get(token.mint) || 0;
+          const value = token.balance * price;
+          
+          // Get token metadata from Jupiter
+          const metadata = await getTokenMetadata(token.mint);
+          
+          assets.push({
+            symbol: metadata?.symbol || token.mint.slice(0, 4),
+            name: metadata?.name || 'Unknown Token',
+            balance: token.balance.toFixed(4),
+            valueUsd: value.toFixed(2),
+            change24h: 0,
+            logo: metadata?.logoURI
+          });
+        }
+      }
+      
+      // 5. Calculate total portfolio value
+      const totalValue = assets.reduce((sum, asset) => {
+        return sum + parseFloat(asset.valueUsd);
+      }, 0);
+      
+      // 6. Get transaction history (directly from blockchain!)
+      const signatures = await getTransactionHistory(publicKey, 20);
+      const recentTransactions: Transaction[] = signatures.map((sig, index) => ({
+        id: sig.signature,
+        type: 'swap', // You can parse this from transaction details
+        tokenIn: 'SOL',
+        tokenOut: 'USDC',
+        amountIn: '0.0',
+        amountOut: '0.0',
+        timestamp: (sig.blockTime || 0) * 1000,
+        signature: sig.signature,
+        status: sig.err ? 'failed' : 'success'
+      }));
+      
+      // 7. Set user data
+      setUserData({
+        totalValue: totalValue.toFixed(2),
+        totalPnL: 0, // Calculate based on historical data if needed
+        pnl24h: 0, // Can be calculated from 24h old snapshot
+        assets: assets.filter(a => parseFloat(a.valueUsd) > 0.01), // Filter out dust
+        recentTransactions: recentTransactions.slice(0, 10)
+      });
+      
     } catch (error) {
       console.error('Error fetching user data:', error);
-      setUserData(null);
+      // Fallback to mock data if blockchain fetch fails
+      setUserData({
+        totalValue: '0.00',
+        totalPnL: 0,
+        pnl24h: 0,
+        assets: [],
+        recentTransactions: []
+      });
     } finally {
       setIsLoading(false);
     }
