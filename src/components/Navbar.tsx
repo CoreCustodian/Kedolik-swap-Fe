@@ -97,8 +97,19 @@ const Navbar = () => {
             </Link>
           </div>
 
-          {/* Wallet Button */}
-          <div className="hidden lg:flex items-center">
+          {/* Wallet Button & Profile */}
+          <div className="hidden lg:flex items-center gap-3">
+            {location.pathname !== '/profile' && (
+              <Link 
+                to="/profile" 
+                className="p-2 hover:bg-white/10 rounded-full transition-all duration-300 group"
+                title="View Profile"
+              >
+                <svg className="w-6 h-6 text-gray-300 group-hover:text-brand-cyan transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
+              </Link>
+            )}
             <WalletMultiButton className="!bg-gradient-brand !rounded-full !shadow-glow-brand hover:!brightness-110 !transition-all !duration-300 hover:!scale-105 !font-semibold !px-6" />
           </div>
 

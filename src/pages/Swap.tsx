@@ -1,8 +1,13 @@
 import { useState } from 'react';
+import { useWallet } from '@solana/wallet-adapter-react';
 
 const Swap = () => {
+  const { connected } = useWallet();
   const [slippage, setSlippage] = useState('0.5');
   const [showSettings, setShowSettings] = useState(false);
+  const [useAggregator, setUseAggregator] = useState(true);
+  const [fromAmount, setFromAmount] = useState('');
+  const [toAmount, setToAmount] = useState('');
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -39,13 +44,13 @@ const Swap = () => {
               {/* Settings Panel */}
               {showSettings && (
                 <div className="mb-6 p-4 bg-dark-900/50 rounded-xl border border-white/10 animate-in slide-in-from-top duration-300">
-                  <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                  <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
                     <span>⚙️</span> Transaction Settings
                   </h3>
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
                       <label className="text-xs text-gray-400 mb-2 block">Slippage Tolerance</label>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         {['0.1', '0.5', '1.0'].map((val) => (
                           <button
                             key={val}
@@ -62,9 +67,35 @@ const Swap = () => {
                         <input
                           type="number"
                           placeholder="Custom"
-                          className="px-4 py-2 bg-white/5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-pink/50 w-24"
+                          className="px-4 py-2 bg-white/5 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-pink/50 w-full sm:w-24"
                         />
                       </div>
+                    </div>
+                    
+                    {/* Raydium V2 AMM + Aggregator Toggle */}
+                    <div>
+                      <label className="text-xs text-gray-400 mb-2 block">Routing Strategy</label>
+                      <div className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <div>
+                          <div className="text-sm font-semibold">Smart Routing</div>
+                          <div className="text-xs text-gray-400">Raydium V2 + Aggregators</div>
+                        </div>
+                        <button
+                          onClick={() => setUseAggregator(!useAggregator)}
+                          className={`relative w-12 h-6 rounded-full transition-all ${
+                            useAggregator ? 'bg-gradient-brand' : 'bg-white/20'
+                          }`}
+                        >
+                          <div
+                            className={`absolute top-1 left-1 w-4 h-4 bg-white rounded-full transition-transform ${
+                              useAggregator ? 'translate-x-6' : 'translate-x-0'
+                            }`}
+                          ></div>
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-2">
+                        When enabled, automatically routes through aggregators if Kedolik pools lack liquidity
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -85,19 +116,22 @@ const Swap = () => {
                         <input
                           type="number"
                           placeholder="0.0"
-                          className="bg-transparent text-4xl font-bold outline-none w-full placeholder:text-gray-600"
+                          value={fromAmount}
+                          onChange={(e) => setFromAmount(e.target.value)}
+                          className="bg-transparent text-2xl sm:text-3xl md:text-4xl font-bold outline-none w-full placeholder:text-gray-600"
                         />
-                        <div className="text-sm text-gray-500 mt-1">~$0.00</div>
+                        <div className="text-xs sm:text-sm text-gray-500 mt-1">~$0.00</div>
                       </div>
-                      <div>
-                        <button className="flex items-center gap-2 bg-gradient-brand px-5 py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 group shadow-glow-brand">
-                          <div className="w-6 h-6 bg-white rounded-full"></div>
-                          <span>Select</span>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <div className="flex flex-col items-end gap-2">
+                        <button className="flex items-center gap-1 sm:gap-2 bg-gradient-brand px-3 sm:px-5 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 group shadow-glow-brand text-sm sm:text-base">
+                          <div className="w-5 h-5 sm:w-6 sm:h-6 bg-white rounded-full"></div>
+                          <span className="hidden sm:inline">Select</span>
+                          <span className="sm:hidden">SOL</span>
+                          <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
                         </button>
-                        <button className="text-xs text-brand-cyan hover:text-brand-pink transition-colors mt-2 block text-right">
+                        <button className="text-xs text-brand-cyan hover:text-brand-pink transition-colors">
                           MAX
                         </button>
                       </div>
@@ -126,14 +160,17 @@ const Swap = () => {
                         <input
                           type="number"
                           placeholder="0.0"
-                          className="bg-transparent text-4xl font-bold outline-none w-full placeholder:text-gray-600"
+                          value={toAmount}
+                          onChange={(e) => setToAmount(e.target.value)}
+                          className="bg-transparent text-2xl sm:text-3xl md:text-4xl font-bold outline-none w-full placeholder:text-gray-600"
                         />
-                        <div className="text-sm text-gray-500 mt-1">~$0.00</div>
+                        <div className="text-xs sm:text-sm text-gray-500 mt-1">~$0.00</div>
                       </div>
-                      <button className="flex items-center gap-2 bg-gradient-brand px-5 py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand">
-                        <div className="w-6 h-6 bg-white rounded-full"></div>
-                        <span>Select</span>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <button className="flex items-center gap-1 sm:gap-2 bg-gradient-brand px-3 sm:px-5 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm sm:text-base">
+                        <div className="w-5 h-5 sm:w-6 sm:h-6 bg-white rounded-full"></div>
+                        <span className="hidden sm:inline">Select</span>
+                        <span className="sm:hidden">USDC</span>
+                        <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
                       </button>
@@ -142,14 +179,22 @@ const Swap = () => {
                 </div>
               </div>
 
-              {/* Info Box */}
-              <div className="mt-6 p-4 bg-brand-cyan/5 border border-brand-cyan/20 rounded-xl">
-                <div className="space-y-2 text-sm">
+              {/* Info Box - Raydium V2 AMM Style */}
+              <div className="mt-6 p-4 bg-dark-900/50 border border-white/10 rounded-xl">
+                <div className="space-y-2 text-xs sm:text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400 flex items-center gap-2">
                       <span>⚡</span> Rate
                     </span>
-                    <span className="font-semibold">1 SOL = 23.45 USDC</span>
+                    <span className="font-semibold text-right">1 SOL = 23.45 USDC</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400 flex items-center gap-2">
+                      <span>🔀</span> Route
+                    </span>
+                    <span className="font-semibold text-brand-cyan text-right text-xs">
+                      {useAggregator ? 'Smart Route (Raydium + Jupiter)' : 'Raydium V2 AMM'}
+                    </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400 flex items-center gap-2">
@@ -161,28 +206,40 @@ const Swap = () => {
                     <span className="text-gray-400 flex items-center gap-2">
                       <span>💰</span> Network Fee
                     </span>
-                    <span className="font-semibold">~0.00005 SOL</span>
+                    <span className="font-semibold text-right">~0.00005 SOL</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400 flex items-center gap-2">
                       <span>🎯</span> Minimum Received
                     </span>
-                    <span className="font-semibold">23.33 USDC</span>
+                    <span className="font-semibold text-right">23.33 USDC</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-2 border-t border-white/10">
+                    <span className="text-gray-400 flex items-center gap-2">
+                      <span>💧</span> Liquidity Provider Fee
+                    </span>
+                    <span className="font-semibold text-right">0.25%</span>
                   </div>
                 </div>
               </div>
 
               {/* Swap Action Button */}
-              <button className="w-full btn-primary mt-6 text-lg py-4">
-                Connect Wallet to Swap
+              <button className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4">
+                {connected ? 'Swap' : 'Connect Wallet to Swap'}
               </button>
 
               {/* Route Info */}
-              <div className="mt-4 text-center text-xs text-gray-500">
-                <span className="flex items-center justify-center gap-2">
-                  <span>🔄</span> Best route via Jupiter Aggregator
-                </span>
-              </div>
+              {useAggregator && (
+                <div className="mt-4 p-3 bg-brand-cyan/5 border border-brand-cyan/20 rounded-lg">
+                  <div className="text-xs text-center text-gray-400 flex items-center justify-center gap-2 flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <span>🔄</span> Smart routing enabled
+                    </span>
+                    <span className="hidden sm:inline">•</span>
+                    <span>Checking Kedolik, Raydium, Jupiter, Orca</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
