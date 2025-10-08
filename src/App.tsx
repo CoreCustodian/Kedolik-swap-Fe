@@ -11,11 +11,13 @@ function App() {
       <Router>
         <div className="min-h-screen bg-gradient-dark">
           <Navbar />
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/swap" element={<Swap />} />
-            <Route path="/pools" element={<Pools />} />
-          </Routes>
+          <div className="pt-20">
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/swap" element={<Swap />} />
+              <Route path="/pools" element={<Pools />} />
+            </Routes>
+          </div>
         </div>
       </Router>
     </WalletProvider>

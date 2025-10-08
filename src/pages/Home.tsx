@@ -11,7 +11,7 @@ const Home = () => {
       </div>
 
       {/* Hero Section */}
-      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-32">
+      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-32">
         <div className="grid md:grid-cols-2 gap-12 items-center">
           {/* Left Side - 3D Logo */}
           <div className="flex justify-center order-2 md:order-1">
