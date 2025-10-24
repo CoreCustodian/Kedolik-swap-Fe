@@ -11,29 +11,29 @@ const Home = () => {
       </div>
 
       {/* Hero Section */}
-      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-10 pb-32">
-        <div className="grid md:grid-cols-2 gap-12 items-center">
+      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 sm:pt-24 pb-20 sm:pb-32">
+        <div className="grid md:grid-cols-2 gap-8 sm:gap-12 items-center">
           {/* Left Side - 3D Logo */}
           <div className="flex justify-center order-2 md:order-1">
-            <div className="relative animate-float">
+            <div className="relative animate-float w-full max-w-sm sm:max-w-md">
               <img 
                 src="/hero/hero1.png" 
                 alt="Kedolik Swap Logo" 
-                className="w-full max-w-md drop-shadow-[0_0_60px_rgba(255,28,247,0.5)]"
+                className="w-full drop-shadow-[0_0_60px_rgba(255,28,247,0.5)]"
               />
               <div className="absolute -inset-8 bg-gradient-brand rounded-full blur-3xl opacity-30 animate-pulse-slow"></div>
             </div>
           </div>
 
           {/* Right Side - Hero Content */}
-          <div className="space-y-6 order-1 md:order-2">
+          <div className="space-y-4 sm:space-y-6 order-1 md:order-2 text-center md:text-left">
             <div className="inline-block">
-              <span className="px-5 py-2 bg-brand-cyan/10 border border-brand-cyan/30 rounded-full text-brand-cyan text-sm font-semibold backdrop-blur-sm">
+              <span className="px-4 sm:px-5 py-2 bg-brand-cyan/10 border border-brand-cyan/30 rounded-full text-brand-cyan text-xs sm:text-sm font-semibold backdrop-blur-sm">
                 Welcome to Kedolik Swap
               </span>
             </div>
 
-            <h1 className="text-5xl md:text-7xl font-bold leading-tight">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-7xl font-bold leading-tight">
               The Next Generation{' '}
               <span className="block mt-2">Decentralized</span>
             </h1>
@@ -42,25 +42,25 @@ const Home = () => {
               <img 
                 src="/hero/EXCHANGE.png" 
                 alt="EXCHANGE" 
-                className="w-full max-w-2xl"
+                className="w-full max-w-xs sm:max-w-md md:max-w-2xl mx-auto md:mx-0"
               />
             </div>
 
-            <p className="text-lg md:text-xl text-gray-300 leading-relaxed max-w-xl pt-4">
+            <p className="text-base sm:text-lg md:text-xl text-gray-300 leading-relaxed max-w-xl mx-auto md:mx-0 pt-2 sm:pt-4">
               Kedolik Swap is a next-generation decentralized exchange offering secure, 
               lightning-fast, and low-cost crypto trading across multiple blockchains.
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-4 pt-6">
-              <Link to="/swap" className="btn-primary text-center inline-flex items-center justify-center gap-2">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 pt-4 sm:pt-6 justify-center md:justify-start">
+              <Link to="/swap" className="btn-primary text-center inline-flex items-center justify-center gap-2 text-sm sm:text-base">
                 Trade Now
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
               </Link>
-              <button className="btn-secondary inline-flex items-center justify-center gap-2">
+              <button className="btn-secondary inline-flex items-center justify-center gap-2 text-sm sm:text-base">
                 Learn more
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
               </button>
@@ -78,8 +78,8 @@ const Home = () => {
       </section>
 
       {/* Features Section */}
-      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 md:py-20">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
           {[
             {
               img: '/hero/noncustodial.png',
@@ -102,26 +102,26 @@ const Home = () => {
               description: 'Keep more of your profits'
             }
           ].map((feature, index) => (
-            <div key={index} className="card p-8 group hover:scale-105 transition-all duration-300">
-              <div className="w-16 h-16 mb-4 group-hover:scale-110 transition-transform duration-300">
+            <div key={index} className="card p-6 sm:p-8 group hover:scale-105 transition-all duration-300">
+              <div className="w-12 h-12 sm:w-16 sm:h-16 mb-3 sm:mb-4 group-hover:scale-110 transition-transform duration-300">
                 <img src={feature.img} alt={feature.title} className="w-full h-full object-contain" />
               </div>
-              <h3 className="text-xl font-bold mb-3 font-heading">{feature.title}</h3>
-              <p className="text-gray-400 text-sm leading-relaxed">{feature.description}</p>
+              <h3 className="text-lg sm:text-xl font-bold mb-2 sm:mb-3 font-heading">{feature.title}</h3>
+              <p className="text-gray-400 text-xs sm:text-sm leading-relaxed">{feature.description}</p>
             </div>
           ))}
         </div>
       </section>
 
       {/* The Heart of Kedolik Swap Section */}
-      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
-        <div className="card p-12">
-          <div className="grid md:grid-cols-2 gap-12 items-center">
-            <div className="space-y-8">
-              <h2 className="text-4xl md:text-5xl font-bold font-heading">
+      <section className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-16 md:py-20">
+        <div className="card p-6 sm:p-8 md:p-12">
+          <div className="grid md:grid-cols-2 gap-8 sm:gap-12 items-center">
+            <div className="space-y-6 sm:space-y-8 text-center md:text-left">
+              <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold font-heading">
                 The Heart of Kedolik <span className="gradient-text">Swap</span>
               </h2>
-              <p className="text-gray-300 text-lg">
+              <p className="text-gray-300 text-base sm:text-lg">
                 The $KEDOL token fuels the Kedolik Swap ecosystem:
               </p>
               

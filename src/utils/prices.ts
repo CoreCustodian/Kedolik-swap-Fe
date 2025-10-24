@@ -47,13 +47,20 @@ export const getTokenPrices = async (mintAddresses: string[]): Promise<Map<strin
       return cachedPrices;
     }
 
-    // Fetch missing prices from Jupiter
+    // Fetch missing prices from Jupiter (only works on mainnet)
+    // For devnet, return 0 prices
+    if (import.meta.env.VITE_NETWORK === 'devnet') {
+      console.log('Devnet mode: Skipping price fetching');
+      return cachedPrices;
+    }
+
     const response = await fetch(
-      `https://price.jup.ag/v4/price?ids=${missingMints.join(',')}`
+      `https://api.jup.ag/price/v2?ids=${missingMints.join(',')}`
     );
 
     if (!response.ok) {
-      throw new Error('Failed to fetch prices');
+      console.warn('Failed to fetch prices from Jupiter');
+      return cachedPrices;
     }
 
     const data: JupiterPriceResponse = await response.json();

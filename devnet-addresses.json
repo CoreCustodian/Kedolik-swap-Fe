@@ -1,0 +1,79 @@
+{
+  "network": "devnet",
+  "deployment": {
+    "programId": "F3mHkHDh3A61A3mp9dd35DzhypacRRKeEKYDNh4dQqRc",
+    "authority": "JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa",
+    "deployedAt": "2025-10-22",
+    "explorerUrl": "https://explorer.solana.com/address/F3mHkHDh3A61A3mp9dd35DzhypacRRKeEKYDNh4dQqRc?cluster=devnet"
+  },
+  "ammConfig": {
+    "address": "3EUgq3MYni6ui7EWnQaDfRXdJTqYPN4GsFFYd1Nb7ab6",
+    "index": 0,
+    "tradeFeeRate": 100,
+    "tradeFeePercent": "1%",
+    "protocolFeeRate": 10000,
+    "protocolFeePercent": "100%",
+    "explorerUrl": "https://explorer.solana.com/address/3EUgq3MYni6ui7EWnQaDfRXdJTqYPN4GsFFYd1Nb7ab6?cluster=devnet"
+  },
+  "tokens": {
+    "kedolog": {
+      "mint": "DhKDRUdDLeSGM8tQjsCF8vewTffPFZwi3voZunY7RNsW",
+      "decimals": 9,
+      "symbol": "KEDOLOG",
+      "name": "Kedolog Protocol Token",
+      "supply": "1000000000",
+      "explorerUrl": "https://explorer.solana.com/address/DhKDRUdDLeSGM8tQjsCF8vewTffPFZwi3voZunY7RNsW?cluster=devnet"
+    },
+    "kedolog_alt": {
+      "mint": "AGucVBtryi21Cf8A3vw8duXDydzxj6fPfKCLnwEg1Ty5",
+      "decimals": 9,
+      "symbol": "KEDOLOG",
+      "name": "Kedolog Protocol Token (Alt)",
+      "supply": "1000000000",
+      "note": "Created by test script, use DhKDRUdDLeSGM8tQjsCF8vewTffPFZwi3voZunY7RNsW as primary",
+      "explorerUrl": "https://explorer.solana.com/address/AGucVBtryi21Cf8A3vw8duXDydzxj6fPfKCLnwEg1Ty5?cluster=devnet"
+    },
+    "usdc": {
+      "mint": "2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32",
+      "decimals": 6,
+      "symbol": "USDC",
+      "name": "USD Coin (Test)",
+      "supply": "1000000",
+      "explorerUrl": "https://explorer.solana.com/address/2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32?cluster=devnet"
+    },
+    "sol": {
+      "mint": "6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv",
+      "decimals": 9,
+      "symbol": "SOL",
+      "name": "Wrapped SOL (Test)",
+      "supply": "10000",
+      "explorerUrl": "https://explorer.solana.com/address/6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv?cluster=devnet"
+    },
+    "eth": {
+      "mint": "CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3",
+      "decimals": 18,
+      "symbol": "ETH",
+      "name": "Ethereum (Test)",
+      "supply": "1000",
+      "explorerUrl": "https://explorer.solana.com/address/CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3?cluster=devnet"
+    },
+    "btc": {
+      "mint": "ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa",
+      "decimals": 8,
+      "symbol": "BTC",
+      "name": "Bitcoin (Test)",
+      "supply": "100",
+      "explorerUrl": "https://explorer.solana.com/address/ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa?cluster=devnet"
+    }
+  },
+  "pools": {
+    "note": "Pools will be added here as you create them via your website"
+  },
+  "notes": [
+    "All addresses are on Solana Devnet",
+    "Keep this file in your website repository for easy access",
+    "Never commit private keys or seed phrases to version control",
+    "Primary KEDOLOG mint: DhKDRUdDLeSGM8tQjsCF8vewTffPFZwi3voZunY7RNsW"
+  ]
+}
+

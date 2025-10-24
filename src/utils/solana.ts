@@ -1,9 +1,8 @@
 import { Connection, PublicKey, ParsedTransactionWithMeta } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
-// Use Helius RPC for better performance (free tier: 100 req/sec)
-// Alternative: QuickNode, Triton, or public RPC
-const RPC_ENDPOINT = import.meta.env.VITE_RPC_URL || 'https://api.mainnet-beta.solana.com';
+// Use devnet RPC endpoint
+const RPC_ENDPOINT = import.meta.env.VITE_RPC_URL || 'https://api.devnet.solana.com';
 
 export const connection = new Connection(RPC_ENDPOINT, 'confirmed');
 
