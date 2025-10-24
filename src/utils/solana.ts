@@ -79,7 +79,7 @@ export const parseSwapTransaction = (tx: ParsedTransactionWithMeta | null) => {
     const postBalances = tx.meta.postTokenBalances || [];
 
     // Find token changes
-    const changes = postBalances.map((post, i) => {
+    const changes = postBalances.map((post) => {
       const pre = preBalances.find((p) => p.accountIndex === post.accountIndex);
       if (!pre) return null;
 

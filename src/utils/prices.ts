@@ -1,14 +1,6 @@
 // Jupiter API for token prices - NO SERVER NEEDED!
 // Free to use, no API key required for basic usage
 
-interface TokenPrice {
-  id: string;
-  mintSymbol: string;
-  vsToken: string;
-  vsTokenSymbol: string;
-  price: number;
-}
-
 interface JupiterPriceResponse {
   data: {
     [key: string]: {

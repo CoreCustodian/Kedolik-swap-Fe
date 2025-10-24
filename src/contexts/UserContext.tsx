@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
 import { getTokenAccounts, getSolBalance, getTransactionHistory } from '../utils/solana';
 import { getTokenPrices, getTokenMetadata, KNOWN_TOKENS } from '../utils/prices';
 
@@ -116,7 +115,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       
       // 6. Get transaction history (directly from blockchain!)
       const signatures = await getTransactionHistory(publicKey, 20);
-      const recentTransactions: Transaction[] = signatures.map((sig, index) => ({
+      const recentTransactions: Transaction[] = signatures.map((sig) => ({
         id: sig.signature,
         type: 'swap', // You can parse this from transaction details
         tokenIn: 'SOL',

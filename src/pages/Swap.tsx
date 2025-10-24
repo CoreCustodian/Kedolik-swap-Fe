@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
@@ -155,7 +154,7 @@ const Swap = () => {
     // Debounce quote calculation
     const timer = setTimeout(() => {
       try {
-        const { token0, token1 } = sortTokenMints(fromToken.mint, toToken.mint);
+        const { token0 } = sortTokenMints(fromToken.mint, toToken.mint);
         const isInputToken0 = fromToken.mint.equals(token0);
         
         const reserveIn = isInputToken0 ? poolReserves.reserve0 : poolReserves.reserve1;

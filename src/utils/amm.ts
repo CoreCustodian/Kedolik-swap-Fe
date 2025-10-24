@@ -1,24 +1,19 @@
 import { 
   Connection, 
   PublicKey, 
-  Transaction,
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
-  Keypair,
 } from '@solana/web3.js';
 import { 
   Program, 
   AnchorProvider, 
   Idl, 
   BN,
-  web3 
 } from '@coral-xyz/anchor';
 import { 
   TOKEN_PROGRAM_ID,
-  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
-  createAssociatedTokenAccountInstruction,
 } from '@solana/spl-token';
 import IDLJson from '../../kedolik_cp_swap.json';
 
@@ -135,7 +130,7 @@ export const fetchPools = async (
     const program = getProgram(connection, wallet);
     
     // Fetch all pool accounts
-    const pools = await program.account.poolState.all();
+    const pools = await (program.account as any).poolState.all();
     
     const poolInfos: PoolInfo[] = [];
     
@@ -225,7 +220,7 @@ export const swapBaseInput = async (
   outputMint: PublicKey,
   amountIn: number,
   minimumAmountOut: number,
-  slippage: number = 0.5
+  _slippage: number = 0.5
 ) => {
   try {
     const program = getProgram(connection, wallet);
@@ -256,7 +251,7 @@ export const swapBaseInput = async (
     const outputTokenProgram = TOKEN_PROGRAM_ID;
     
     // Convert amounts to base units
-    const poolData = await program.account.poolState.fetch(poolState);
+    const poolData = await (program.account as any).poolState.fetch(poolState);
     const inputDecimals = (poolData as any).mint0Decimals;
     const outputDecimals = (poolData as any).mint1Decimals;
     
@@ -299,7 +294,7 @@ export const addLiquidity = async (
   token1Mint: PublicKey,
   amount0: number,
   amount1: number,
-  slippage: number = 0.5
+  _slippage: number = 0.5
 ) => {
   try {
     const program = getProgram(connection, wallet);
@@ -320,17 +315,15 @@ export const addLiquidity = async (
     const userLpAccount = await getAssociatedTokenAddress(lpMint, walletPublicKey);
     
     // Get pool data
-    const poolData = await program.account.poolState.fetch(poolState);
+    const poolData = await (program.account as any).poolState.fetch(poolState);
     const token0Decimals = (poolData as any).mint0Decimals;
     const token1Decimals = (poolData as any).mint1Decimals;
     
     // Calculate LP tokens (simplified)
     const lpAmount = new BN(Math.sqrt(amount0 * amount1) * Math.pow(10, 9)); // Assuming 9 decimals for LP
     
-    const amount0BN = new BN(amount0 * Math.pow(10, token0Decimals));
-    const amount1BN = new BN(amount1 * Math.pow(10, token1Decimals));
-    const maxAmount0BN = new BN(amount0 * (1 + slippage / 100) * Math.pow(10, token0Decimals));
-    const maxAmount1BN = new BN(amount1 * (1 + slippage / 100) * Math.pow(10, token1Decimals));
+    const maxAmount0BN = new BN(amount0 * (1 + _slippage / 100) * Math.pow(10, token0Decimals));
+    const maxAmount1BN = new BN(amount1 * (1 + _slippage / 100) * Math.pow(10, token1Decimals));
     
     // Execute deposit
     const tx = await program.methods
@@ -345,7 +338,7 @@ export const addLiquidity = async (
         token0Vault,
         token1Vault,
         tokenProgram: TOKEN_PROGRAM_ID,
-        tokenProgram2022: TOKEN_2022_PROGRAM_ID,
+        tokenProgram2022: TOKEN_PROGRAM_ID,
         vault0Mint: token0,
         vault1Mint: token1,
         lpMint,
@@ -388,7 +381,7 @@ export const removeLiquidity = async (
     const userLpAccount = await getAssociatedTokenAddress(lpMint, wallet.publicKey);
     
     // Get pool data
-    const poolData = await program.account.poolState.fetch(poolState);
+    const poolData = await (program.account as any).poolState.fetch(poolState);
     const token0Decimals = (poolData as any).mint0Decimals;
     const token1Decimals = (poolData as any).mint1Decimals;
     
@@ -409,7 +402,7 @@ export const removeLiquidity = async (
         token0Vault,
         token1Vault,
         tokenProgram: TOKEN_PROGRAM_ID,
-        tokenProgram2022: TOKEN_2022_PROGRAM_ID,
+        tokenProgram2022: TOKEN_PROGRAM_ID,
         vault0Mint: token0,
         vault1Mint: token1,
         lpMint,

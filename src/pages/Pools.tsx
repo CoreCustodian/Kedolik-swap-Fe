@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { fetchPools, PoolInfo, addLiquidity, createPool } from '../utils/amm';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
@@ -8,7 +7,7 @@ import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 
 const Pools = () => {
-  const { connected, publicKey } = useWallet();
+  const { connected } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
   
@@ -632,7 +631,8 @@ const AddLiquidityModal = ({
         connection,
         wallet,
         publicKey,
-        pool.poolState,
+        pool.token0Mint,
+        pool.token1Mint,
         parseFloat(amount0),
         parseFloat(amount1)
       );
