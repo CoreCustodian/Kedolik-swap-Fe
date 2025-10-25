@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
+import { NATIVE_MINT } from '@solana/spl-token';
 
 export interface TokenInfo {
   mint: PublicKey;
@@ -11,6 +12,12 @@ export interface TokenInfo {
 
 // Devnet Token List
 export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
+  SOL: {
+    mint: NATIVE_MINT, // Native SOL (So1111111111111111111111111111111111111111112)
+    symbol: 'SOL',
+    name: 'Solana',
+    decimals: 9,
+  },
   KEDOLOG: {
     mint: new PublicKey('DhKDRUdDLeSGM8tQjsCF8vewTffPFZwi3voZunY7RNsW'),
     symbol: 'KEDOLOG',
@@ -23,9 +30,9 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     name: 'USD Coin (Test)',
     decimals: 6,
   },
-  SOL: {
+  WSOL: {
     mint: new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv'),
-    symbol: 'SOL',
+    symbol: 'WSOL',
     name: 'Wrapped SOL (Test)',
     decimals: 9,
   },

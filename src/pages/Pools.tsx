@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint } from '../utils/amm';
+import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance } from '../utils/amm';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -421,16 +421,10 @@ const CreatePoolModal = ({
     const fetchBalance = async () => {
       if (!publicKey) return;
       
-      try {
-        const tokenAccount = await getAssociatedTokenAddress(token0.mint, publicKey);
-        const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
-        const balance = parseFloat(accountInfo.value.uiAmount?.toString() || '0');
-        setToken0Balance(balance);
-        console.log(`✅ ${token0.symbol} balance: ${balance}`);
-      } catch (error) {
-        setToken0Balance(0);
-        console.log(`⚠️ ${token0.symbol} balance: 0 (no account)`);
-      }
+      // Use getTokenBalance helper (handles both native SOL and SPL tokens)
+      const balance = await getTokenBalance(connection, token0.mint, publicKey);
+      setToken0Balance(balance);
+      console.log(`✅ ${token0.symbol} balance: ${balance}`);
     };
     
     fetchBalance();
@@ -441,16 +435,10 @@ const CreatePoolModal = ({
     const fetchBalance = async () => {
       if (!publicKey) return;
       
-      try {
-        const tokenAccount = await getAssociatedTokenAddress(token1.mint, publicKey);
-        const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
-        const balance = parseFloat(accountInfo.value.uiAmount?.toString() || '0');
-        setToken1Balance(balance);
-        console.log(`✅ ${token1.symbol} balance: ${balance}`);
-      } catch (error) {
-        setToken1Balance(0);
-        console.log(`⚠️ ${token1.symbol} balance: 0 (no account)`);
-      }
+      // Use getTokenBalance helper (handles both native SOL and SPL tokens)
+      const balance = await getTokenBalance(connection, token1.mint, publicKey);
+      setToken1Balance(balance);
+      console.log(`✅ ${token1.symbol} balance: ${balance}`);
     };
     
     fetchBalance();
@@ -651,21 +639,12 @@ const AddLiquidityModal = ({
     const fetchBalances = async () => {
       if (!publicKey) return;
       
-      try {
-        const token0Account = await getAssociatedTokenAddress(pool.token0Mint, publicKey);
-        const token0Info = await connection.getTokenAccountBalance(token0Account);
-        setBalance0(parseFloat(token0Info.value.uiAmount?.toString() || '0'));
-      } catch (error) {
-        setBalance0(0);
-      }
+      // Use getTokenBalance helper (handles both native SOL and SPL tokens)
+      const bal0 = await getTokenBalance(connection, pool.token0Mint, publicKey);
+      setBalance0(bal0);
       
-      try {
-        const token1Account = await getAssociatedTokenAddress(pool.token1Mint, publicKey);
-        const token1Info = await connection.getTokenAccountBalance(token1Account);
-        setBalance1(parseFloat(token1Info.value.uiAmount?.toString() || '0'));
-      } catch (error) {
-        setBalance1(0);
-      }
+      const bal1 = await getTokenBalance(connection, pool.token1Mint, publicKey);
+      setBalance1(bal1);
     };
     
     fetchBalances();

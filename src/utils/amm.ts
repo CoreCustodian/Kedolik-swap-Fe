@@ -3,6 +3,8 @@ import {
   PublicKey, 
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
+  Transaction,
+  TransactionInstruction,
 } from '@solana/web3.js';
 import { 
   Program, 
@@ -15,8 +17,13 @@ import {
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  createSyncNativeInstruction,
+  createCloseAccountInstruction,
+  NATIVE_MINT,
 } from '@solana/spl-token';
 import IDLJson from '../../kedolik_cp_swap.json';
+import { getTokenByMint } from '../config/tokens';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
@@ -33,6 +40,98 @@ export const TOKENS = {
   SOL: new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv'),
   ETH: new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3'),
   BTC: new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa'),
+};
+
+// Wrapped SOL (WSOL) mint address - same as NATIVE_MINT  
+export const WSOL_MINT = NATIVE_MINT;
+
+// Helper functions for wrapping/unwrapping SOL
+export const isNativeSOL = (mint: PublicKey): boolean => {
+  return mint.equals(WSOL_MINT);
+};
+
+/**
+ * Creates instructions to wrap native SOL to WSOL
+ * Returns: { instructions, wsolAccount }
+ */
+export const createWrapSOLInstructions = async (
+  connection: Connection,
+  owner: PublicKey,
+  amount: number // in SOL, not lamports
+): Promise<{ instructions: TransactionInstruction[]; wsolAccount: PublicKey }> => {
+  const instructions: TransactionInstruction[] = [];
+  const wsolAccount = await getAssociatedTokenAddress(WSOL_MINT, owner);
+  
+  // Check if WSOL account exists
+  const accountInfo = await connection.getAccountInfo(wsolAccount);
+  
+  if (!accountInfo) {
+    // Create WSOL token account
+    instructions.push(
+      createAssociatedTokenAccountInstruction(
+        owner,
+        wsolAccount,
+        owner,
+        WSOL_MINT
+      )
+    );
+  }
+  
+  // Transfer SOL to the WSOL account
+  instructions.push(
+    SystemProgram.transfer({
+      fromPubkey: owner,
+      toPubkey: wsolAccount,
+      lamports: Math.floor(amount * 1e9),
+    })
+  );
+  
+  // Sync native (this updates the WSOL balance)
+  instructions.push(createSyncNativeInstruction(wsolAccount));
+  
+  return { instructions, wsolAccount };
+};
+
+/**
+ * Creates instruction to unwrap WSOL back to native SOL
+ * This closes the WSOL account and returns SOL to the owner
+ */
+export const createUnwrapSOLInstruction = async (
+  owner: PublicKey
+): Promise<TransactionInstruction> => {
+  const wsolAccount = await getAssociatedTokenAddress(WSOL_MINT, owner);
+  
+  // Close the WSOL account, which automatically unwraps and returns SOL
+  return createCloseAccountInstruction(
+    wsolAccount,
+    owner,
+    owner
+  );
+};
+
+/**
+ * Fetch token balance - handles both native SOL and SPL tokens
+ */
+export const getTokenBalance = async (
+  connection: Connection,
+  mint: PublicKey,
+  owner: PublicKey
+): Promise<number> => {
+  try {
+    // If it's native SOL, fetch SOL balance
+    if (isNativeSOL(mint)) {
+      const balance = await connection.getBalance(owner);
+      return balance / 1e9; // Convert lamports to SOL
+    }
+    
+    // Otherwise, fetch SPL token balance
+    const tokenAccount = await getAssociatedTokenAddress(mint, owner);
+    const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
+    return parseFloat(accountInfo.value.uiAmount?.toString() || '0');
+  } catch (error) {
+    console.log(`Balance not found for token ${mint.toString()}:`, error);
+    return 0;
+  }
 };
 
 // Helper to get program (wallet should be from useAnchorWallet hook)
@@ -207,14 +306,27 @@ export const fetchPools = async (
   }
 };
 
-// Get token symbol from mint
+// Get token symbol from mint - uses token configuration
 export const getTokenSymbol = (mint: PublicKey): string => {
+  // Check if it's native SOL (WSOL)
+  if (isNativeSOL(mint)) {
+    return 'SOL';
+  }
+  
+  // Use the token configuration
+  const tokenInfo = getTokenByMint(mint);
+  
+  if (tokenInfo) {
+    return tokenInfo.symbol;
+  }
+  
+  // Fallback to hardcoded values for backwards compatibility
   const mintStr = mint.toString();
   if (mintStr === TOKENS.KEDOLOG.toString()) return 'KEDOLOG';
   if (mintStr === TOKENS.USDC.toString()) return 'USDC';
-  if (mintStr === TOKENS.SOL.toString()) return 'SOL';
   if (mintStr === TOKENS.ETH.toString()) return 'ETH';
   if (mintStr === TOKENS.BTC.toString()) return 'BTC';
+  
   return 'UNKNOWN';
 };
 
@@ -246,7 +358,7 @@ export const calculateSwapOutput = (
   };
 };
 
-// Swap tokens (base input)
+// Swap tokens (base input) - with automatic SOL wrapping/unwrapping
 export const swapBaseInput = async (
   connection: Connection,
   wallet: any,
@@ -259,6 +371,12 @@ export const swapBaseInput = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
+    
+    // Check if we need to wrap/unwrap SOL
+    const needsWrapInput = isNativeSOL(inputMint);
+    const needsUnwrapOutput = isNativeSOL(outputMint);
+    
+    console.log('🌊 SOL handling:', { needsWrapInput, needsUnwrapOutput });
     
     // Sort tokens
     const { token0, token1 } = sortTokenMints(inputMint, outputMint);
@@ -333,9 +451,23 @@ export const swapBaseInput = async (
       outputVault: outputVault.toString(),
     });
     
-    // Execute swap
-    console.log('🚀 Executing swap transaction...');
-    const tx = await program.methods
+    // Build the transaction
+    const transaction = new Transaction();
+    
+    // Step 1: If input is SOL, wrap it first
+    if (needsWrapInput) {
+      console.log('🌊 Wrapping SOL for input...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        amountIn
+      );
+      transaction.add(...wrapInstructions);
+    }
+    
+    // Step 2: Build the swap instruction
+    console.log('🚀 Building swap instruction...');
+    const swapInstruction = await program.methods
       .swapBaseInput(amountInBN, minAmountOutBN)
       .accounts({
         payer: walletPublicKey,
@@ -352,17 +484,55 @@ export const swapBaseInput = async (
         outputTokenMint: outputMint,
         observationState,
       })
-      .rpc();
+      .instruction();
     
-    console.log('✅ Swap transaction successful:', tx);
-    return tx;
+    transaction.add(swapInstruction);
+    
+    // Step 3: If output is SOL, unwrap it after
+    if (needsUnwrapOutput) {
+      console.log('🌊 Adding unwrap SOL instruction...');
+      const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
+      transaction.add(unwrapInstruction);
+    }
+    
+    // Execute transaction
+    console.log('📡 Getting fresh blockhash...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = walletPublicKey;
+    
+    console.log('✍️ Signing transaction...');
+    const signedTransaction = await wallet.signTransaction(transaction);
+    
+    console.log('📤 Sending transaction...');
+    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 0,
+    });
+    
+    console.log(`🔗 Transaction sent: ${signature}`);
+    
+    console.log('⏳ Confirming transaction...');
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    }, 'confirmed');
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+    
+    console.log('✅ Swap successful!');
+    return signature;
   } catch (error) {
     console.error('Error swapping:', error);
     throw error;
   }
 };
 
-// Add liquidity
+// Add liquidity - with automatic SOL wrapping
 export const addLiquidity = async (
   connection: Connection,
   wallet: any,
@@ -382,6 +552,12 @@ export const addLiquidity = async (
       amount0,
       amount1,
     });
+    
+    // Check if we need to wrap SOL
+    const needsWrapToken0 = isNativeSOL(token0Mint);
+    const needsWrapToken1 = isNativeSOL(token1Mint);
+    
+    console.log('🌊 SOL handling:', { needsWrapToken0, needsWrapToken1 });
     
     // Sort tokens
     const { token0, token1 } = sortTokenMints(token0Mint, token1Mint);
@@ -479,8 +655,33 @@ export const addLiquidity = async (
       slippageBuffer: `${slippageBuffer}%`,
     });
     
-    // Execute deposit
-    const tx = await program.methods
+    // Build the transaction
+    const transaction = new Transaction();
+    
+    // Step 1: Wrap SOL if needed
+    if (needsWrapToken0) {
+      console.log('🌊 Wrapping SOL for token0...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        tokensWereSwapped ? amount1 : amount0
+      );
+      transaction.add(...wrapInstructions);
+    }
+    
+    if (needsWrapToken1) {
+      console.log('🌊 Wrapping SOL for token1...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        tokensWereSwapped ? amount0 : amount1
+      );
+      transaction.add(...wrapInstructions);
+    }
+    
+    // Step 2: Build the deposit instruction
+    console.log('💰 Building deposit instruction...');
+    const depositInstruction = await program.methods
       .deposit(lpAmount, maxAmount0BN, maxAmount1BN)
       .accounts({
         owner: walletPublicKey,
@@ -497,21 +698,64 @@ export const addLiquidity = async (
         vault1Mint: token1,
         lpMint,
       })
-      .rpc();
+      .instruction();
+    
+    transaction.add(depositInstruction);
+    
+    // Execute transaction
+    console.log('📡 Getting fresh blockhash...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = walletPublicKey;
+    
+    console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
+    
+    // Small delay to ensure blockhash propagation
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    console.log('✍️ Signing transaction...');
+    const signedTransaction = await wallet.signTransaction(transaction);
+    
+    console.log('📤 Sending transaction...');
+    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 0,
+    });
+    
+    console.log(`🔗 Transaction sent: ${signature}`);
+    
+    console.log('⏳ Confirming transaction...');
+    const confirmation = await connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    }, 'confirmed');
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
     
     console.log('✅ Liquidity added successfully!', {
-      txSignature: tx,
+      txSignature: signature,
       lpTokensReceived: (lpAmount.toNumber() / Math.pow(10, 9)).toFixed(4),
     });
     
-    return tx;
-  } catch (error) {
+    return signature;
+  } catch (error: any) {
     console.error('❌ Error adding liquidity:', error);
+    
+    // Check if it's an "already processed" error (often a false negative)
+    if (error.message && error.message.includes('already been processed')) {
+      console.log('⚠️ Transaction might have already succeeded - check your LP tokens!');
+      throw new Error('Transaction might have already been processed. Please check your wallet and LP token balance. If liquidity was added, you can ignore this error.');
+    }
+    
     throw error;
   }
 };
 
-// Remove liquidity
+// Remove liquidity - with automatic SOL unwrapping
 export const removeLiquidity = async (
   connection: Connection,
   wallet: any,
@@ -523,6 +767,12 @@ export const removeLiquidity = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
+    
+    // Check if we need to unwrap SOL
+    const needsUnwrapToken0 = isNativeSOL(token0Mint);
+    const needsUnwrapToken1 = isNativeSOL(token1Mint);
+    
+    console.log('🌊 SOL handling:', { needsUnwrapToken0, needsUnwrapToken1 });
     
     // Sort tokens
     const { token0, token1 } = sortTokenMints(token0Mint, token1Mint);
@@ -558,7 +808,11 @@ export const removeLiquidity = async (
     });
     
     // Build transaction
-    const transaction = await program.methods
+    const transaction = new Transaction();
+    
+    // Step 1: Build the withdraw instruction
+    console.log('💰 Building withdraw instruction...');
+    const withdrawInstruction = await program.methods
       .withdraw(lpAmountBN, minAmount0BN, minAmount1BN)
       .accounts({
         owner: wallet.publicKey,
@@ -576,7 +830,22 @@ export const removeLiquidity = async (
         lpMint,
         memoProgram: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
       })
-      .transaction();
+      .instruction();
+    
+    transaction.add(withdrawInstruction);
+    
+    // Step 2: Add unwrap instructions if needed
+    if (needsUnwrapToken0) {
+      console.log('🌊 Adding unwrap SOL instruction for token0...');
+      const unwrapInstruction = await createUnwrapSOLInstruction(wallet.publicKey);
+      transaction.add(unwrapInstruction);
+    }
+    
+    if (needsUnwrapToken1) {
+      console.log('🌊 Adding unwrap SOL instruction for token1...');
+      const unwrapInstruction = await createUnwrapSOLInstruction(wallet.publicKey);
+      transaction.add(unwrapInstruction);
+    }
     
     // Get FRESH blockhash to avoid "already processed" error
     console.log('🔄 Getting fresh blockhash...');
@@ -713,6 +982,12 @@ export const createPool = async (
     const initAmount1BN = new BN(finalAmount1 * Math.pow(10, finalDecimals1));
     const openTime = new BN(Math.floor(Date.now() / 1000)); // Open immediately
     
+    // Check if we need to handle native SOL
+    const needsWrapToken0 = isNativeSOL(token0);
+    const needsWrapToken1 = isNativeSOL(token1);
+    
+    console.log('🌊 SOL handling for pool creation:', { needsWrapToken0, needsWrapToken1 });
+    
     console.log('🔧 Creating pool with params:', {
       originalToken0: token0Mint.toString(),
       originalToken1: token1Mint.toString(),
@@ -730,8 +1005,33 @@ export const createPool = async (
       tokensWereSwapped,
     });
     
-    // Build transaction using Anchor with PDA (no signers needed for PDA)
-    const tx = await program.methods
+    // Build transaction
+    const transaction = new Transaction();
+    
+    // Step 1: Wrap SOL if needed (BEFORE initialize instruction)
+    if (needsWrapToken0) {
+      console.log('🌊 Wrapping SOL for token0...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        finalAmount0
+      );
+      transaction.add(...wrapInstructions);
+    }
+    
+    if (needsWrapToken1) {
+      console.log('🌊 Wrapping SOL for token1...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        finalAmount1
+      );
+      transaction.add(...wrapInstructions);
+    }
+    
+    // Step 2: Build the initialize pool instruction
+    console.log('🏗️ Building initialize pool instruction...');
+    const initializeInstruction = await program.methods
       .initialize(initAmount0BN, initAmount1BN, openTime)
       .accounts({
         creator: walletPublicKey,
@@ -755,35 +1055,66 @@ export const createPool = async (
         systemProgram: SystemProgram.programId,
         rent: SYSVAR_RENT_PUBKEY,
       })
-      .transaction(); // No signers array needed for PDA
+      .instruction();
+    
+    transaction.add(initializeInstruction);
     
     // Get latest blockhash
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
-    tx.recentBlockhash = blockhash;
-    tx.feePayer = walletPublicKey;
+    console.log('📡 Getting fresh blockhash...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = walletPublicKey;
     
-    // Now sign with user's wallet (poolStateKeypair already signed by Anchor)
-    const signedTx = await wallet.signTransaction(tx);
+    console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
     
-    // Send and confirm
+    // Small delay to ensure blockhash propagation
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Sign with user's wallet
+    console.log('✍️ Signing transaction...');
+    const signedTx = await wallet.signTransaction(transaction);
+    
+    // Send transaction
+    console.log('📤 Sending transaction...');
     const signature = await connection.sendRawTransaction(signedTx.serialize(), {
       skipPreflight: false,
-      maxRetries: 3,
+      preflightCommitment: 'confirmed',
+      maxRetries: 0,
     });
     
-    await connection.confirmTransaction({
+    console.log(`🔗 Transaction sent: ${signature}`);
+    
+    // Confirm transaction
+    console.log('⏳ Confirming transaction...');
+    const confirmation = await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'confirmed');
+    
+    if (confirmation.value.err) {
+      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
     
     console.log('✅ Pool created successfully:', signature);
     console.log('📍 Pool State PDA:', poolState.toString());
     console.log('🔗 View on Explorer:', `https://explorer.solana.com/tx/${signature}?cluster=devnet`);
     
     return { tx: signature, poolState: poolState };
-  } catch (error) {
-    console.error('Error creating pool:', error);
+  } catch (error: any) {
+    console.error('❌ Error creating pool:', error);
+    
+    // Check if it's an "already processed" error (often a false negative)
+    if (error.message && error.message.includes('already been processed')) {
+      console.log('⚠️ Transaction might have already succeeded - check the pools page!');
+      throw new Error('Transaction might have already been processed. Please check the Pools page to verify if the pool was created.');
+    }
+    
+    // Enhanced error message for account initialization errors
+    if (error.message && error.message.includes('AccountNotInitialized')) {
+      throw new Error('Token account not initialized. Please ensure you have token balances for both tokens.');
+    }
+    
     throw error;
   }
 };

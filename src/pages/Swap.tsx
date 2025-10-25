@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -10,6 +9,7 @@ import {
   swapBaseInput,
   getPoolState,
   sortTokenMints,
+  getTokenBalance,
 } from '../utils/amm';
 import { 
   findBestRoute, 
@@ -110,23 +110,13 @@ const Swap = () => {
       }
       
       try {
-        // Fetch from token balance
-        try {
-          const fromTokenAccount = await getAssociatedTokenAddress(fromToken.mint, publicKey);
-          const fromAccountInfo = await connection.getTokenAccountBalance(fromTokenAccount);
-          setFromBalance(parseFloat(fromAccountInfo.value.uiAmount?.toString() || '0'));
-        } catch (error) {
-          setFromBalance(0);
-        }
+        // Fetch from token balance (handles both native SOL and SPL tokens)
+        const fromBal = await getTokenBalance(connection, fromToken.mint, publicKey);
+        setFromBalance(fromBal);
         
-        // Fetch to token balance
-        try {
-          const toTokenAccount = await getAssociatedTokenAddress(toToken.mint, publicKey);
-          const toAccountInfo = await connection.getTokenAccountBalance(toTokenAccount);
-          setToBalance(parseFloat(toAccountInfo.value.uiAmount?.toString() || '0'));
-        } catch (error) {
-          setToBalance(0);
-        }
+        // Fetch to token balance (handles both native SOL and SPL tokens)
+        const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
+        setToBalance(toBal);
       } catch (error) {
         console.error('Error fetching balances:', error);
         showToast('Failed to fetch token balances', 'error');
@@ -403,21 +393,12 @@ const Swap = () => {
         const refreshBalances = async () => {
           if (!publicKey) return;
           
-          try {
-            const fromTokenAccount = await getAssociatedTokenAddress(fromToken.mint, publicKey);
-            const fromAccountInfo = await connection.getTokenAccountBalance(fromTokenAccount);
-            setFromBalance(parseFloat(fromAccountInfo.value.uiAmount?.toString() || '0'));
-          } catch (error) {
-            setFromBalance(0);
-          }
+          // Fetch balances (handles both native SOL and SPL tokens)
+          const fromBal = await getTokenBalance(connection, fromToken.mint, publicKey);
+          setFromBalance(fromBal);
           
-          try {
-            const toTokenAccount = await getAssociatedTokenAddress(toToken.mint, publicKey);
-            const toAccountInfo = await connection.getTokenAccountBalance(toTokenAccount);
-            setToBalance(parseFloat(toAccountInfo.value.uiAmount?.toString() || '0'));
-          } catch (error) {
-            setToBalance(0);
-          }
+          const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
+          setToBalance(toBal);
         };
         refreshBalances();
         

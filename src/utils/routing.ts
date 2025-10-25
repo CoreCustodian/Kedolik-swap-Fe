@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
-import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getPoolState, getAuthority, getObservationState, sortTokenMints, AMM_CONFIG } from './amm';
+import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getPoolState, getAuthority, getObservationState, sortTokenMints, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction } from './amm';
 import * as anchor from '@coral-xyz/anchor';
 
 export interface SwapRoute {
@@ -215,6 +215,25 @@ export const executeMultiHopSwap = async (
     const program = getProgram(connection, wallet);
     const transaction = new Transaction();
     
+    // Check if we need to wrap/unwrap SOL
+    const inputMint = route.path[0];
+    const outputMint = route.path[route.path.length - 1];
+    const needsWrapInput = isNativeSOL(inputMint);
+    const needsUnwrapOutput = isNativeSOL(outputMint);
+    
+    console.log('🌊 SOL handling:', { needsWrapInput, needsUnwrapOutput });
+    
+    // Step 1: Wrap SOL if input is native SOL
+    if (needsWrapInput) {
+      console.log('🌊 Adding wrap SOL instructions for input...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        amountIn
+      );
+      transaction.add(...wrapInstructions);
+    }
+    
     let currentAmount = amountIn;
     
     // Build all swap instructions
@@ -301,6 +320,13 @@ export const executeMultiHopSwap = async (
     }
     
     console.log(`✅ Built transaction with ${route.hops} swap instructions`);
+    
+    // Step 2: Unwrap SOL if output is native SOL
+    if (needsUnwrapOutput) {
+      console.log('🌊 Adding unwrap SOL instruction for output...');
+      const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
+      transaction.add(unwrapInstruction);
+    }
     
     // Get FRESH latest blockhash - CRITICAL for avoiding "already processed" errors
     console.log('🔄 Getting fresh blockhash...');
