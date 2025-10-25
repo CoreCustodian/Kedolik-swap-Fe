@@ -1,18 +1,33 @@
-import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { useState, useEffect } from 'react';
 import { fetchAllBalances, TokenBalance } from '../utils/balances';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
+import { fetchPools, getLpMint } from '../utils/amm';
+import { getTokenList } from '../config/tokens';
 
 const Profile = () => {
   const { connected, publicKey, disconnect } = useWallet();
   const { connection } = useConnection();
+  const wallet = useAnchorWallet();
   
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [solBalance, setSolBalance] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [txHistory, setTxHistory] = useState<any[]>([]);
+  const [lpTokens, setLpTokens] = useState<Array<{
+    poolAddress: string;
+    token0Symbol: string;
+    token1Symbol: string;
+    lpBalance: number;
+    token0Mint: string;
+    token1Mint: string;
+  }>>([]);
+  const [isLoadingLp, setIsLoadingLp] = useState(true);
   
   // Fetch balances
   useEffect(() => {
+    let isInitialLoad = true;
+    
     const loadBalances = async () => {
       if (!publicKey || !connected) {
         setBalances([]);
@@ -21,7 +36,11 @@ const Profile = () => {
         return;
       }
       
-      setIsLoading(true);
+      // Only show loading spinner on initial load
+      if (isInitialLoad) {
+        setIsLoading(true);
+      }
+      
       try {
         const allBalances = await fetchAllBalances(connection, publicKey);
         const solBal = allBalances.find(b => b.symbol === 'SOL' && b.mint === 'native');
@@ -32,14 +51,81 @@ const Profile = () => {
       } catch (error) {
         console.error('Error fetching balances:', error);
       } finally {
-        setIsLoading(false);
+        if (isInitialLoad) {
+          setIsLoading(false);
+          isInitialLoad = false;
+        }
       }
     };
     
     loadBalances();
-    const interval = setInterval(loadBalances, 10000);
-    return () => clearInterval(interval);
+    // No auto-refresh - balances update after transactions
   }, [publicKey, connected, connection]);
+  
+  // Fetch LP tokens
+  useEffect(() => {
+    let isInitialLoad = true;
+    
+    const loadLpTokens = async () => {
+      if (!publicKey || !connected || !wallet) {
+        setLpTokens([]);
+        setIsLoadingLp(false);
+        return;
+      }
+      
+      // Only show loading spinner on initial load
+      if (isInitialLoad) {
+        setIsLoadingLp(true);
+      }
+      
+      try {
+        // Fetch all pools
+        const pools = await fetchPools(connection, wallet);
+        const tokenList = getTokenList();
+        const lpBalances = [];
+        
+        for (const pool of pools) {
+          try {
+            const lpMint = getLpMint(pool.address);
+            const userLpAccount = await getAssociatedTokenAddress(lpMint, publicKey);
+            
+            // Check if account exists and has balance
+            const lpAccountInfo = await connection.getTokenAccountBalance(userLpAccount);
+            const lpBalance = parseFloat(lpAccountInfo.value.amount) / Math.pow(10, lpAccountInfo.value.decimals);
+            
+            if (lpBalance > 0) {
+              const token0 = tokenList.find(t => t.mint.equals(pool.token0Mint));
+              const token1 = tokenList.find(t => t.mint.equals(pool.token1Mint));
+              
+              lpBalances.push({
+                poolAddress: pool.address.toString(),
+                token0Symbol: token0?.symbol || 'Unknown',
+                token1Symbol: token1?.symbol || 'Unknown',
+                lpBalance,
+                token0Mint: pool.token0Mint.toString(),
+                token1Mint: pool.token1Mint.toString(),
+              });
+            }
+          } catch (error) {
+            // Account might not exist, skip
+            continue;
+          }
+        }
+        
+        setLpTokens(lpBalances);
+      } catch (error) {
+        console.error('Error fetching LP tokens:', error);
+      } finally {
+        if (isInitialLoad) {
+          setIsLoadingLp(false);
+          isInitialLoad = false;
+        }
+      }
+    };
+    
+    loadLpTokens();
+    // No auto-refresh - LP positions update after add/remove liquidity transactions
+  }, [publicKey, connected, connection, wallet]);
   
   // Fetch transaction history
   useEffect(() => {
@@ -176,6 +262,90 @@ const Profile = () => {
             <div className="text-xs text-gray-500 mt-1">Test Network</div>
           </div>
         </div>
+        
+        {/* LP Tokens Section */}
+        {lpTokens.length > 0 && (
+          <div className="card p-6 mb-8">
+            <h2 className="text-2xl font-bold mb-6 font-heading gradient-text">🏊 LP Tokens (Liquidity Positions)</h2>
+            
+            {isLoadingLp ? (
+              <div className="text-center py-12">
+                <div className="inline-block w-12 h-12 border-4 border-brand-cyan/20 border-t-brand-cyan rounded-full animate-spin"></div>
+                <p className="text-gray-400 mt-4">Loading LP positions...</p>
+              </div>
+            ) : (
+              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {lpTokens.map((lp) => (
+                  <div
+                    key={lp.poolAddress}
+                    className="p-5 rounded-xl border bg-gradient-to-br from-brand-cyan/5 to-brand-pink/5 border-brand-cyan/30 hover:border-brand-cyan hover:shadow-glow-brand transition-all"
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand">
+                          {lp.token0Symbol[0]}
+                        </div>
+                        <div className="w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand -ml-4 border-2 border-dark-800">
+                          {lp.token1Symbol[0]}
+                        </div>
+                      </div>
+                      <span className="text-xs px-3 py-1 bg-green-500/20 text-green-400 rounded-full font-semibold border border-green-500/30">
+                        ACTIVE
+                      </span>
+                    </div>
+                    
+                    <div className="mb-4">
+                      <div className="text-xl font-bold text-white mb-1">
+                        {lp.token0Symbol}/{lp.token1Symbol}
+                      </div>
+                      <div className="text-xs text-gray-400">AMM Liquidity Pool V2</div>
+                    </div>
+                    
+                    <div className="space-y-2 mb-4">
+                      <div className="flex items-center justify-between py-2 px-3 bg-dark-900/50 rounded-lg">
+                        <span className="text-xs text-gray-400">LP Balance</span>
+                        <span className="text-sm font-bold text-brand-cyan">{lp.lpBalance.toFixed(6)}</span>
+                      </div>
+                      
+                      <div className="py-2 px-3 bg-dark-900/50 rounded-lg">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-gray-400">Pool Address</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(lp.poolAddress);
+                              alert('Pool address copied!');
+                            }}
+                            className="text-xs text-brand-cyan hover:text-brand-pink transition-colors"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                        <div className="text-xs font-mono text-gray-500 break-all">
+                          {lp.poolAddress.slice(0, 8)}...{lp.poolAddress.slice(-8)}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <a
+                        href="/pools"
+                        className="py-2 text-center bg-gradient-brand text-white rounded-lg text-xs font-semibold hover:brightness-110 transition-all"
+                      >
+                        Add More
+                      </a>
+                      <a
+                        href="/pools"
+                        className="py-2 text-center bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-semibold hover:bg-red-500/30 transition-all"
+                      >
+                        Remove
+                      </a>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         
         {/* Token Balances */}
         <div className="grid lg:grid-cols-2 gap-8 mb-8">

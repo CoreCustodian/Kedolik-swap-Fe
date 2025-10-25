@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { fetchPools, PoolInfo, addLiquidity, createPool } from '../utils/amm';
+import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint } from '../utils/amm';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -17,6 +17,7 @@ const Pools = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [showCreatePool, setShowCreatePool] = useState(false);
   const [showAddLiquidity, setShowAddLiquidity] = useState<PoolInfo | null>(null);
+  const [showRemoveLiquidity, setShowRemoveLiquidity] = useState<PoolInfo | null>(null);
   
   // Toast notifications state
   const [toasts, setToasts] = useState<Array<{
@@ -50,22 +51,32 @@ const Pools = () => {
   
   // Fetch pools
   useEffect(() => {
+    let isInitialLoad = true;
+    
     const loadPools = async () => {
-      setIsLoading(true);
+      // Only show loading spinner on initial load
+      if (isInitialLoad) {
+        setIsLoading(true);
+      }
+      
       try {
         const fetchedPools = await fetchPools(connection, wallet);
         setPools(fetchedPools);
       } catch (error) {
         console.error('Error fetching pools:', error);
-        setPools([]);
+        if (isInitialLoad) {
+          setPools([]);
+        }
       } finally {
-        setIsLoading(false);
+        if (isInitialLoad) {
+          setIsLoading(false);
+          isInitialLoad = false;
+        }
       }
     };
     
     loadPools();
-    const interval = setInterval(loadPools, 30000); // Refresh every 30s
-    return () => clearInterval(interval);
+    // No auto-refresh - user can manually refresh if needed
   }, [connection, wallet]);
   
   // Calculate stats
@@ -81,21 +92,21 @@ const Pools = () => {
     const matchesTab = activeTab === 'all' || (activeTab === 'my' && connected);
     return matchesSearch && matchesTab;
   });
-  
+
   return (
     <>
       <div className="min-h-screen pt-20 px-4 sm:px-6 lg:px-8 pb-20">
         <div className="max-w-7xl mx-auto">
-          {/* Header */}
+        {/* Header */}
           <div className="mb-8 sm:mb-12">
             <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold gradient-text mb-3 sm:mb-4">
               Liquidity Pools
-            </h1>
+          </h1>
             <p className="text-base sm:text-lg text-gray-400">
               Provide liquidity and earn trading fees
             </p>
-          </div>
-          
+        </div>
+
           {/* Stats Grid - Responsive */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6 mb-8 sm:mb-12">
             <div className="card p-4 sm:p-6">
@@ -109,7 +120,7 @@ const Pools = () => {
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-cyan">
                 ${(totalVolume / 1e6).toFixed(2)}M
               </p>
-            </div>
+          </div>
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">Active Pools</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-pink">
@@ -123,7 +134,7 @@ const Pools = () => {
               </p>
             </div>
           </div>
-          
+
           {/* Controls - Responsive */}
           <div className="flex flex-col sm:flex-row gap-4 mb-6 sm:mb-8">
             <div className="flex-1">
@@ -165,8 +176,8 @@ const Pools = () => {
                 </button>
               )}
             </div>
-          </div>
-          
+            </div>
+
           {/* Pools Grid - Responsive */}
           {isLoading ? (
             <div className="flex justify-center items-center py-20">
@@ -187,6 +198,7 @@ const Pools = () => {
                   key={index}
                   pool={pool}
                   onAddLiquidity={() => setShowAddLiquidity(pool)}
+                  onRemoveLiquidity={() => setShowRemoveLiquidity(pool)}
                   connected={connected}
                 />
               ))}
@@ -212,9 +224,36 @@ const Pools = () => {
         <AddLiquidityModal
           pool={showAddLiquidity}
           onClose={() => setShowAddLiquidity(null)}
-          onSuccess={() => {
+          onSuccess={async () => {
             setShowAddLiquidity(null);
+            // Refresh pools after adding liquidity
+            try {
+              const fetchedPools = await fetchPools(connection, wallet);
+              setPools(fetchedPools);
+            } catch (error) {
+              console.error('Error refreshing pools:', error);
+            }
             showToast('Liquidity added successfully!', 'success');
+          }}
+          showToast={showToast}
+          setTxModal={setTxModal}
+        />
+      )}
+      
+      {showRemoveLiquidity && (
+        <RemoveLiquidityModal
+          pool={showRemoveLiquidity}
+          onClose={() => setShowRemoveLiquidity(null)}
+          onSuccess={async () => {
+            setShowRemoveLiquidity(null);
+            // Refresh pools after removing liquidity
+            try {
+              const fetchedPools = await fetchPools(connection, wallet);
+              setPools(fetchedPools);
+            } catch (error) {
+              console.error('Error refreshing pools:', error);
+            }
+            showToast('Liquidity removed successfully!', 'success');
           }}
           showToast={showToast}
           setTxModal={setTxModal}
@@ -230,7 +269,12 @@ const Pools = () => {
         status={txModal.status}
         message={txModal.message}
         txSignature={txModal.txSignature}
-        onClose={() => setTxModal({ ...txModal, isOpen: false })}
+        onClose={() => setTxModal({ 
+          isOpen: false, 
+          status: 'pending', 
+          message: '',
+          txSignature: undefined 
+        })}
       />
     </>
   );
@@ -240,10 +284,12 @@ const Pools = () => {
 const PoolCard = ({
   pool,
   onAddLiquidity,
+  onRemoveLiquidity,
   connected
 }: {
   pool: PoolInfo;
   onAddLiquidity: () => void;
+  onRemoveLiquidity: () => void;
   connected: boolean;
 }) => {
   return (
@@ -260,47 +306,82 @@ const PoolCard = ({
             <h3 className="font-bold text-base sm:text-lg">
               {pool.token0Symbol}/{pool.token1Symbol}
             </h3>
-            <p className="text-xs text-gray-400">0.3% Fee</p>
+            <p className="text-xs text-gray-400">{(pool.tradeFeeRate / 100).toFixed(2)}% Fee</p>
           </div>
         </div>
         <div className="flex items-center gap-1 bg-green-500/20 px-2 py-1 rounded-lg">
           <span className="text-green-400 text-xs sm:text-sm font-semibold">APR</span>
-          <span className="text-green-400 text-xs sm:text-sm font-bold">~42%</span>
+          <span className="text-green-400 text-xs sm:text-sm font-bold">
+            {(() => {
+              // Calculate APR based on total fees collected and TVL
+              const totalFeesToken0 = pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0;
+              const totalFeesToken1 = pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1;
+              const tvl = pool.token0Reserve + pool.token1Reserve;
+              
+              if (tvl > 0) {
+                // Estimate annual fees (current fees * projected annual multiplier)
+                // This is a rough estimate - ideally you'd track 24h fees
+                const estimatedAnnualFees = (totalFeesToken0 + totalFeesToken1) * 365;
+                const apr = (estimatedAnnualFees / tvl) * 100;
+                return apr > 0 ? `~${apr.toFixed(1)}%` : 'N/A';
+              }
+              return 'N/A';
+            })()}
+          </span>
         </div>
       </div>
       
       <div className="space-y-2 sm:space-y-3 mb-4 sm:mb-6">
         <div className="flex justify-between text-xs sm:text-sm">
           <span className="text-gray-400">{pool.token0Symbol} Reserve</span>
-          <span className="font-semibold">{(pool.token0Reserve / Math.pow(10, pool.token0Decimals)).toLocaleString()}</span>
+          <span className="font-semibold">{pool.token0Reserve.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
         </div>
         <div className="flex justify-between text-xs sm:text-sm">
           <span className="text-gray-400">{pool.token1Symbol} Reserve</span>
-          <span className="font-semibold">{(pool.token1Reserve / Math.pow(10, pool.token1Decimals)).toLocaleString()}</span>
+          <span className="font-semibold">{pool.token1Reserve.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
         </div>
         <div className="flex justify-between text-xs sm:text-sm">
-          <span className="text-gray-400">TVL</span>
+          <span className="text-gray-400">Total Liquidity</span>
           <span className="font-semibold text-brand-cyan">
-            ${((pool.token0Reserve + pool.token1Reserve) / 1e9).toFixed(2)}M
+            {pool.token0Reserve.toFixed(2)} {pool.token0Symbol} + {pool.token1Reserve.toFixed(2)} {pool.token1Symbol}
           </span>
         </div>
         <div className="flex justify-between text-xs sm:text-sm">
-          <span className="text-gray-400">24h Volume</span>
-          <span className="font-semibold">${((pool.token0Reserve + pool.token1Reserve) * 0.1 / 1e6).toFixed(2)}K</span>
+          <span className="text-gray-400">Total Fees Collected</span>
+          <span className="font-semibold text-green-400">
+            {(pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0).toFixed(4)} {pool.token0Symbol}
+          </span>
         </div>
-      </div>
+        <div className="flex justify-between text-xs sm:text-sm">
+          <span className="text-gray-400">LP Supply</span>
+          <span className="font-semibold">{(pool.lpSupply / 1e9).toFixed(2)}</span>
+        </div>
+              </div>
       
-      <button
-        onClick={onAddLiquidity}
-        disabled={!connected}
-        className={`w-full py-2 sm:py-3 rounded-xl font-semibold transition-all text-sm sm:text-base ${
-          connected
-            ? 'bg-gradient-brand hover:brightness-110'
-            : 'bg-gray-700 cursor-not-allowed'
-        }`}
-      >
-        {connected ? 'Add Liquidity' : 'Connect Wallet'}
-      </button>
+      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+        <button
+          onClick={onAddLiquidity}
+          disabled={!connected}
+          className={`py-2 sm:py-3 rounded-xl font-semibold transition-all text-xs sm:text-sm ${
+            connected
+              ? 'bg-gradient-brand hover:brightness-110'
+              : 'bg-gray-700 cursor-not-allowed'
+          }`}
+        >
+          {connected ? '+ Add' : 'Connect'}
+        </button>
+        <button
+          onClick={onRemoveLiquidity}
+          disabled={!connected}
+          className={`py-2 sm:py-3 rounded-xl font-semibold transition-all text-xs sm:text-sm ${
+            connected
+              ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+              : 'bg-gray-700 cursor-not-allowed'
+          }`}
+        >
+          {connected ? '- Remove' : 'Connect'}
+              </button>
+            </div>
     </div>
   );
 };
@@ -479,7 +560,7 @@ const CreatePoolModal = ({
             </button>
           </div>
         </div>
-        
+
         {/* Token 1 */}
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">Second Token</label>
@@ -512,14 +593,14 @@ const CreatePoolModal = ({
               MAX
             </button>
           </div>
-        </div>
-        
+              </div>
+
         {/* Info Alert */}
         <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-6">
           <p className="text-xs text-blue-400">
             ℹ️ You'll receive LP tokens representing your share of the pool. Prices will be set based on the ratio you provide.
           </p>
-        </div>
+                </div>
         
         <button
           onClick={handleCreate}
@@ -532,8 +613,8 @@ const CreatePoolModal = ({
         >
           Create Pool
         </button>
-      </div>
-    </div>
+                </div>
+              </div>
   );
 };
 
@@ -665,21 +746,21 @@ const AddLiquidityModal = ({
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl sm:text-2xl font-bold gradient-text">Add Liquidity</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl">✕</button>
-        </div>
-        
+                </div>
+
         <div className="bg-dark-900/50 rounded-lg p-4 mb-6">
           <h3 className="font-bold text-lg mb-2">{pool.token0Symbol}/{pool.token1Symbol}</h3>
           <div className="text-xs text-gray-400 space-y-1">
             <p>Current Price: 1 {pool.token0Symbol} = {(pool.token1Reserve / pool.token0Reserve).toFixed(4)} {pool.token1Symbol}</p>
             <p>Pool Share: You'll own ~0.1% of the pool</p>
           </div>
-        </div>
-        
+                </div>
+
         <div className="mb-4">
           <div className="flex justify-between items-center mb-2">
             <label className="text-sm text-gray-400">{pool.token0Symbol} Amount</label>
             <span className="text-xs text-gray-500">Balance: {balance0.toLocaleString()}</span>
-          </div>
+                  </div>
           <div className="flex gap-2">
             <input
               type="number"
@@ -694,8 +775,8 @@ const AddLiquidityModal = ({
             >
               MAX
             </button>
-          </div>
-        </div>
+                  </div>
+                </div>
         
         <div className="mb-6">
           <div className="flex justify-between items-center mb-2">
@@ -710,8 +791,8 @@ const AddLiquidityModal = ({
             className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none opacity-60"
           />
           <p className="text-xs text-gray-500 mt-1">Amount calculated based on pool ratio</p>
-        </div>
-        
+              </div>
+
         <button
           onClick={handleAdd}
           disabled={!amount0 || !amount1}
@@ -721,7 +802,207 @@ const AddLiquidityModal = ({
               : 'bg-gray-700 cursor-not-allowed'
           }`}
         >
-          Add Liquidity
+                  Add Liquidity
+                </button>
+      </div>
+    </div>
+  );
+};
+
+// Remove Liquidity Modal Component
+const RemoveLiquidityModal = ({
+  pool,
+  onClose,
+  onSuccess,
+  showToast,
+  setTxModal
+}: {
+  pool: PoolInfo;
+  onClose: () => void;
+  onSuccess: () => void;
+  showToast: (message: string, type: 'success' | 'error' | 'info' | 'warning', txSignature?: string) => void;
+  setTxModal: (modal: { isOpen: boolean; status: 'pending' | 'success' | 'error'; message: string; txSignature?: string }) => void;
+}) => {
+  const { connection } = useConnection();
+  const { publicKey } = useWallet();
+  const wallet = useAnchorWallet();
+  
+  const [lpAmount, setLpAmount] = useState('');
+  const [lpBalance, setLpBalance] = useState(0);
+  const [estimatedToken0, setEstimatedToken0] = useState(0);
+  const [estimatedToken1, setEstimatedToken1] = useState(0);
+
+  // Fetch LP balance
+  useEffect(() => {
+    const fetchLpBalance = async () => {
+      if (!publicKey || !connection) return;
+
+      try {
+        const lpMint = getLpMint(pool.address);
+        const userLpAccount = await getAssociatedTokenAddress(lpMint, publicKey);
+        const lpAccountInfo = await connection.getTokenAccountBalance(userLpAccount);
+        const balance = parseFloat(lpAccountInfo.value.amount) / Math.pow(10, lpAccountInfo.value.decimals);
+        setLpBalance(balance);
+      } catch (error) {
+        console.error('Error fetching LP balance:', error);
+        setLpBalance(0);
+      }
+    };
+
+    fetchLpBalance();
+  }, [publicKey, connection, pool]);
+
+  // Calculate estimated tokens to receive
+  useEffect(() => {
+    if (!lpAmount || !pool.lpSupply) {
+      setEstimatedToken0(0);
+      setEstimatedToken1(0);
+      return;
+    }
+
+    const lpAmountNum = parseFloat(lpAmount);
+    const lpSupplyNum = pool.lpSupply / 1e9;
+    
+    if (lpSupplyNum > 0) {
+      const share = lpAmountNum / lpSupplyNum;
+      setEstimatedToken0(pool.token0Reserve * share);
+      setEstimatedToken1(pool.token1Reserve * share);
+    }
+  }, [lpAmount, pool]);
+
+  const handleRemove = async () => {
+    if (!publicKey || !wallet || !lpAmount) {
+      showToast('Please enter an amount', 'error');
+      return;
+    }
+
+    const lpAmountNum = parseFloat(lpAmount);
+    if (lpAmountNum <= 0 || lpAmountNum > lpBalance) {
+      showToast('Invalid LP amount', 'error');
+      return;
+    }
+
+    try {
+      setTxModal({
+        isOpen: true,
+        status: 'pending',
+        message: 'Removing liquidity from pool...'
+      });
+
+      // Calculate minimum amounts with 0.5% slippage
+      const slippage = 0.5;
+      const minToken0 = estimatedToken0 * (1 - slippage / 100);
+      const minToken1 = estimatedToken1 * (1 - slippage / 100);
+
+      const tx = await removeLiquidity(
+        connection,
+        wallet,
+        pool.token0Mint,
+        pool.token1Mint,
+        lpAmountNum,
+        minToken0,
+        minToken1
+      );
+
+      setTxModal({
+        isOpen: true,
+        status: 'success',
+        message: `Successfully removed ${lpAmountNum.toFixed(4)} LP tokens!`,
+        txSignature: tx
+      });
+
+      showToast(
+        `Liquidity removed! Received ${estimatedToken0.toFixed(4)} ${pool.token0Symbol} and ${estimatedToken1.toFixed(4)} ${pool.token1Symbol}`,
+        'success',
+        tx
+      );
+
+      onSuccess();
+      onClose();
+    } catch (error: any) {
+      console.error('Remove liquidity error:', error);
+      setTxModal({
+        isOpen: true,
+        status: 'error',
+        message: error.message || 'Failed to remove liquidity'
+      });
+      showToast(error.message || 'Failed to remove liquidity', 'error');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+      <div className="bg-dark-800 rounded-2xl border border-white/20 p-6 max-w-md w-full shadow-2xl animate-scale-in">
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-2xl font-bold gradient-text">Remove Liquidity</h3>
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+          >
+            ✕
+                </button>
+              </div>
+
+        <div className="mb-6 p-4 bg-brand-cyan/10 border border-brand-cyan/30 rounded-lg">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold">
+              {pool.token0Symbol[0]}
+            </div>
+            <div className="w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold -ml-3">
+              {pool.token1Symbol[0]}
+            </div>
+            <span className="text-lg font-bold">{pool.token0Symbol}/{pool.token1Symbol}</span>
+          </div>
+          <p className="text-xs text-gray-400">Your LP Balance: <span className="text-brand-cyan font-semibold">{lpBalance.toFixed(6)}</span></p>
+        </div>
+
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-2">
+            <label className="text-sm text-gray-400">LP Tokens to Burn</label>
+            <button
+              onClick={() => setLpAmount(lpBalance.toString())}
+              className="text-xs text-brand-cyan hover:text-brand-pink transition-colors font-semibold"
+            >
+              MAX
+            </button>
+          </div>
+          <input
+            type="number"
+            value={lpAmount}
+            onChange={(e) => setLpAmount(e.target.value)}
+            placeholder="0.0"
+            max={lpBalance}
+            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+          />
+        </div>
+
+        {lpAmount && parseFloat(lpAmount) > 0 && (
+          <div className="mb-6 p-4 bg-dark-900/50 rounded-lg border border-white/10">
+            <p className="text-xs text-gray-400 mb-3">You will receive (estimated):</p>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-400">{pool.token0Symbol}</span>
+                <span className="text-sm font-bold text-brand-cyan">≥ {estimatedToken0.toFixed(4)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-400">{pool.token1Symbol}</span>
+                <span className="text-sm font-bold text-brand-pink">≥ {estimatedToken1.toFixed(4)}</span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">* Includes 0.5% slippage protection</p>
+          </div>
+        )}
+
+        <button
+          onClick={handleRemove}
+          disabled={!lpAmount || parseFloat(lpAmount) <= 0 || parseFloat(lpAmount) > lpBalance}
+          className={`w-full py-3 rounded-xl font-semibold transition-all ${
+            lpAmount && parseFloat(lpAmount) > 0 && parseFloat(lpAmount) <= lpBalance
+              ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+              : 'bg-gray-700 cursor-not-allowed'
+          }`}
+        >
+          Remove Liquidity
         </button>
       </div>
     </div>

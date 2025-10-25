@@ -79,6 +79,11 @@ export const getTokenPrice = async (mintAddress: string): Promise<number> => {
 
 // Get token metadata from Jupiter
 export const getTokenMetadata = async (mintAddress: string) => {
+  // Skip on devnet - Jupiter API only works on mainnet
+  if (import.meta.env.VITE_NETWORK === 'devnet') {
+    return null;
+  }
+  
   try {
     const response = await fetch(
       `https://tokens.jup.ag/token/${mintAddress}`

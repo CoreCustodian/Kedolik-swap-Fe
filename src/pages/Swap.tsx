@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
@@ -11,6 +11,12 @@ import {
   getPoolState,
   sortTokenMints,
 } from '../utils/amm';
+import { 
+  findBestRoute, 
+  executeMultiHopSwap,
+  SwapRoute, 
+  calculateRouteOutput 
+} from '../utils/routing';
 
 const Swap = () => {
   const { connected, publicKey } = useWallet();
@@ -36,6 +42,11 @@ const Swap = () => {
   const [poolReserves, setPoolReserves] = useState<{ reserve0: number; reserve1: number } | null>(null);
   const [quoteData, setQuoteData] = useState<{ amountOut: number; priceImpact: number; fee: number } | null>(null);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
+  const [poolRefreshTrigger, setPoolRefreshTrigger] = useState(0);
+  
+  // Multi-hop routing
+  const [swapRoute, setSwapRoute] = useState<SwapRoute | null>(null);
+  const [isMultiHop, setIsMultiHop] = useState(false);
   
   // Toast notifications state
   const [toasts, setToasts] = useState<Array<{
@@ -44,6 +55,10 @@ const Swap = () => {
     type: ToastType;
     txSignature?: string;
   }>>([]);
+  
+  // Refs for click-outside handling
+  const fromTokenDropdownRef = useRef<HTMLDivElement>(null);
+  const toTokenDropdownRef = useRef<HTMLDivElement>(null);
   
   // Transaction modal state
   const [txModal, setTxModal] = useState<{
@@ -57,6 +72,9 @@ const Swap = () => {
     message: '',
   });
   
+  // Cooldown to prevent rapid-fire transactions
+  const [isTransactionInProgress, setIsTransactionInProgress] = useState(false);
+  
   // Toast helper functions
   const showToast = (message: string, type: ToastType, txSignature?: string) => {
     const id = Date.now().toString();
@@ -68,6 +86,21 @@ const Swap = () => {
   };
   
   // Fetch token balances
+  // Handle click outside to close dropdowns
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (fromTokenDropdownRef.current && !fromTokenDropdownRef.current.contains(event.target as Node)) {
+        setShowFromTokenList(false);
+      }
+      if (toTokenDropdownRef.current && !toTokenDropdownRef.current.contains(event.target as Node)) {
+        setShowToTokenList(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   useEffect(() => {
     const fetchBalances = async () => {
       if (!publicKey || !connected) {
@@ -105,36 +138,85 @@ const Swap = () => {
     return () => clearInterval(interval);
   }, [publicKey, connected, fromToken, toToken, connection]);
   
-  // Fetch pool reserves
+  // Fetch pool reserves and check for routes
   useEffect(() => {
     const fetchPoolData = async () => {
       try {
         const { token0, token1 } = sortTokenMints(fromToken.mint, toToken.mint);
         const poolState = getPoolState(token0, token1);
         
+        console.log('🔄 Fetching pool/route for:', {
+          fromToken: fromToken.symbol,
+          toToken: toToken.symbol,
+          poolState: poolState.toString(),
+        });
+        
         const pools = await fetchPools(connection, wallet);
         const pool = pools.find(p => p.address.equals(poolState));
         
         if (pool) {
+          // Direct pool found
+          console.log('✅ Direct pool found:', {
+            reserve0: pool.token0Reserve,
+            reserve1: pool.token1Reserve,
+          });
           setPoolReserves({
             reserve0: pool.token0Reserve,
             reserve1: pool.token1Reserve,
           });
+          setIsMultiHop(false);
+          setSwapRoute(null);
         } else {
+          // No direct pool, look for multi-hop route
+          console.log('❌ No direct pool found, searching for multi-hop route...');
           setPoolReserves(null);
+          
+          try {
+            const route = await findBestRoute(
+              fromToken.mint,
+              toToken.mint,
+              1, // Test with 1 token to find route
+              connection,
+              wallet,
+              3 // Max 3 hops
+            );
+            
+            if (route) {
+              console.log('✅ Multi-hop route found:', {
+                hops: route.hops,
+                expectedOutput: route.expectedOutput,
+              });
+              setSwapRoute(route);
+              setIsMultiHop(true);
+            } else {
+              console.log('❌ No route found');
+              setSwapRoute(null);
+              setIsMultiHop(false);
+            }
+          } catch (error) {
+            console.error('Error finding route:', error);
+            setSwapRoute(null);
+            setIsMultiHop(false);
+          }
         }
       } catch (error) {
         console.error('Error fetching pool data:', error);
         setPoolReserves(null);
+        setSwapRoute(null);
+        setIsMultiHop(false);
       }
     };
     
     fetchPoolData();
-  }, [fromToken, toToken, connection, wallet]);
+    
+    // Also refresh periodically (every 10 seconds)
+    const interval = setInterval(fetchPoolData, 10000);
+    return () => clearInterval(interval);
+  }, [fromToken, toToken, connection, wallet, poolRefreshTrigger]);
   
-  // Calculate quote when amount changes
+  // Calculate quote when amount changes (handles both direct and multi-hop)
   useEffect(() => {
-    if (!fromAmount || !poolReserves) {
+    if (!fromAmount) {
       setToAmount('');
       setQuoteData(null);
       setIsLoadingQuote(false);
@@ -154,15 +236,35 @@ const Swap = () => {
     // Debounce quote calculation
     const timer = setTimeout(() => {
       try {
-        const { token0 } = sortTokenMints(fromToken.mint, toToken.mint);
-        const isInputToken0 = fromToken.mint.equals(token0);
-        
-        const reserveIn = isInputToken0 ? poolReserves.reserve0 : poolReserves.reserve1;
-        const reserveOut = isInputToken0 ? poolReserves.reserve1 : poolReserves.reserve0;
-        
-        const quote = calculateSwapOutput(amount, reserveIn, reserveOut);
-        setQuoteData(quote);
-        setToAmount(quote.amountOut.toFixed(6));
+        if (poolReserves) {
+          // Direct pool swap
+          const { token0 } = sortTokenMints(fromToken.mint, toToken.mint);
+          const isInputToken0 = fromToken.mint.equals(token0);
+          
+          const reserveIn = isInputToken0 ? poolReserves.reserve0 : poolReserves.reserve1;
+          const reserveOut = isInputToken0 ? poolReserves.reserve1 : poolReserves.reserve0;
+          
+          const quote = calculateSwapOutput(amount, reserveIn, reserveOut);
+          setQuoteData(quote);
+          setToAmount(quote.amountOut.toFixed(6));
+        } else if (swapRoute) {
+          // Multi-hop swap
+          const { expectedOutput, priceImpact } = calculateRouteOutput(swapRoute, amount);
+          
+          // Estimate fee as sum of fees across all hops
+          const totalFeeRate = swapRoute.hops * 0.01; // 1% per hop
+          const fee = amount * totalFeeRate;
+          
+          setQuoteData({
+            amountOut: expectedOutput,
+            priceImpact,
+            fee,
+          });
+          setToAmount(expectedOutput.toFixed(6));
+        } else {
+          setToAmount('');
+          setQuoteData(null);
+        }
       } catch (error) {
         console.error('Error calculating quote:', error);
         showToast('Failed to calculate quote', 'error');
@@ -172,10 +274,24 @@ const Swap = () => {
     }, 300);
     
     return () => clearTimeout(timer);
-  }, [fromAmount, poolReserves, fromToken, toToken]);
+  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken]);
   
   // Handle swap
   const handleSwap = async () => {
+    // Prevent multiple transactions at once
+    if (isTransactionInProgress) {
+      showToast('Transaction already in progress. Please wait...', 'warning');
+      return;
+    }
+    
+    // Clear any existing toasts and modals first
+    setToasts([]);
+    setTxModal({
+      isOpen: false,
+      status: 'pending',
+      message: '',
+    });
+    
     // Validation
     if (!connected || !publicKey || !wallet) {
       showToast('Please connect your wallet first', 'warning');
@@ -187,8 +303,8 @@ const Swap = () => {
       return;
     }
     
-    if (!poolReserves) {
-      showToast('Pool not found for this token pair. Create a pool first.', 'error');
+    if (!poolReserves && !swapRoute) {
+      showToast('No swap route found. Try creating a pool or using different tokens.', 'error');
       return;
     }
     
@@ -205,6 +321,9 @@ const Swap = () => {
       return;
     }
     
+    // Mark transaction as in progress
+    setIsTransactionInProgress(true);
+    
     // Show pending modal
     setTxModal({
       isOpen: true,
@@ -218,6 +337,7 @@ const Swap = () => {
       const minimumOut = expectedOut * (1 - slippageBps / 100);
       
       console.log('🔄 Initiating swap:', {
+        type: isMultiHop ? 'multi-hop' : 'direct',
         from: fromToken.symbol,
         to: toToken.symbol,
         amountIn,
@@ -226,16 +346,35 @@ const Swap = () => {
         slippage: slippageBps,
       });
       
-      const signature = await swapBaseInput(
-        connection,
-        wallet,
-        publicKey,
-        fromToken.mint,
-        toToken.mint,
-        amountIn,
-        minimumOut,
-        slippageBps
-      );
+      let signature: string;
+      
+      if (isMultiHop && swapRoute) {
+        // Execute multi-hop swap in ONE transaction
+        console.log('🔄 Executing multi-hop swap (atomic transaction)...');
+        const signatures = await executeMultiHopSwap(
+          swapRoute,
+          amountIn,
+          minimumOut,
+          connection,
+          wallet,
+          publicKey,
+          slippageBps
+        );
+        signature = signatures[0]; // Only one signature for atomic transaction
+        console.log('✅ Multi-hop swap completed atomically');
+      } else {
+        // Execute direct swap
+        signature = await swapBaseInput(
+          connection,
+          wallet,
+          publicKey,
+          fromToken.mint,
+          toToken.mint,
+          amountIn,
+          minimumOut,
+          slippageBps
+        );
+      }
       
       // Show success modal
       setTxModal({
@@ -252,20 +391,91 @@ const Swap = () => {
       setToAmount('');
       setQuoteData(null);
       
+      // Immediately trigger pool reserve refresh
+      console.log('🔄 Triggering pool refresh after successful swap');
+      setPoolRefreshTrigger(prev => prev + 1);
+      
+      // Refresh balances and pool reserves after successful swap
+      setTimeout(() => {
+        console.log('⏱️ Delayed refresh - updating balances and pool reserves');
+        
+        // Trigger balance refresh by re-fetching
+        const refreshBalances = async () => {
+          if (!publicKey) return;
+          
+          try {
+            const fromTokenAccount = await getAssociatedTokenAddress(fromToken.mint, publicKey);
+            const fromAccountInfo = await connection.getTokenAccountBalance(fromTokenAccount);
+            setFromBalance(parseFloat(fromAccountInfo.value.uiAmount?.toString() || '0'));
+          } catch (error) {
+            setFromBalance(0);
+          }
+          
+          try {
+            const toTokenAccount = await getAssociatedTokenAddress(toToken.mint, publicKey);
+            const toAccountInfo = await connection.getTokenAccountBalance(toTokenAccount);
+            setToBalance(parseFloat(toAccountInfo.value.uiAmount?.toString() || '0'));
+          } catch (error) {
+            setToBalance(0);
+          }
+        };
+        refreshBalances();
+        
+        // Also trigger another pool refresh to ensure we have latest data
+        setPoolRefreshTrigger(prev => prev + 1);
+      }, 2000); // Wait 2 seconds for transaction to finalize
+      
+      // Mark transaction as complete after a delay to prevent rapid re-clicking
+      // Longer delay for multi-hop to ensure state updates
+      setTimeout(() => {
+        setIsTransactionInProgress(false);
+      }, isMultiHop ? 5000 : 3000);
+      
     } catch (error: any) {
+      // Mark transaction as complete on error
+      setIsTransactionInProgress(false);
       console.error('Swap error:', error);
+      console.error('Error details:', {
+        message: error.message,
+        logs: error.logs,
+        code: error.code,
+        name: error.name,
+      });
       
       // Parse error message
       let errorMessage = 'Swap failed. Please try again.';
+      
       if (error.message) {
-        if (error.message.includes('User rejected')) {
-          errorMessage = 'Transaction was rejected';
-        } else if (error.message.includes('insufficient')) {
-          errorMessage = 'Insufficient balance or liquidity';
-        } else if (error.message.includes('slippage')) {
-          errorMessage = 'Price moved too much. Increase slippage tolerance.';
+        const msg = error.message.toLowerCase();
+        
+        if (msg.includes('user rejected') || msg.includes('user declined')) {
+          errorMessage = 'Transaction was rejected by user';
+        } else if (msg.includes('insufficient')) {
+          errorMessage = 'Insufficient balance or liquidity in pool';
+        } else if (msg.includes('slippage')) {
+          errorMessage = 'Price moved too much. Try increasing slippage tolerance.';
+        } else if (msg.includes('already in progress')) {
+          errorMessage = 'Another transaction is pending. Please wait.';
+        } else if (msg.includes('simulation failed')) {
+          if (error.logs) {
+            const errorLog = error.logs.find((log: string) => log.includes('Error:'));
+            if (errorLog) {
+              errorMessage = `Simulation failed: ${errorLog}`;
+            } else {
+              errorMessage = 'Transaction simulation failed. Pool may not exist or have insufficient liquidity.';
+            }
+          } else {
+            errorMessage = 'Transaction simulation failed. Check pool liquidity and token balances.';
+          }
+        } else if (msg.includes('blockhash not found')) {
+          errorMessage = 'Network congestion. Please try again.';
+        } else if (msg.includes('custom program error')) {
+          errorMessage = 'Smart contract error. Check token amounts and slippage.';
         } else {
-          errorMessage = error.message;
+          // Use the actual error message if it's short enough
+          errorMessage = error.message.length > 100 
+            ? error.message.substring(0, 100) + '...' 
+            : error.message;
         }
       }
       
@@ -321,44 +531,48 @@ const Swap = () => {
 
           {/* Main Swap Card */}
           <div className="card p-4 sm:p-6 md:p-8 relative overflow-hidden">
-            {/* Settings Button */}
-            <div className="absolute top-4 sm:top-6 right-4 sm:right-6">
+            {/* Settings Button - No overlap */}
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-300">Trade Details</h3>
               <button 
                 onClick={() => setShowSettings(!showSettings)}
-                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all duration-300 group"
+                className={`p-2 rounded-lg transition-all duration-300 group ${
+                  showSettings ? 'bg-gradient-brand text-white' : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                }`}
+                title="Slippage Settings"
               >
-                <svg className="w-5 h-5 text-gray-400 group-hover:text-white group-hover:rotate-90 transition-all duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className={`w-5 h-5 transition-transform duration-300 ${showSettings ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
               </button>
             </div>
 
-            {/* Settings Panel */}
+            {/* Settings Panel - Fixed positioning to avoid overlap */}
             {showSettings && (
-              <div className="mb-6 p-4 bg-dark-900/50 rounded-xl border border-white/10 animate-scale-in">
-                <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+              <div className="mb-6 p-4 sm:p-5 bg-dark-900 rounded-xl border border-white/20 animate-scale-in shadow-xl">
+                <h3 className="text-sm font-semibold mb-4 flex items-center gap-2 text-white">
                   <span>⚙️</span> Transaction Settings
                 </h3>
                 <div>
-                  <label className="text-xs text-gray-400 mb-2 block">Slippage Tolerance</label>
-                  <div className="flex flex-wrap gap-2">
+                  <label className="text-xs text-gray-400 mb-3 block font-medium">Slippage Tolerance</label>
+                  <div className="grid grid-cols-4 gap-2">
                     {['0.1', '0.5', '1.0', '2.0'].map((val) => (
                       <button
                         key={val}
                         onClick={() => setSlippage(val)}
-                        className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                        className={`px-3 py-2 rounded-lg text-sm font-semibold transition-all ${
                           slippage === val
-                            ? 'bg-gradient-brand text-white'
-                            : 'bg-white/5 hover:bg-white/10 text-gray-300'
+                            ? 'bg-gradient-brand text-white shadow-glow-brand'
+                            : 'bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10'
                         }`}
                       >
                         {val}%
                       </button>
                     ))}
                   </div>
-                  <p className="text-xs text-gray-500 mt-2">
-                    Your transaction will revert if price changes unfavorably by more than this percentage.
+                  <p className="text-xs text-gray-400 mt-3 bg-white/5 p-2 rounded">
+                    💡 Your transaction will revert if price changes unfavorably by more than this percentage.
                   </p>
                 </div>
               </div>
@@ -370,7 +584,7 @@ const Swap = () => {
                 <div className="flex justify-between mb-2">
                   <label className="text-sm text-gray-400 font-medium">You Pay</label>
                   <span className="text-xs text-gray-500">
-                    Balance: <span className="text-brand-cyan font-semibold">{fromBalance.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
+                    Balance: <span className="text-brand-cyan font-semibold">{fromBalance.toFixed(2)}</span>
                   </span>
                 </div>
                 <div className="bg-dark-900/50 rounded-2xl p-4 sm:p-5 border border-white/10 hover:border-brand-cyan/30 transition-all duration-300">
@@ -383,10 +597,9 @@ const Swap = () => {
                         onChange={(e) => setFromAmount(e.target.value)}
                         className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600"
                       />
-                      <div className="text-xs sm:text-sm text-gray-500 mt-1">~$0.00</div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      <div className="relative">
+                      <div className="relative" ref={fromTokenDropdownRef}>
                         <button 
                           onClick={() => setShowFromTokenList(!showFromTokenList)}
                           className="flex items-center gap-2 bg-gradient-brand px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm"
@@ -402,7 +615,7 @@ const Swap = () => {
                         
                         {/* Token Dropdown */}
                         {showFromTokenList && (
-                          <div className="absolute top-full mt-2 right-0 bg-dark-800 rounded-xl border border-white/10 shadow-xl z-50 min-w-[200px] max-h-[300px] overflow-y-auto custom-scrollbar">
+                          <div className="absolute top-full mt-2 right-0 bg-dark-900 rounded-xl border border-white/30 shadow-2xl z-[100] min-w-[220px] max-h-[300px] overflow-y-auto custom-scrollbar">
                             {tokenList.filter(t => t.symbol !== toToken.symbol).map((token) => (
                               <button
                                 key={token.symbol}
@@ -452,7 +665,7 @@ const Swap = () => {
                 <div className="flex justify-between mb-2">
                   <label className="text-sm text-gray-400 font-medium">You Receive</label>
                   <span className="text-xs text-gray-500">
-                    Balance: <span className="text-brand-cyan font-semibold">{toBalance.toLocaleString(undefined, { maximumFractionDigits: 6 })}</span>
+                    Balance: <span className="text-brand-cyan font-semibold">{toBalance.toFixed(2)}</span>
                   </span>
                 </div>
                 <div className="bg-dark-900/50 rounded-2xl p-4 sm:p-5 border border-white/10 hover:border-brand-pink/30 transition-all duration-300 relative">
@@ -470,9 +683,8 @@ const Swap = () => {
                         readOnly
                         className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600"
                       />
-                      <div className="text-xs sm:text-sm text-gray-500 mt-1">~$0.00</div>
                     </div>
-                    <div className="relative">
+                    <div className="relative" ref={toTokenDropdownRef}>
                       <button 
                         onClick={() => setShowToTokenList(!showToTokenList)}
                         className="flex items-center gap-2 bg-gradient-brand px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm"
@@ -488,7 +700,7 @@ const Swap = () => {
                       
                       {/* Token Dropdown */}
                       {showToTokenList && (
-                        <div className="absolute top-full mt-2 right-0 bg-dark-800 rounded-xl border border-white/10 shadow-xl z-50 min-w-[200px] max-h-[300px] overflow-y-auto custom-scrollbar">
+                        <div className="absolute top-full mt-2 right-0 bg-dark-900 rounded-xl border border-white/30 shadow-2xl z-[100] min-w-[220px] max-h-[300px] overflow-y-auto custom-scrollbar">
                           {tokenList.filter(t => t.symbol !== fromToken.symbol).map((token) => (
                             <button
                               key={token.symbol}
@@ -515,45 +727,58 @@ const Swap = () => {
               </div>
             </div>
 
-            {/* Info Box */}
+            {/* Swap Info - Simplified */}
             {quoteData && (
-              <div className="mt-6 p-4 bg-dark-900/50 border border-white/10 rounded-xl">
-                <div className="space-y-2 text-xs sm:text-sm">
+              <div className="mt-6 p-4 bg-dark-900 rounded-xl border border-white/20">
+                <div className="space-y-2.5 text-sm">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">Rate</span>
-                    <span className="font-semibold">
-                      1 {fromToken.symbol} = {(quoteData.amountOut / parseFloat(fromAmount || '1')).toFixed(4)} {toToken.symbol}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-400">Price Impact</span>
-                    <span className={`font-semibold ${quoteData.priceImpact > 1 ? 'text-red-400' : quoteData.priceImpact > 0.5 ? 'text-yellow-400' : 'text-green-400'}`}>
-                      {quoteData.priceImpact.toFixed(2)}%
+                    <span className="font-semibold text-white">
+                      1 {fromToken.symbol} ≈ {(quoteData.amountOut / parseFloat(fromAmount || '1')).toFixed(4)} {toToken.symbol}
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">Min. Received</span>
-                    <span className="font-semibold">
-                      {(parseFloat(toAmount) * (1 - parseFloat(slippage) / 100)).toFixed(6)} {toToken.symbol}
+                    <span className="font-semibold text-white">
+                      {(parseFloat(toAmount) * (1 - parseFloat(slippage) / 100)).toFixed(4)} {toToken.symbol}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-gray-400">Trading Fee</span>
-                    <span className="font-semibold">{quoteData.fee.toFixed(6)} {fromToken.symbol}</span>
-                  </div>
-                  <div className="flex justify-between items-center pt-2 border-t border-white/10">
-                    <span className="text-gray-400">Route</span>
-                    <span className="font-semibold text-brand-cyan text-xs">Kedolik AMM</span>
-                  </div>
+                  {isMultiHop && swapRoute && (
+                    <div className="flex justify-between items-center pt-2 border-t border-white/10">
+                      <span className="text-gray-400">Route</span>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="font-semibold text-brand-cyan text-xs">
+                          {swapRoute.path.map((mint) => {
+                            const token = getTokenList().find(t => t.mint.equals(mint));
+                            return token?.symbol || '?';
+                          }).join(' → ')}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* Pool Not Found Warning */}
-            {!poolReserves && fromAmount && (
+            {/* No Route Warning */}
+            {!poolReserves && !swapRoute && fromAmount && (
               <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg animate-scale-in">
                 <div className="text-xs text-center text-yellow-400 flex items-center justify-center gap-2">
-                  <span>⚠️</span> Pool not found for {fromToken.symbol}/{toToken.symbol}. Please create a pool first.
+                  <span>⚠️</span> No swap route found for {fromToken.symbol}/{toToken.symbol}. Create a direct pool or intermediate pools.
+                </div>
+              </div>
+            )}
+            
+            {/* Multi-Hop Info - Simplified */}
+            {isMultiHop && swapRoute && (
+              <div className="mt-4 p-3 bg-brand-cyan/10 border border-brand-cyan/30 rounded-lg animate-scale-in">
+                <div className="flex items-center gap-2 text-sm">
+                  <svg className="w-5 h-5 text-brand-cyan flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                  <span className="text-brand-cyan font-medium">
+                    Multi-hop swap via {swapRoute.hops} pool{swapRoute.hops > 1 ? 's' : ''} in one transaction
+                  </span>
                 </div>
               </div>
             )}
@@ -561,7 +786,7 @@ const Swap = () => {
             {/* Swap Action Button */}
             <button 
               onClick={handleSwap}
-              disabled={!connected || !poolReserves || !fromAmount || !toAmount || isLoadingQuote}
+              disabled={!connected || (!poolReserves && !swapRoute) || !fromAmount || !toAmount || isLoadingQuote}
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
               {!connected ? (
@@ -576,19 +801,19 @@ const Swap = () => {
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   Calculating...
                 </>
-              ) : !poolReserves ? (
+              ) : !poolReserves && !swapRoute ? (
                 <>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Pool Not Available
+                  No Route Available
                 </>
               ) : (
                 <>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                   </svg>
-                  Swap
+                  {isMultiHop ? `Swap (${swapRoute?.hops} Hops)` : 'Swap'}
                 </>
               )}
             </button>
@@ -613,7 +838,12 @@ const Swap = () => {
         status={txModal.status}
         message={txModal.message}
         txSignature={txModal.txSignature}
-        onClose={() => setTxModal({ ...txModal, isOpen: false })}
+        onClose={() => setTxModal({ 
+          isOpen: false, 
+          status: 'pending', 
+          message: '',
+          txSignature: undefined 
+        })}
       />
     </>
   );
