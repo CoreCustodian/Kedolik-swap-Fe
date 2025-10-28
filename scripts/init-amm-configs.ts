@@ -19,7 +19,7 @@ import { FEE_TIER_CONFIGS } from '../src/config/fees';
 const PROGRAM_ID = new PublicKey('GCm8bqvSuJ4nwj3SN3pk2eSJWTwcRjkU6KhXE96AnBod');
 const RPC_URL = 'https://api.devnet.solana.com';
 const ADMIN_PUBKEY = new PublicKey('GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ');
-
+ 
 interface AmmConfigParams {
   index: number;
   tradeFeeRate: number;    // basis points (e.g., 100 = 1%, 30 = 0.3%)
