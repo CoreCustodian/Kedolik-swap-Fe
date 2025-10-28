@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
-import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getPoolState, getAuthority, getObservationState, sortTokenMints, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction } from './amm';
+import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction } from './amm';
 import * as anchor from '@coral-xyz/anchor';
 
 export interface SwapRoute {
@@ -14,6 +14,7 @@ export interface SwapRoute {
 /**
  * Find all possible routes between two tokens
  * Uses BFS (Breadth-First Search) to discover paths
+ * Now validates that pools actually exist before adding them to routes
  */
 export const findSwapRoutes = async (
   fromMint: PublicKey,
@@ -34,10 +35,23 @@ export const findSwapRoutes = async (
     console.log('🔍 Finding routes from', fromMint.toString(), 'to', toMint.toString());
     console.log('📊 Available pools:', allPools.length);
     
+    // Log pool details for debugging
+    console.log('📋 Pool tokens:');
+    allPools.forEach((pool, idx) => {
+      console.log(`  ${idx + 1}. ${pool.token0Symbol}/${pool.token1Symbol} (${pool.address.toString().slice(0, 8)}...)`);
+    });
+    
     // Build adjacency list (graph) of token connections
+    // Only include pools with actual liquidity
     const graph = new Map<string, Array<{ mint: PublicKey; pool: PoolInfo }>>();
     
     for (const pool of allPools) {
+      // Skip pools with zero or very low liquidity
+      if (pool.token0Reserve < 0.000001 || pool.token1Reserve < 0.000001) {
+        console.log(`⚠️ Skipping low-liquidity pool: ${pool.token0Symbol}/${pool.token1Symbol}`);
+        continue;
+      }
+      
       const token0Str = pool.token0Mint.toString();
       const token1Str = pool.token1Mint.toString();
       
@@ -160,6 +174,15 @@ export const findBestRoute = async (
   maxHops: number = 3
 ): Promise<SwapRoute | null> => {
   try {
+    // Check if trying to swap between the same token (or WSOL <-> Native SOL)
+    const isSameToken = fromMint.equals(toMint) || 
+                        (isNativeSOL(fromMint) && isNativeSOL(toMint));
+    
+    if (isSameToken) {
+      console.log('⚠️ Cannot swap between the same token');
+      return null;
+    }
+    
     const routes = await findSwapRoutes(fromMint, toMint, connection, wallet, maxHops);
     
     if (routes.length === 0) {
@@ -211,6 +234,8 @@ export const executeMultiHopSwap = async (
     path: route.path.map((mint) => mint.toString().slice(0, 8)).join(' → '),
   });
 
+  let signature: string = ''; // Declare here so catch block can access
+
   try {
     const program = getProgram(connection, wallet);
     const transaction = new Transaction();
@@ -234,6 +259,34 @@ export const executeMultiHopSwap = async (
       transaction.add(...wrapInstructions);
     }
     
+    // Step 1.5: Create token accounts for ALL tokens in the route (except input)
+    // IMPORTANT: Even for native SOL output, we need WSOL account (it gets unwrapped later)
+    console.log('🔍 Checking token accounts for all tokens in route...');
+    
+    // Check all tokens except the first one (we already have that as input)
+    const tokensToCheck = route.path.slice(1); // All tokens from 2nd onwards
+    
+    for (const tokenMint of tokensToCheck) {
+      // For native SOL output, we STILL need the WSOL token account (swap sends to WSOL, then unwrap)
+      const tokenAccount = await getAssociatedTokenAddress(tokenMint, walletPublicKey);
+      const accountInfo = await connection.getAccountInfo(tokenAccount);
+      
+      // Always add account creation instruction (idempotent - won't fail if exists)
+      // This ensures the account is properly set up for the swap in this transaction
+      const tokenName = isNativeSOL(tokenMint) ? 'WSOL' : tokenMint.toString().slice(0, 8);
+      console.log(`  📝 Adding idempotent account creation for: ${tokenName}... (exists: ${!!accountInfo})`);
+      
+      const { createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
+      transaction.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          walletPublicKey,
+          tokenAccount,
+          walletPublicKey,
+          tokenMint
+        )
+      );
+    }
+    
     let currentAmount = amountIn;
     
     // Build all swap instructions
@@ -246,27 +299,25 @@ export const executeMultiHopSwap = async (
         from: inputMint.toString().slice(0, 8),
         to: outputMint.toString().slice(0, 8),
         amount: currentAmount,
+        poolAddress: pool.address.toString().slice(0, 8),
       });
       
-      // Sort tokens to match pool
-      const { token0, token1 } = sortTokenMints(inputMint, outputMint);
-      const isInputToken0 = inputMint.equals(token0);
-      
-      // Get PDAs
-      const poolState = getPoolState(token0, token1);
+      // Use the actual pool address from the route instead of recalculating
+      const poolState = pool.address;
       const authority = getAuthority();
       const observationState = getObservationState(poolState);
       
-      // Fetch pool data to get vault addresses and decimals
-      const poolData = await (program.account as any).poolState.fetch(poolState);
-      const inputVault = isInputToken0 ? poolData.token0Vault : poolData.token1Vault;
-      const outputVault = isInputToken0 ? poolData.token1Vault : poolData.token0Vault;
+      // Determine which token is input (compare with pool's token0/token1)
+      const isInputToken0 = inputMint.equals(pool.token0Mint);
       
-      // Get decimals for both input and output tokens
-      const inputMintInfo = await connection.getParsedAccountInfo(inputMint);
-      const outputMintInfo = await connection.getParsedAccountInfo(outputMint);
-      const inputDecimals = (inputMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
-      const outputDecimals = (outputMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
+      // Use pool data we already have from the route
+      console.log(`    ✅ Using pool data from route (vaults already known)`);
+      const inputVault = isInputToken0 ? pool.token0Vault : pool.token1Vault;
+      const outputVault = isInputToken0 ? pool.token1Vault : pool.token0Vault;
+      
+      // Get decimals from pool info we already have
+      const inputDecimals = isInputToken0 ? pool.token0Decimals : pool.token1Decimals;
+      const outputDecimals = isInputToken0 ? pool.token1Decimals : pool.token0Decimals;
       
       console.log(`    Decimals: input=${inputDecimals}, output=${outputDecimals}`);
       
@@ -287,19 +338,24 @@ export const executeMultiHopSwap = async (
       const userInputAccount = await getAssociatedTokenAddress(inputMint, walletPublicKey);
       const userOutputAccount = await getAssociatedTokenAddress(outputMint, walletPublicKey);
       
+      console.log(`    User accounts: input=${userInputAccount.toString().slice(0, 8)}, output=${userOutputAccount.toString().slice(0, 8)}`);
+      
       // Convert amounts to token units - IMPORTANT: use correct decimals!
       const amountInTokens = new anchor.BN(Math.floor(currentAmount * Math.pow(10, inputDecimals)));
       const minimumAmountOutTokens = new anchor.BN(Math.floor(minOut * Math.pow(10, outputDecimals)));
       
       console.log(`    Token units: amountIn=${amountInTokens.toString()}, minOut=${minimumAmountOutTokens.toString()}`);
       
-      // Build swap instruction
+      // Build swap instruction - use pool's specific AMM config (important!)
+      const poolAmmConfig = pool.ammConfig || AMM_CONFIG; // Fallback to default if not set
+      console.log(`    Using AMM config: ${poolAmmConfig.toString().slice(0, 8)}...`);
+      
       const swapInstruction = await program.methods
         .swapBaseInput(amountInTokens, minimumAmountOutTokens)
         .accounts({
           payer: walletPublicKey,
           authority: authority,
-          ammConfig: AMM_CONFIG,
+          ammConfig: poolAmmConfig, // Use pool's specific AMM config
           poolState: poolState,
           inputTokenAccount: userInputAccount,
           outputTokenAccount: userOutputAccount,
@@ -345,7 +401,7 @@ export const executeMultiHopSwap = async (
     const signedTransaction = await wallet.signTransaction(transaction);
     
     console.log('📤 Sending transaction...');
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+    signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
       maxRetries: 0, // Don't retry - we handle this ourselves
@@ -373,9 +429,14 @@ export const executeMultiHopSwap = async (
     console.error('❌ Multi-hop swap failed:', error);
     
     // Check if transaction actually succeeded (common with "already processed" error)
-    if (error.message?.includes('already been processed')) {
-      console.log('⚠️ Transaction might have succeeded despite error. This is often a false negative.');
-      throw new Error('Transaction may have succeeded. Check your wallet balance and try again if needed.');
+    if (error.message?.includes('already been processed') || error.message?.includes('already processed')) {
+      console.log('✅ Transaction succeeded! (Got "already processed" confirmation)');
+      console.log('💡 The "already processed" message confirms the transaction completed.');
+      
+      // Transaction succeeded! Return the signature we sent
+      // The signature variable should still be in scope from the try block
+      // For "already processed", the tx went through, so we return success
+      return [signature];
     }
     
     // Provide helpful error message

@@ -1,12 +1,18 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
+import { useWallet } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
+
+const ADMIN_ADDRESS = new PublicKey('JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa');
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
+  const { publicKey } = useWallet();
 
   const isActive = (path: string) => location.pathname === path;
+  const isAdmin = publicKey ? publicKey.equals(ADMIN_ADDRESS) : false;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-dark-900/70 backdrop-blur-xl border-b border-white/10">
@@ -66,6 +72,22 @@ const Navbar = () => {
               Pools
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-brand scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
             </Link>
+
+            {isAdmin && (
+              <Link 
+                to="/admin"
+                className={`relative px-4 py-2 rounded-lg font-medium transition-all duration-300 group ${
+                  isActive('/admin') 
+                    ? 'text-white bg-gradient-brand' 
+                    : 'text-yellow-400 hover:text-yellow-300 border border-yellow-400/20 hover:border-yellow-400/40'
+                }`}
+              >
+                👑 Admin
+                {isActive('/admin') && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-400"></div>
+                )}
+              </Link>
+            )}
 
             
 
@@ -174,7 +196,20 @@ const Navbar = () => {
               Profile
             </Link>
             
-            
+            {isAdmin && (
+              <Link 
+                to="/admin"
+                className={`flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all duration-300 ${
+                  isActive('/admin') 
+                    ? 'bg-gradient-brand text-white shadow-glow-brand' 
+                    : 'text-yellow-400 hover:bg-yellow-400/10 border border-yellow-400/20'
+                }`}
+                onClick={() => setIsOpen(false)}
+              >
+                <span className="text-xl">👑</span>
+                Admin Panel
+              </Link>
+            )}
             
             <div className="h-px bg-white/10 my-4"></div>
             

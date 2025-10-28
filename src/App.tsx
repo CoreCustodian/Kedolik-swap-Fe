@@ -7,7 +7,7 @@ import Home from './pages/Home';
 import Swap from './pages/Swap';
 import Pools from './pages/Pools';
 import Profile from './pages/Profile';
-// Admin page removed
+import Admin from './pages/Admin';
 
 function App() {
   return (
@@ -22,7 +22,7 @@ function App() {
                 <Route path="/swap" element={<Swap />} />
                 <Route path="/pools" element={<Pools />} />
                 <Route path="/profile" element={<Profile />} />
-                
+                <Route path="/admin" element={<Admin />} />
               </Routes>
             </div>
           </div>

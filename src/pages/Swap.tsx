@@ -10,6 +10,7 @@ import {
   getPoolState,
   sortTokenMints,
   getTokenBalance,
+  clearPoolCache,
 } from '../utils/amm';
 import { 
   findBestRoute, 
@@ -132,6 +133,19 @@ const Swap = () => {
   useEffect(() => {
     const fetchPoolData = async () => {
       try {
+        // Check if trying to swap same token (including WSOL <-> Native SOL)
+        const { isNativeSOL } = await import('../utils/amm');
+        const isSameToken = fromToken.mint.equals(toToken.mint) || 
+                           (isNativeSOL(fromToken.mint) && isNativeSOL(toToken.mint));
+        
+        if (isSameToken) {
+          console.log('⚠️ Cannot swap between the same token');
+          setPoolReserves(null);
+          setSwapRoute(null);
+          setIsMultiHop(false);
+          return;
+        }
+        
         const { token0, token1 } = sortTokenMints(fromToken.mint, toToken.mint);
         const poolState = getPoolState(token0, token1);
         
@@ -199,8 +213,9 @@ const Swap = () => {
     
     fetchPoolData();
     
-    // Also refresh periodically (every 10 seconds)
-    const interval = setInterval(fetchPoolData, 10000);
+    // Refresh less frequently to avoid RPC rate limits (every 15 seconds)
+    // Pool cache handles updates between refreshes
+    const interval = setInterval(fetchPoolData, 15000);
     return () => clearInterval(interval);
   }, [fromToken, toToken, connection, wallet, poolRefreshTrigger]);
   
@@ -221,10 +236,9 @@ const Swap = () => {
       return;
     }
     
-    setIsLoadingQuote(true);
-    
-    // Debounce quote calculation
-    const timer = setTimeout(() => {
+    // Calculate immediately for instant feedback (no debounce)
+    // This provides instant visual feedback while the accurate calculation is pending
+    const calculateQuote = () => {
       try {
         if (poolReserves) {
           // Direct pool swap
@@ -238,17 +252,23 @@ const Swap = () => {
           setQuoteData(quote);
           setToAmount(quote.amountOut.toFixed(6));
         } else if (swapRoute) {
-          // Multi-hop swap
+          // Multi-hop swap - use actual fee rates from pools
           const { expectedOutput, priceImpact } = calculateRouteOutput(swapRoute, amount);
           
-          // Estimate fee as sum of fees across all hops
-          const totalFeeRate = swapRoute.hops * 0.01; // 1% per hop
-          const fee = amount * totalFeeRate;
+          // Calculate total fee more accurately based on actual pool fees
+          let totalFee = 0;
+          let currentAmount = amount;
+          for (const pool of swapRoute.pools) {
+            const feeRate = pool.tradeFeeRate / 1000000; // Convert basis points to decimal
+            const hopFee = currentAmount * feeRate;
+            totalFee += hopFee;
+            currentAmount = currentAmount - hopFee; // Reduce amount for next hop
+          }
           
           setQuoteData({
             amountOut: expectedOutput,
             priceImpact,
-            fee,
+            fee: totalFee,
           });
           setToAmount(expectedOutput.toFixed(6));
         } else {
@@ -257,11 +277,18 @@ const Swap = () => {
         }
       } catch (error) {
         console.error('Error calculating quote:', error);
-        showToast('Failed to calculate quote', 'error');
-      } finally {
-        setIsLoadingQuote(false);
       }
-    }, 300);
+    };
+    
+    // Call immediately for instant feedback
+    setIsLoadingQuote(true);
+    calculateQuote();
+    
+    // Also use a tiny debounce to prevent excessive re-renders during fast typing
+    const timer = setTimeout(() => {
+      calculateQuote();
+      setIsLoadingQuote(false);
+    }, 50); // Minimal debounce (50ms) for render optimization
     
     return () => clearTimeout(timer);
   }, [fromAmount, poolReserves, swapRoute, fromToken, toToken]);
@@ -381,8 +408,9 @@ const Swap = () => {
       setToAmount('');
       setQuoteData(null);
       
-      // Immediately trigger pool reserve refresh
-      console.log('🔄 Triggering pool refresh after successful swap');
+      // Clear pool cache and trigger refresh after successful swap
+      console.log('🔄 Clearing cache and triggering pool refresh after successful swap');
+      clearPoolCache(); // Clear cache to force fresh fetch
       setPoolRefreshTrigger(prev => prev + 1);
       
       // Refresh balances and pool reserves after successful swap
@@ -473,6 +501,11 @@ const Swap = () => {
   
   // Handle token switch
   const handleSwitchTokens = () => {
+    // Don't allow switching if tokens are the same (edge case)
+    if (fromToken.mint.equals(toToken.mint)) {
+      return;
+    }
+    
     setFromToken(toToken);
     setToToken(fromToken);
     setFromAmount(toAmount);
@@ -708,25 +741,62 @@ const Swap = () => {
               </div>
             </div>
 
-            {/* Swap Info - Simplified */}
+            {/* Swap Info - Enhanced */}
             {quoteData && (
               <div className="mt-6 p-4 bg-dark-900 rounded-xl border border-white/20">
                 <div className="space-y-2.5 text-sm">
+                  {/* Rate */}
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">Rate</span>
                     <span className="font-semibold text-white">
-                      1 {fromToken.symbol} ≈ {(quoteData.amountOut / parseFloat(fromAmount || '1')).toFixed(4)} {toToken.symbol}
+                      1 {fromToken.symbol} ≈ {(quoteData.amountOut / parseFloat(fromAmount || '1')).toFixed(6)} {toToken.symbol}
                     </span>
                   </div>
+                  
+                  {/* Price Impact with color coding */}
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-400">Min. Received</span>
-                    <span className="font-semibold text-white">
-                      {(parseFloat(toAmount) * (1 - parseFloat(slippage) / 100)).toFixed(4)} {toToken.symbol}
+                    <span className="text-gray-400 flex items-center gap-1">
+                      Price Impact
+                      <span className="text-xs">💹</span>
+                    </span>
+                    <span className={`font-semibold ${
+                      quoteData.priceImpact < 1 ? 'text-green-400' :
+                      quoteData.priceImpact < 3 ? 'text-yellow-400' :
+                      quoteData.priceImpact < 5 ? 'text-orange-400' :
+                      'text-red-400'
+                    }`}>
+                      {quoteData.priceImpact < 0.01 ? '< 0.01' : quoteData.priceImpact.toFixed(2)}%
                     </span>
                   </div>
+                  
+                  {/* Slippage Tolerance */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Slippage Tolerance</span>
+                    <span className="font-semibold text-white">
+                      {slippage}%
+                    </span>
+                  </div>
+                  
+                  {/* Fee */}
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Estimated Fee</span>
+                    <span className="font-semibold text-white">
+                      {quoteData.fee.toFixed(6)} {fromToken.symbol}
+                    </span>
+                  </div>
+                  
+                  {/* Min Received */}
+                  <div className="flex justify-between items-center pt-2 border-t border-white/10">
+                    <span className="text-gray-400 font-medium">Min. Received</span>
+                    <span className="font-bold text-brand-cyan">
+                      {(parseFloat(toAmount) * (1 - parseFloat(slippage) / 100)).toFixed(6)} {toToken.symbol}
+                    </span>
+                  </div>
+                  
+                  {/* Route for multi-hop */}
                   {isMultiHop && swapRoute && (
                     <div className="flex justify-between items-center pt-2 border-t border-white/10">
-                      <span className="text-gray-400">Route</span>
+                      <span className="text-gray-400">Route ({swapRoute.hops} {swapRoute.hops === 1 ? 'hop' : 'hops'})</span>
                       <div className="flex flex-col items-end gap-1">
                         <span className="font-semibold text-brand-cyan text-xs">
                           {swapRoute.path.map((mint) => {
@@ -741,6 +811,15 @@ const Swap = () => {
               </div>
             )}
 
+            {/* High Price Impact Warning */}
+            {quoteData && quoteData.priceImpact > 5 && (
+              <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg animate-scale-in">
+                <div className="text-xs text-center text-red-400 flex items-center justify-center gap-2">
+                  <span>⚠️</span> High price impact ({quoteData.priceImpact.toFixed(2)}%)! Consider adding more liquidity to pools or reducing swap amount.
+                </div>
+              </div>
+            )}
+            
             {/* No Route Warning */}
             {!poolReserves && !swapRoute && fromAmount && (
               <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg animate-scale-in">

@@ -316,14 +316,42 @@ export interface PoolInfo {
   creatorFeesToken1: number;
   // Trading fee rate (from AMM config)
   tradeFeeRate: number; // in basis points (100 = 1%)
+  // AMM config address for this pool (important for multi-hop swaps)
+  ammConfig: PublicKey;
 }
 
-// Fetch all pools
+// Pool cache to reduce RPC calls
+let poolCache: { pools: PoolInfo[]; timestamp: number } | null = null;
+const POOL_CACHE_TTL = 10000; // 10 seconds cache
+let isFetchingPools = false; // Prevent concurrent fetches
+
+// Fetch all pools with caching
 export const fetchPools = async (
   connection: Connection,
-  wallet: any
+  wallet: any,
+  forceRefresh: boolean = false
 ): Promise<PoolInfo[]> => {
+  // Return cached pools if still valid
+  const now = Date.now();
+  if (!forceRefresh && poolCache && (now - poolCache.timestamp) < POOL_CACHE_TTL) {
+    console.log('📦 Using cached pools (' + Math.round((POOL_CACHE_TTL - (now - poolCache.timestamp)) / 1000) + 's remaining)');
+    return poolCache.pools;
+  }
+  
+  // Prevent concurrent fetches
+  if (isFetchingPools) {
+    console.log('⏳ Pool fetch already in progress, waiting...');
+    // Wait for ongoing fetch
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    if (poolCache) {
+      return poolCache.pools;
+    }
+  }
+  
+  isFetchingPools = true;
+  
   try {
+    console.log('🔄 Fetching pools from RPC...');
     const program = getProgram(connection, wallet);
     
     // Fetch AMM config to get trade fee rate
@@ -384,14 +412,36 @@ export const fetchPools = async (
         creatorFeesToken0,
         creatorFeesToken1,
         tradeFeeRate,
+        ammConfig: data.ammConfig || AMM_CONFIG, // Store pool's AMM config
       });
     }
+    
+    // Cache the results
+    poolCache = {
+      pools: poolInfos,
+      timestamp: Date.now()
+    };
+    
+    console.log('✅ Pools cached:', poolInfos.length, 'pools');
     
     return poolInfos;
   } catch (error) {
     console.error('Error fetching pools:', error);
+    // Return cached pools if available, even if expired
+    if (poolCache) {
+      console.warn('⚠️ Using stale cache due to fetch error');
+      return poolCache.pools;
+    }
     return [];
+  } finally {
+    isFetchingPools = false;
   }
+};
+
+// Export function to manually clear cache (useful after creating/modifying pools)
+export const clearPoolCache = () => {
+  poolCache = null;
+  console.log('🗑️ Pool cache cleared');
 };
 
 // Get token symbol from mint - uses token configuration
