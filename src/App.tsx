@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { WalletProvider } from './contexts/WalletProvider';
 import { UserProvider } from './contexts/UserContext';
 import Navbar from './components/Navbar';
@@ -6,6 +7,7 @@ import Home from './pages/Home';
 import Swap from './pages/Swap';
 import Pools from './pages/Pools';
 import Profile from './pages/Profile';
+// Admin page removed
 
 function App() {
   return (
@@ -20,9 +22,33 @@ function App() {
                 <Route path="/swap" element={<Swap />} />
                 <Route path="/pools" element={<Pools />} />
                 <Route path="/profile" element={<Profile />} />
+                
               </Routes>
             </div>
           </div>
+          <Toaster 
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: '#1a1b23',
+                color: '#fff',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+              },
+              success: {
+                iconTheme: {
+                  primary: '#10b981',
+                  secondary: '#fff',
+                },
+              },
+              error: {
+                iconTheme: {
+                  primary: '#ef4444',
+                  secondary: '#fff',
+                },
+              },
+            }}
+          />
         </Router>
       </UserProvider>
     </WalletProvider>

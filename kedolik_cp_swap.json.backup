@@ -32,7 +32,7 @@
           "name": "owner",
           "writable": true,
           "signer": true,
-          "address": "JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa"
+          "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
         },
         {
           "name": "permission_authority"
@@ -656,7 +656,7 @@
           ],
           "writable": true,
           "signer": true,
-          "address": "JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa"
+          "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
         },
         {
           "name": "amm_config",
@@ -745,7 +745,7 @@
           "name": "owner",
           "writable": true,
           "signer": true,
-          "address": "JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa"
+          "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
         },
         {
           "name": "permission_authority"
@@ -1358,7 +1358,7 @@
             "create pool fee account"
           ],
           "writable": true,
-          "address": "3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy"
+          "address": "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
         },
         {
           "name": "observation_state",
@@ -1765,7 +1765,7 @@
             "create pool fee account"
           ],
           "writable": true,
-          "address": "3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy"
+          "address": "DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8"
         },
         {
           "name": "observation_state",
@@ -2436,7 +2436,7 @@
             "The amm config owner or admin"
           ],
           "signer": true,
-          "address": "JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa"
+          "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
         },
         {
           "name": "amm_config",
@@ -2482,7 +2482,7 @@
         {
           "name": "authority",
           "signer": true,
-          "address": "JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa"
+          "address": "GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ"
         },
         {
           "name": "pool_state",

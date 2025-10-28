@@ -67,6 +67,8 @@ const Navbar = () => {
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-brand scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
             </Link>
 
+            
+
             <button className="relative px-4 py-2 rounded-lg font-medium text-gray-300 hover:text-white transition-all duration-300 group">
               More
               <svg className="w-4 h-4 ml-1 inline-block group-hover:rotate-180 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -171,6 +173,8 @@ const Navbar = () => {
               </svg>
               Profile
             </Link>
+            
+            
             
             <div className="h-px bg-white/10 my-4"></div>
             

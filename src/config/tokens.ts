@@ -19,7 +19,7 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     decimals: 9,
   },
   KEDOLOG: {
-    mint: new PublicKey('DhKDRUdDLeSGM8tQjsCF8vewTffPFZwi3voZunY7RNsW'),
+    mint: new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx'),
     symbol: 'KEDOLOG',
     name: 'Kedolog Protocol Token',
     decimals: 9,

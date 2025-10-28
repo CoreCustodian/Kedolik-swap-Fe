@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance } from '../utils/amm';
+import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance, FEE_TIERS } from '../utils/amm';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -217,6 +217,7 @@ const Pools = () => {
           }}
           showToast={showToast}
           setTxModal={setTxModal}
+          existingPools={pools}
         />
       )}
       
@@ -292,6 +293,10 @@ const PoolCard = ({
   onRemoveLiquidity: () => void;
   connected: boolean;
 }) => {
+  // Detect dust pool
+  const isDustPool = (pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || 
+                     (pool.lpSupply / 1e9) < 0.01;
+  
   return (
     <div className="card p-4 sm:p-6 hover:scale-105 transition-transform">
       <div className="flex items-center justify-between mb-4">
@@ -303,9 +308,16 @@ const PoolCard = ({
             {pool.token1Symbol[0]}
           </div>
           <div>
-            <h3 className="font-bold text-base sm:text-lg">
-              {pool.token0Symbol}/{pool.token1Symbol}
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-base sm:text-lg">
+                {pool.token0Symbol}/{pool.token1Symbol}
+              </h3>
+              {isDustPool && (
+                <span className="text-[10px] px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded">
+                  DUST
+                </span>
+              )}
+            </div>
             <p className="text-xs text-gray-400">{(pool.tradeFeeRate / 100).toFixed(2)}% Fee</p>
           </div>
         </div>
@@ -391,7 +403,8 @@ const CreatePoolModal = ({
   onClose,
   onSuccess,
   showToast,
-  setTxModal
+  setTxModal,
+  existingPools
 }: {
   onClose: () => void;
   onSuccess: () => void;
@@ -402,6 +415,7 @@ const CreatePoolModal = ({
     message: string;
     txSignature?: string;
   }>>;
+  existingPools: PoolInfo[];
 }) => {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
@@ -413,6 +427,7 @@ const CreatePoolModal = ({
   const [amount1, setAmount1] = useState('');
   const [token0Balance, setToken0Balance] = useState<number>(0);
   const [token1Balance, setToken1Balance] = useState<number>(0);
+  const [selectedFeeTier, setSelectedFeeTier] = useState(0); // Index of selected fee tier
   
   const tokenList = getTokenList();
   
@@ -455,6 +470,30 @@ const CreatePoolModal = ({
       return;
     }
     
+    // Check if pool already exists
+    const existingPool = existingPools.find(pool => 
+      (pool.token0Mint.equals(token0.mint) && pool.token1Mint.equals(token1.mint)) ||
+      (pool.token0Mint.equals(token1.mint) && pool.token1Mint.equals(token0.mint))
+    );
+    
+    if (existingPool) {
+      const isDustPool = (existingPool.token0Reserve < 0.01 && existingPool.token1Reserve < 0.01) || 
+                         (existingPool.lpSupply / 1e9) < 0.01;
+      
+      if (isDustPool) {
+        showToast(
+          `This pool exists but has only dust amounts (${existingPool.token0Reserve.toFixed(6)} ${existingPool.token0Symbol} + ${existingPool.token1Reserve.toFixed(6)} ${existingPool.token1Symbol}). Please use "Add Liquidity" instead - your amounts will be auto-adjusted to match the existing ratio.`,
+          'info'
+        );
+      } else {
+        showToast(
+          `Pool ${token0.symbol}/${token1.symbol} already exists! Please add liquidity to the existing pool instead.`,
+          'error'
+        );
+      }
+      return;
+    }
+    
     // Validate balances
     if (parseFloat(amount0) > token0Balance) {
       showToast(`Insufficient ${token0.symbol} balance`, 'error');
@@ -480,7 +519,8 @@ const CreatePoolModal = ({
         token0.mint,
         token1.mint,
         parseFloat(amount0),
-        parseFloat(amount1)
+        parseFloat(amount1),
+        FEE_TIERS[selectedFeeTier].address // Pass selected fee tier config
       );
       
       // Show success modal
@@ -508,13 +548,16 @@ const CreatePoolModal = ({
   };
   
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="card max-w-md w-full p-4 sm:p-6 my-8">
-        <div className="flex justify-between items-center mb-6">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="card max-w-md w-full max-h-[90vh] flex flex-col">
+        {/* Fixed Header */}
+        <div className="flex justify-between items-center p-4 sm:p-6 pb-4 border-b border-white/10">
           <h2 className="text-xl sm:text-2xl font-bold gradient-text">Create Pool</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl">✕</button>
         </div>
         
+        {/* Scrollable Content */}
+        <div className="overflow-y-auto px-4 sm:px-6 py-4 custom-scrollbar">
         {/* Token 0 */}
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">First Token</label>
@@ -583,26 +626,58 @@ const CreatePoolModal = ({
           </div>
               </div>
 
+        {/* Fee Tier Selection */}
+        <div className="mb-6">
+          <label className="block text-sm text-gray-400 mb-3">Fee Tier</label>
+          <div className="grid grid-cols-1 gap-2">
+            {FEE_TIERS.map((tier, index) => (
+              <button
+                key={tier.index}
+                onClick={() => setSelectedFeeTier(index)}
+                className={`p-3 rounded-lg border transition-all text-left ${
+                  selectedFeeTier === index
+                    ? 'border-brand-cyan bg-brand-cyan/10'
+                    : 'border-white/10 bg-dark-900/50 hover:border-white/20'
+                }`}
+              >
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="font-bold text-white">{tier.label}</div>
+                    <div className="text-xs text-gray-400">{tier.description}</div>
+                  </div>
+                  {selectedFeeTier === index && (
+                    <div className="text-brand-cyan">✓</div>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Info Alert */}
-        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-6">
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
           <p className="text-xs text-blue-400">
             ℹ️ You'll receive LP tokens representing your share of the pool. Prices will be set based on the ratio you provide.
           </p>
                 </div>
-        
-        <button
-          onClick={handleCreate}
-          disabled={!amount0 || !amount1}
-          className={`w-full py-3 rounded-xl font-semibold transition-all ${
-            amount0 && amount1
-              ? 'bg-gradient-brand hover:brightness-110'
-              : 'bg-gray-700 cursor-not-allowed'
-          }`}
-        >
-          Create Pool
-        </button>
-                </div>
               </div>
+
+        {/* Fixed Footer */}
+        <div className="p-4 sm:p-6 pt-4 border-t border-white/10">
+          <button
+            onClick={handleCreate}
+            disabled={!amount0 || !amount1}
+            className={`w-full py-3 rounded-xl font-semibold transition-all ${
+              amount0 && amount1
+                ? 'bg-gradient-brand hover:brightness-110'
+                : 'bg-gray-700 cursor-not-allowed'
+            }`}
+          >
+            Create Pool
+          </button>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -720,13 +795,16 @@ const AddLiquidityModal = ({
   };
   
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="card max-w-md w-full p-4 sm:p-6 my-8">
-        <div className="flex justify-between items-center mb-6">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="card max-w-md w-full max-h-[90vh] flex flex-col">
+        {/* Fixed Header */}
+        <div className="flex justify-between items-center p-4 sm:p-6 pb-4 border-b border-white/10">
           <h2 className="text-xl sm:text-2xl font-bold gradient-text">Add Liquidity</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl">✕</button>
                 </div>
 
+        {/* Scrollable Content */}
+        <div className="overflow-y-auto px-4 sm:px-6 py-4 custom-scrollbar">
         <div className="bg-dark-900/50 rounded-lg p-4 mb-6">
           <h3 className="font-bold text-lg mb-2">{pool.token0Symbol}/{pool.token1Symbol}</h3>
           <div className="text-xs text-gray-400 space-y-1">
@@ -734,6 +812,24 @@ const AddLiquidityModal = ({
             <p>Pool Share: You'll own ~0.1% of the pool</p>
           </div>
                 </div>
+
+        {/* Dust Pool Info */}
+        {((pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || (pool.lpSupply / 1e9) < 0.01) && (
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
+            <div className="flex items-start gap-2">
+              <span className="text-blue-400 text-lg">ℹ️</span>
+              <div className="text-xs text-blue-400">
+                <p className="font-semibold mb-1">Dust Pool Detected</p>
+                <p className="text-blue-400/80 mb-2">
+                  Current ratio: <span className="font-semibold">1 {pool.token0Symbol} = {(pool.token1Reserve / pool.token0Reserve).toFixed(6)} {pool.token1Symbol}</span>
+                </p>
+                <p className="text-blue-400/80">
+                  Your deposit will be automatically adjusted to match this existing ratio.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mb-4">
           <div className="flex justify-between items-center mb-2">
@@ -770,19 +866,23 @@ const AddLiquidityModal = ({
             className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none opacity-60"
           />
           <p className="text-xs text-gray-500 mt-1">Amount calculated based on pool ratio</p>
+                </div>
               </div>
 
-        <button
-          onClick={handleAdd}
-          disabled={!amount0 || !amount1}
-          className={`w-full py-3 rounded-xl font-semibold transition-all ${
-            amount0 && amount1
-              ? 'bg-gradient-brand hover:brightness-110'
-              : 'bg-gray-700 cursor-not-allowed'
-          }`}
-        >
+        {/* Fixed Footer */}
+        <div className="p-4 sm:p-6 pt-4 border-t border-white/10">
+          <button
+            onClick={handleAdd}
+            disabled={!amount0 || !amount1}
+            className={`w-full py-3 rounded-xl font-semibold transition-all ${
+              amount0 && amount1
+                ? 'bg-gradient-brand hover:brightness-110'
+                : 'bg-gray-700 cursor-not-allowed'
+            }`}
+          >
                   Add Liquidity
                 </button>
+        </div>
       </div>
     </div>
   );
@@ -911,8 +1011,9 @@ const RemoveLiquidityModal = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="bg-dark-800 rounded-2xl border border-white/20 p-6 max-w-md w-full shadow-2xl animate-scale-in">
-        <div className="flex items-center justify-between mb-6">
+      <div className="bg-dark-800 rounded-2xl border border-white/20 max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl animate-scale-in">
+        {/* Fixed Header */}
+        <div className="flex items-center justify-between p-6 pb-4 border-b border-white/10">
           <h3 className="text-2xl font-bold gradient-text">Remove Liquidity</h3>
           <button
             onClick={onClose}
@@ -922,6 +1023,8 @@ const RemoveLiquidityModal = ({
                 </button>
               </div>
 
+        {/* Scrollable Content */}
+        <div className="overflow-y-auto px-6 py-4 custom-scrollbar">
         <div className="mb-6 p-4 bg-brand-cyan/10 border border-brand-cyan/30 rounded-lg">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold">
@@ -971,18 +1074,22 @@ const RemoveLiquidityModal = ({
             <p className="text-xs text-gray-500 mt-2">* Includes 0.5% slippage protection</p>
           </div>
         )}
+        </div>
 
-        <button
-          onClick={handleRemove}
-          disabled={!lpAmount || parseFloat(lpAmount) <= 0 || parseFloat(lpAmount) > lpBalance}
-          className={`w-full py-3 rounded-xl font-semibold transition-all ${
-            lpAmount && parseFloat(lpAmount) > 0 && parseFloat(lpAmount) <= lpBalance
-              ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
-              : 'bg-gray-700 cursor-not-allowed'
-          }`}
-        >
-          Remove Liquidity
-        </button>
+        {/* Fixed Footer */}
+        <div className="p-6 pt-4 border-t border-white/10">
+          <button
+            onClick={handleRemove}
+            disabled={!lpAmount || parseFloat(lpAmount) <= 0 || parseFloat(lpAmount) > lpBalance}
+            className={`w-full py-3 rounded-xl font-semibold transition-all ${
+              lpAmount && parseFloat(lpAmount) > 0 && parseFloat(lpAmount) <= lpBalance
+                ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
+                : 'bg-gray-700 cursor-not-allowed'
+            }`}
+          >
+            Remove Liquidity
+          </button>
+        </div>
       </div>
     </div>
   );
