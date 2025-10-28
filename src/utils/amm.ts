@@ -679,7 +679,8 @@ export const addLiquidity = async (
   token1Mint: PublicKey,
   amount0: number,
   amount1: number,
-  _slippage: number = 0.5
+  _slippage: number = 0.5,
+  ammConfigOverride?: PublicKey
 ) => {
   try {
     const program = getProgram(connection, wallet);
@@ -721,8 +722,8 @@ export const addLiquidity = async (
       token1: token1.toString().slice(0, 8),
     });
     
-    // Get PDAs
-    const poolState = getPoolState(token0, token1);
+    // Get PDAs (use pool's AMM config if provided)
+    const poolState = getPoolState(token0, token1, ammConfigOverride);
     const authority = getAuthority();
     const lpMint = getLpMint(poolState);
     const token0Vault = getTokenVault(poolState, token0);
@@ -732,6 +733,12 @@ export const addLiquidity = async (
     const userToken0Account = await getAssociatedTokenAddress(token0, walletPublicKey);
     const userToken1Account = await getAssociatedTokenAddress(token1, walletPublicKey);
     const userLpAccount = await getAssociatedTokenAddress(lpMint, walletPublicKey);
+    
+    // Check if LP account exists - create if needed
+    const lpAccountInfo = await connection.getAccountInfo(userLpAccount);
+    if (!lpAccountInfo) {
+      console.log('📝 LP token account does not exist - will create it in transaction');
+    }
     
     // Get pool data
     const poolData = await (program.account as any).poolState.fetch(poolState);
@@ -757,6 +764,27 @@ export const addLiquidity = async (
     
     // Get LP mint info to check total supply
     const lpMintInfo = await connection.getParsedAccountInfo(lpMint);
+    
+    if (!lpMintInfo || !lpMintInfo.value) {
+      console.error('❌ LP Mint does not exist! This is a BROKEN/DUST POOL!', {
+        lpMint: lpMint.toString(),
+        poolState: poolState.toString(),
+        token0: token0.toString(),
+        token1: token1.toString(),
+      });
+      throw new Error(
+        `🚫 BROKEN POOL DETECTED\n\n` +
+        `This pool is in an invalid state (LP Mint doesn't exist).\n` +
+        `This happens when a pool was created but never properly initialized, or became a "dust pool".\n\n` +
+        `❌ Cannot add or remove liquidity from this pool.\n\n` +
+        `✅ SOLUTION: This pool cannot be fixed. You'll need to:\n` +
+        `1. Contact the DEX admin to manually close this broken pool account\n` +
+        `2. Or wait for admin to implement pool cleanup tools\n\n` +
+        `Pool Address: ${poolState.toString().slice(0, 12)}...\n` +
+        `LP Mint (Missing): ${lpMint.toString().slice(0, 12)}...`
+      );
+    }
+    
     const lpTotalSupply = parseFloat((lpMintInfo.value?.data as any)?.parsed?.info?.supply || '0') / Math.pow(10, 9);
     
     console.log('🪙 LP Token info:', {
@@ -902,6 +930,20 @@ export const addLiquidity = async (
     // Build the transaction
     const transaction = new Transaction();
     
+    // Step 0: Create LP token account if it doesn't exist
+    if (!lpAccountInfo) {
+      console.log('📝 Adding LP token account creation instruction...');
+      const { createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
+      transaction.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          walletPublicKey,
+          userLpAccount,
+          walletPublicKey,
+          lpMint
+        )
+      );
+    }
+    
     // Step 1: Wrap SOL if needed (use finalAmount0/1 which are already sorted)
     if (needsWrapToken0) {
       console.log('🌊 Wrapping SOL for token0 (amount: ' + finalAmount0 + ')...');
@@ -1017,7 +1059,8 @@ export const removeLiquidity = async (
   token1Mint: PublicKey,
   lpAmount: number,
   minAmount0: number,
-  minAmount1: number
+  minAmount1: number,
+  ammConfigOverride?: PublicKey
 ) => {
   try {
     const program = getProgram(connection, wallet);
@@ -1031,8 +1074,8 @@ export const removeLiquidity = async (
     // Sort tokens
     const { token0, token1 } = sortTokenMints(token0Mint, token1Mint);
     
-    // Get PDAs
-    const poolState = getPoolState(token0, token1);
+    // Get PDAs (use pool's AMM config if provided)
+    const poolState = getPoolState(token0, token1, ammConfigOverride);
     const authority = getAuthority();
     const lpMint = getLpMint(poolState);
     const token0Vault = getTokenVault(poolState, token0);
@@ -1043,12 +1086,60 @@ export const removeLiquidity = async (
     const userToken1Account = await getAssociatedTokenAddress(token1, wallet.publicKey);
     const userLpAccount = await getAssociatedTokenAddress(lpMint, wallet.publicKey);
     
+    // Check if LP mint exists (detect broken pools)
+    const lpMintInfo = await connection.getAccountInfo(lpMint);
+    if (!lpMintInfo) {
+      console.error('❌ LP Mint does not exist! This is a BROKEN/DUST POOL!', {
+        lpMint: lpMint.toString(),
+        poolState: poolState.toString(),
+      });
+      throw new Error(
+        `🚫 BROKEN POOL DETECTED\n\n` +
+        `This pool's LP Mint doesn't exist. Cannot remove liquidity.\n\n` +
+        `This pool is permanently broken and cannot be used.\n` +
+        `Contact the DEX admin for assistance.\n\n` +
+        `LP Mint (Missing): ${lpMint.toString().slice(0, 12)}...`
+      );
+    }
+    
     // Get pool data
     const poolData = await (program.account as any).poolState.fetch(poolState);
     const token0Decimals = (poolData as any).mint0Decimals;
     const token1Decimals = (poolData as any).mint1Decimals;
+    const totalLpSupply = Number((poolData as any).lpSupply.toString()) / Math.pow(10, 9);
     
-    const lpAmountBN = new BN(lpAmount * Math.pow(10, 9));
+    // ANTI-DUST POOL PROTECTION
+    // Always keep a minimum of 0.001 LP tokens (1,000,000 base units) in the pool
+    // This prevents the pool from becoming unusable "dust pool"
+    const MINIMUM_LP_LOCKED = 0.001; // Minimum LP tokens to keep in pool
+    const actualLpAmount = lpAmount;
+    let adjustedLpAmount = lpAmount;
+    
+    // Check if user is trying to remove all or almost all liquidity
+    const wouldBeRemainingLp = totalLpSupply - lpAmount;
+    
+    if (wouldBeRemainingLp < MINIMUM_LP_LOCKED) {
+      // User is trying to drain the pool - silently reduce withdrawal amount
+      const maxWithdrawable = totalLpSupply - MINIMUM_LP_LOCKED;
+      
+      if (maxWithdrawable <= 0) {
+        throw new Error('Cannot remove liquidity: Pool must maintain minimum liquidity');
+      }
+      
+      adjustedLpAmount = maxWithdrawable;
+      console.log('🛡️ ANTI-DUST PROTECTION ACTIVATED:');
+      console.log(`   Requested: ${actualLpAmount.toFixed(9)} LP`);
+      console.log(`   Adjusted to: ${adjustedLpAmount.toFixed(9)} LP`);
+      console.log(`   Keeping locked: ${MINIMUM_LP_LOCKED.toFixed(9)} LP`);
+      console.log(`   Remaining in pool: ${(totalLpSupply - adjustedLpAmount).toFixed(9)} LP`);
+      
+      // Adjust minimum amounts proportionally
+      const adjustmentRatio = adjustedLpAmount / actualLpAmount;
+      minAmount0 = minAmount0 * adjustmentRatio;
+      minAmount1 = minAmount1 * adjustmentRatio;
+    }
+    
+    const lpAmountBN = new BN(adjustedLpAmount * Math.pow(10, 9));
     const minAmount0BN = new BN(minAmount0 * Math.pow(10, token0Decimals));
     const minAmount1BN = new BN(minAmount1 * Math.pow(10, token1Decimals));
     
@@ -1140,10 +1231,12 @@ export const removeLiquidity = async (
   } catch (error: any) {
     console.error('❌ Error removing liquidity:', error);
     
-    // Check if it's an "already processed" error (often a false negative)
-    if (error.message && error.message.includes('already been processed')) {
-      console.log('⚠️ Transaction might have already succeeded - check your wallet!');
-      throw new Error('Transaction might have already been processed. Please check your wallet balance. If liquidity was removed, you can ignore this error.');
+    // Check if it's an "already processed" error (actually means success!)
+    if (error.message && (error.message.includes('already been processed') || error.message.includes('already processed'))) {
+      console.log('✅ Transaction succeeded! (Got "already processed" confirmation)');
+      console.log('💡 The "already processed" message confirms the transaction completed.');
+      // Return a success indicator - caller should check transaction on-chain
+      return 'SUCCESS_ALREADY_PROCESSED';
     }
     
     throw error;

@@ -769,7 +769,9 @@ const AddLiquidityModal = ({
         pool.token0Mint,
         pool.token1Mint,
         parseFloat(amount0),
-        parseFloat(amount1)
+        parseFloat(amount1),
+        0.5,
+        pool.ammConfig
       );
       
       setTxModal({
@@ -844,12 +846,17 @@ const AddLiquidityModal = ({
               placeholder="0.0"
               className="flex-1 bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
             />
-            <button
-              onClick={() => handleAmount0Change(balance0.toString())}
-              className="px-4 py-2 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold"
-            >
-              MAX
-            </button>
+            <div className="grid grid-cols-4 gap-1">
+              {[25,50,75,100].map(pct => (
+                <button
+                  key={pct}
+                  onClick={() => handleAmount0Change(((balance0 * pct) / 100).toString())}
+                  className={`px-2 py-2 rounded-lg text-xs font-semibold transition-colors ${pct===100 ? 'bg-brand-cyan/20 text-brand-cyan hover:bg-brand-cyan/30' : 'bg-white/5 text-gray-300 hover:bg-white/10'}`}
+                >
+                  {pct}%
+                </button>
+              ))}
+            </div>
                   </div>
                 </div>
         
@@ -980,7 +987,8 @@ const RemoveLiquidityModal = ({
         pool.token1Mint,
         lpAmountNum,
         minToken0,
-        minToken1
+        minToken1,
+        pool.ammConfig
       );
 
       setTxModal({
@@ -1041,12 +1049,26 @@ const RemoveLiquidityModal = ({
         <div className="mb-6">
           <div className="flex justify-between items-center mb-2">
             <label className="text-sm text-gray-400">LP Tokens to Burn</label>
-            <button
-              onClick={() => setLpAmount(lpBalance.toString())}
-              className="text-xs text-brand-cyan hover:text-brand-pink transition-colors font-semibold"
-            >
-              MAX
-            </button>
+            <div className="grid grid-cols-4 gap-1">
+              {[25,50,75,100].map(pct => (
+                <button
+                  key={pct}
+                  onClick={() => {
+                    const MINIMUM_LP_LOCKED = 0.001; // Must match amm.ts
+                    const totalLpSupply = pool.lpSupply / 1e9;
+                    const target = (lpBalance * pct) / 100;
+                    // For 100%, leave the minimum locked
+                    const desired = pct === 100
+                      ? Math.min(lpBalance, Math.max(0, totalLpSupply - MINIMUM_LP_LOCKED))
+                      : target;
+                    setLpAmount(desired.toString());
+                  }}
+                  className={`text-[10px] px-2 py-1 rounded ${pct===100 ? 'bg-brand-cyan/20 text-brand-cyan hover:bg-brand-cyan/30' : 'bg-white/5 text-gray-300 hover:bg-white/10'}`}
+                >
+                  {pct}%
+                </button>
+              ))}
+            </div>
           </div>
           <input
             type="number"

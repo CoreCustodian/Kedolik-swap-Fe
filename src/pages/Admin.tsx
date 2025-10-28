@@ -80,7 +80,9 @@ export default function Admin() {
       const { getProgram, AMM_CONFIG } = await import('../utils/amm');
       const program = getProgram(connection, wallet);
       
-      const ammConfigData = await (program.account as any).ammConfig.fetch(AMM_CONFIG);
+      type AmmCfg = { protocolOwner: { toString(): string } };
+      type AmmProgramAcc = { ammConfig: { fetch: (p: unknown) => Promise<AmmCfg> } };
+      const ammConfigData = await (program.account as unknown as AmmProgramAcc).ammConfig.fetch(AMM_CONFIG);
       
       // Use protocol owner as the main fee receiver
       setCurrentFeeReceiver(ammConfigData.protocolOwner.toString());
@@ -153,7 +155,7 @@ export default function Admin() {
       showToast('Only admin can collect fees', 'error');
       return;
     }
-    
+
     const totalToken0 = poolData.protocolFeesToken0 + poolData.fundFeesToken0 + poolData.creatorFeesToken0;
     const totalToken1 = poolData.protocolFeesToken1 + poolData.fundFeesToken1 + poolData.creatorFeesToken1;
     
@@ -161,7 +163,7 @@ export default function Admin() {
       showToast('No fees to collect', 'warning');
       return;
     }
-    
+
     try {
       showToast('Preparing fee collection transaction...', 'info');
       
@@ -269,7 +271,7 @@ export default function Admin() {
         
         const collectFundIx = await program.methods
           .collectFundFee(fundAmount0, fundAmount1)
-          .accounts({
+        .accounts({
             owner: publicKey,
             authority: authority,
             poolState: pool,
@@ -321,11 +323,12 @@ export default function Admin() {
       // Refresh fees after collection
       await fetchPoolFees();
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error collecting fees:', error);
       
       // Check if transaction actually succeeded (common with "already processed" error)
-      if (error.message?.includes('already been processed') || error.message?.includes('already processed')) {
+      const msg = (error as Error)?.message || '';
+      if (msg.includes('already been processed') || msg.includes('already processed')) {
         console.log('✅ Fee collection succeeded! (Got "already processed" confirmation)');
         showToast(
           `✅ Collected ${totalToken0.toFixed(4)} ${poolData.token0Symbol} + ${totalToken1.toFixed(4)} ${poolData.token1Symbol}`,
@@ -336,7 +339,7 @@ export default function Admin() {
         return;
       }
       
-      const errorMsg = error.message || error.toString();
+      const errorMsg = (error as Error)?.message || String(error);
       showToast(`Failed to collect fees: ${errorMsg}`, 'error');
     }
   };
@@ -347,7 +350,7 @@ export default function Admin() {
       showToast('Only admin can update fee receiver', 'error');
       return;
     }
-    
+
     if (!newFeeReceiver) {
       showToast('Please enter a new fee receiver address', 'warning');
       return;
@@ -367,8 +370,8 @@ export default function Admin() {
       // Update protocol_owner with param=3
       // Optionally also update fund_owner to same address with param=4
       
-    } catch (error: any) {
-      showToast(`Invalid address or update failed: ${error.message}`, 'error');
+    } catch (error: unknown) {
+      showToast(`Invalid address or update failed: ${(error as Error)?.message || String(error)}`, 'error');
     } finally {
       setUpdating(false);
     }
@@ -412,7 +415,7 @@ export default function Admin() {
               {/* Tabs */}
             <div className="card mb-6">
                 <div className="flex gap-4 border-b border-white/10 pb-4">
-                <button
+                  <button
                     onClick={() => setActiveTab('fees')}
                     className={`px-6 py-2 rounded-lg font-semibold transition-all ${
                       activeTab === 'fees'
@@ -421,8 +424,8 @@ export default function Admin() {
                     }`}
                   >
                     💰 Fee Collection
-                </button>
-                  <button
+                  </button>
+                <button
                     onClick={() => setActiveTab('settings')}
                     className={`px-6 py-2 rounded-lg font-semibold transition-all ${
                       activeTab === 'settings'
@@ -431,7 +434,7 @@ export default function Admin() {
                     }`}
                   >
                     ⚙️ Settings
-                  </button>
+                </button>
                 </div>
               </div>
 
@@ -445,13 +448,13 @@ export default function Admin() {
                         <h2 className="text-xl font-bold mb-2">Protocol Fees Dashboard</h2>
                         <p className="text-sm text-gray-400">View and collect accumulated protocol fees from all pools</p>
                       </div>
-                      <button
+                  <button
                         onClick={fetchPoolFees}
                         disabled={loading}
-                        className="btn-primary"
-                      >
+                    className="btn-primary"
+                  >
                         {loading ? '🔄 Loading...' : '🔄 Refresh Fees'}
-                      </button>
+                  </button>
               </div>
             </div>
 
@@ -485,21 +488,21 @@ export default function Admin() {
 
                   {/* Individual Pool Fees */}
                   {poolFees.length > 0 && (
-                    <div className="card">
+              <div className="card">
                       <h3 className="text-lg font-bold mb-4">🏊 Pool-by-Pool Breakdown</h3>
-                      <div className="space-y-4">
+                <div className="space-y-4">
                         {poolFees.map((pool) => (
                           <div key={pool.poolAddress} className="bg-dark-900 rounded-xl p-4 border border-white/10">
                             <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3">
                                 <div className="text-lg font-bold text-white">
                                   {pool.token0Symbol}/{pool.token1Symbol}
-                                </div>
+                          </div>
                                 <span className="text-xs text-gray-500 font-mono">
                                   {pool.poolAddress.slice(0, 8)}...
                             </span>
                         </div>
-                              <button
+                          <button
                                 onClick={() => collectAllFees(pool.poolAddress, pool)}
                                 className="px-3 py-1.5 text-xs font-semibold bg-gradient-brand text-white rounded-lg hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled={
@@ -508,7 +511,7 @@ export default function Admin() {
                                 }
                               >
                                 💸 Collect All
-                              </button>
+                          </button>
                             </div>
                             
                             <div className="grid grid-cols-2 gap-3">
@@ -518,16 +521,16 @@ export default function Admin() {
                                 <div className="text-lg font-bold text-white">
                                   {(pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0).toFixed(4)}
                                 </div>
-                              </div>
-                              
+                      </div>
+                      
                               {/* Token 1 Total */}
                               <div className="bg-gradient-to-br from-brand-pink/5 to-orange-400/5 rounded-lg p-3 border border-brand-pink/20">
                                 <div className="text-xs text-gray-400 mb-1">{pool.token1Symbol}</div>
                                 <div className="text-lg font-bold text-white">
                                   {(pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1).toFixed(4)}
                                 </div>
-                              </div>
-                            </div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -541,6 +544,8 @@ export default function Admin() {
                   )}
                 </>
               )}
+
+              
 
               {/* Settings Tab */}
               {activeTab === 'settings' && (
@@ -625,8 +630,8 @@ export default function Admin() {
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
+              </div>
+            )}
           </>
         )}
       </div>

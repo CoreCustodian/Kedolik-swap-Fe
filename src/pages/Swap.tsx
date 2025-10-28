@@ -440,22 +440,23 @@ const Swap = () => {
         setIsTransactionInProgress(false);
       }, isMultiHop ? 5000 : 3000);
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Mark transaction as complete on error
       setIsTransactionInProgress(false);
       console.error('Swap error:', error);
+      const e = error as { message?: string; logs?: unknown; code?: unknown; name?: string };
       console.error('Error details:', {
-        message: error.message,
-        logs: error.logs,
-        code: error.code,
-        name: error.name,
+        message: e?.message,
+        logs: e?.logs,
+        code: e?.code,
+        name: e?.name,
       });
       
       // Parse error message
       let errorMessage = 'Swap failed. Please try again.';
       
-      if (error.message) {
-        const msg = error.message.toLowerCase();
+      if (e?.message) {
+        const msg = e.message.toLowerCase();
         
         if (msg.includes('user rejected') || msg.includes('user declined')) {
           errorMessage = 'Transaction was rejected by user';
@@ -466,8 +467,10 @@ const Swap = () => {
         } else if (msg.includes('already in progress')) {
           errorMessage = 'Another transaction is pending. Please wait.';
         } else if (msg.includes('simulation failed')) {
-          if (error.logs) {
-            const errorLog = error.logs.find((log: string) => log.includes('Error:'));
+          type ErrWithLogs = { logs?: unknown };
+          const logs = (e as ErrWithLogs)?.logs as string[] | undefined;
+          if (Array.isArray(logs)) {
+            const errorLog = logs.find((log: string) => log.includes('Error:'));
             if (errorLog) {
               errorMessage = `Simulation failed: ${errorLog}`;
             } else {
@@ -482,9 +485,10 @@ const Swap = () => {
           errorMessage = 'Smart contract error. Check token amounts and slippage.';
         } else {
           // Use the actual error message if it's short enough
-          errorMessage = error.message.length > 100 
-            ? error.message.substring(0, 100) + '...' 
-            : error.message;
+          const full = e?.message || '';
+          errorMessage = full.length > 100 
+            ? full.substring(0, 100) + '...' 
+            : full;
         }
       }
       
@@ -514,15 +518,7 @@ const Swap = () => {
     setToBalance(fromBalance);
   };
   
-  // Handle max button
-  const handleMax = () => {
-    if (fromBalance > 0) {
-      setFromAmount(fromBalance.toString());
-      showToast(`Set to maximum: ${fromBalance} ${fromToken.symbol}`, 'info');
-    } else {
-      showToast(`No ${fromToken.symbol} balance available`, 'warning');
-    }
-  };
+  // Percentage quick-fill handled inline with buttons
   
   const tokenList = getTokenList();
 
@@ -651,12 +647,20 @@ const Swap = () => {
                           </div>
                         )}
                       </div>
-                      <button 
-                        onClick={handleMax}
-                        className="text-xs text-brand-cyan hover:text-brand-pink transition-colors font-semibold px-2 py-1 rounded bg-brand-cyan/10 hover:bg-brand-pink/10"
-                      >
-                        MAX
-                      </button>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[25,50,75,100].map(pct => (
+                          <button
+                            key={pct}
+                            onClick={() => {
+                              const amt = (fromBalance * pct) / 100;
+                              setFromAmount(amt.toString());
+                            }}
+                            className={`text-[10px] sm:text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors ${pct===100 ? 'text-brand-cyan' : 'text-gray-300'}`}
+                          >
+                            {pct}%
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -793,10 +797,10 @@ const Swap = () => {
                     </span>
                   </div>
                   
-                  {/* Route for multi-hop */}
+                  {/* Route for multi-hop (label simplified, no hop count) */}
                   {isMultiHop && swapRoute && (
                     <div className="flex justify-between items-center pt-2 border-t border-white/10">
-                      <span className="text-gray-400">Route ({swapRoute.hops} {swapRoute.hops === 1 ? 'hop' : 'hops'})</span>
+                      <span className="text-gray-400">Route</span>
                       <div className="flex flex-col items-end gap-1">
                         <span className="font-semibold text-brand-cyan text-xs">
                           {swapRoute.path.map((mint) => {
@@ -829,19 +833,7 @@ const Swap = () => {
               </div>
             )}
             
-            {/* Multi-Hop Info - Simplified */}
-            {isMultiHop && swapRoute && (
-              <div className="mt-4 p-3 bg-brand-cyan/10 border border-brand-cyan/30 rounded-lg animate-scale-in">
-                <div className="flex items-center gap-2 text-sm">
-                  <svg className="w-5 h-5 text-brand-cyan flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                  <span className="text-brand-cyan font-medium">
-                    Multi-hop swap via {swapRoute.hops} pool{swapRoute.hops > 1 ? 's' : ''} in one transaction
-                  </span>
-                </div>
-              </div>
-            )}
+            {/* Multi-Hop Info hidden as requested */}
 
             {/* Swap Action Button */}
             <button 
@@ -873,7 +865,7 @@ const Swap = () => {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                   </svg>
-                  {isMultiHop ? `Swap (${swapRoute?.hops} Hops)` : 'Swap'}
+                  Swap
                 </>
               )}
             </button>

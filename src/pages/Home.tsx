@@ -338,27 +338,84 @@ const Home = () => {
               <h4 className="font-bold mb-4 font-heading">Earn</h4>
               <ul className="space-y-2 text-gray-400 text-sm">
                 <li><Link to="/pools" className="hover:text-brand-cyan transition-colors">Staking</Link></li>
-                <li><Link to="/pools" className="hover:text-brand-cyan transition-colors">Guide</Link></li>
+                <li>
+                  <a
+                    href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-brand-cyan transition-colors"
+                  >
+                    Guide
+                  </a>
+                </li>
               </ul>
             </div>
 
             <div>
-              <h4 className="font-bold mb-4 font-heading">Follow us on</h4>
-              <div className="flex gap-4">
-                {['𝕏', '📱', '📢', '▶️'].map((icon, i) => (
-                  <button 
-                    key={i}
-                    className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
-                  >
-                    {icon}
-                  </button>
-                ))}
+              <h4 className="font-bold mb-4 font-heading">Follow us</h4>
+              <div className="flex gap-3">
+                <a
+                  href="https://x.com/kedolik_swap"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="X (Twitter)"
+                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
+                >
+                  𝕏
+                </a>
+                <a
+                  href="https://t.me/Kedolik_Swap"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Telegram"
+                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
+                >
+                  📢
+                </a>
+                <a
+                  href="https://www.facebook.com/kedolik/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Facebook"
+                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
+                >
+                  f
+                </a>
+                <a
+                  href="https://www.instagram.com/kedolikswap/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Instagram"
+                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
+                >
+                  ◯
+                </a>
+                <a
+                  href="https://medium.com/@kedolik"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label="Medium"
+                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
+                >
+                  M
+                </a>
               </div>
             </div>
           </div>
 
           <div className="border-t border-white/10 pt-8 text-center text-gray-400 text-sm">
-            <p>Copyright © Kedolik Swap 2025. All rights reserved</p>
+            <div className="flex flex-col md:flex-row items-center justify-center gap-3">
+              <p>Copyright © Kedolik Swap 2025. All rights reserved</p>
+              <span className="hidden md:inline">•</span>
+              <a
+                href="https://kedolik.com/privacy-policy/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-brand-cyan transition-colors"
+              >
+                Privacy Policy
+              </a>
+            </div>
           </div>
         </div>
       </footer>
