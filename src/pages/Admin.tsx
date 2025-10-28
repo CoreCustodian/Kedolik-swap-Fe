@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
+import BN from 'bn.js';
 import { fetchPools, PROGRAM_ID } from '../utils/amm';
 import { ToastContainer, ToastType } from '../components/Toast';
 
@@ -360,16 +361,46 @@ export default function Admin() {
       setUpdating(true);
       const newOwnerPubkey = new PublicKey(newFeeReceiver);
       
-      // Update protocol_owner (which receives all fees)
-      showToast(
-        `Fee receiver update initiated to: ${newOwnerPubkey.toString().slice(0, 12)}...`,
-        'info'
-      );
-      
-      // TODO: Implement actual transaction
-      // Update protocol_owner with param=3
-      // Optionally also update fund_owner to same address with param=4
-      
+      // Build and send updates across all active AMM configs
+      const { getProgram, AMM_CONFIG, fetchPools } = await import('../utils/amm');
+      const program = getProgram(connection, wallet);
+
+      // Determine which AMM configs to update: use those present in pools; fallback to default
+      const pools = await fetchPools(connection, wallet);
+      const ammConfigs = Array.from(new Set((pools?.map(p => p.ammConfig.toString()) || [])));
+      if (ammConfigs.length === 0) {
+        ammConfigs.push(AMM_CONFIG.toString());
+      }
+
+      showToast(`Updating fee receiver on ${ammConfigs.length} config(s)...`, 'info');
+
+      // Execute sequentially for reliability
+      for (const cfgStr of ammConfigs) {
+        const cfg = new PublicKey(cfgStr);
+
+        // 1) Protocol owner (param = 3)
+        const tx1 = await program.methods
+          .updateAmmConfig(3, new BN(0))
+          .accounts({ owner: publicKey, ammConfig: cfg })
+          .remainingAccounts([{ pubkey: newOwnerPubkey, isSigner: false, isWritable: false }])
+          .rpc();
+
+        showToast(`Protocol receiver updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx1);
+
+        // 2) Fund owner (param = 4) — keep in sync with protocol receiver per simplified model
+        const tx2 = await program.methods
+          .updateAmmConfig(4, new BN(0))
+          .accounts({ owner: publicKey, ammConfig: cfg })
+          .remainingAccounts([{ pubkey: newOwnerPubkey, isSigner: false, isWritable: false }])
+          .rpc();
+
+        showToast(`Fund receiver updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx2);
+      }
+
+      // Refresh view
+      await fetchCurrentFeeReceiver();
+      showToast('✅ Fee receiver updated everywhere', 'success');
+
     } catch (error: unknown) {
       showToast(`Invalid address or update failed: ${(error as Error)?.message || String(error)}`, 'error');
     } finally {
