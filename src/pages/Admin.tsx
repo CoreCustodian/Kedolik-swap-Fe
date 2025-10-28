@@ -410,106 +410,114 @@ export default function Admin() {
 
   return (
     <>
-      <div className="relative min-h-screen overflow-hidden">
-        {/* Animated Background */}
-        <div className="fixed inset-0 bg-gradient-mesh opacity-50"></div>
-        <div className="absolute top-20 left-10 w-96 h-96 bg-brand-pink/10 rounded-full blur-3xl animate-pulse-slow"></div>
-        <div className="absolute bottom-20 right-10 w-96 h-96 bg-brand-cyan/10 rounded-full blur-3xl animate-pulse-slow" style={{ animationDelay: '2s' }}></div>
+      <div className="min-h-screen bg-gradient-to-br from-dark-950 via-dark-900 to-dark-950">
+        {/* Subtle Background Effects */}
+        <div className="fixed inset-0 pointer-events-none">
+          <div className="absolute top-0 left-1/4 w-96 h-96 bg-brand-cyan/5 rounded-full blur-3xl"></div>
+          <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-brand-pink/5 rounded-full blur-3xl"></div>
+        </div>
 
-        <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
           {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-4xl sm:text-5xl font-bold mb-4 font-heading">
+          <div className="mb-8">
+            <h1 className="text-3xl sm:text-4xl font-bold mb-2">
               <span className="gradient-text">Admin Panel</span>
             </h1>
-            <p className="text-gray-400 text-lg">Protocol Fee Management & Configuration</p>
-        </div>
+            <p className="text-gray-400 text-sm sm:text-base">Manage protocol fees and configuration</p>
+          </div>
 
           {/* Admin Check */}
           {!connected && (
-            <div className="card bg-yellow-500/10 border-yellow-500/20 text-center">
-              <p className="text-yellow-400">⚠️ Please connect your wallet to access the admin panel</p>
+            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
+              <div className="text-4xl mb-3">⚠️</div>
+              <p className="text-yellow-400 font-medium">Please connect your wallet to access the admin panel</p>
             </div>
           )}
 
           {connected && !isAdmin && (
-            <div className="card bg-red-500/10 border-red-500/20 text-center">
-              <p className="text-red-400 font-semibold mb-2">🚫 Access Denied</p>
-              <p className="text-gray-400">Only the protocol admin can access this panel</p>
-              <p className="text-xs text-gray-500 mt-2">Admin: {ADMIN_ADDRESS.toString().slice(0, 8)}...</p>
-              <p className="text-xs text-gray-500">Your wallet: {publicKey?.toString().slice(0, 8)}...</p>
-          </div>
-        )}
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
+              <div className="text-4xl mb-3">🚫</div>
+              <p className="text-red-400 font-semibold mb-2">Access Denied</p>
+              <p className="text-gray-400 mb-4">Only the protocol admin can access this panel</p>
+              <div className="text-xs text-gray-500 space-y-1">
+                <p>Admin: <span className="font-mono">{ADMIN_ADDRESS.toString().slice(0, 8)}...</span></p>
+                <p>Your wallet: <span className="font-mono">{publicKey?.toString().slice(0, 8)}...</span></p>
+              </div>
+            </div>
+          )}
 
           {connected && isAdmin && (
-          <>
+            <>
               {/* Tabs */}
-            <div className="card mb-6">
-                <div className="flex gap-4 border-b border-white/10 pb-4">
+              <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-2 mb-6">
+                <div className="flex gap-2">
                   <button
                     onClick={() => setActiveTab('fees')}
-                    className={`px-6 py-2 rounded-lg font-semibold transition-all ${
+                    className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
                       activeTab === 'fees'
-                        ? 'bg-gradient-brand text-white shadow-glow-brand'
-                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                        ? 'bg-gradient-brand text-white shadow-lg'
+                        : 'text-gray-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    💰 Fee Collection
+                    <span className="mr-2">💰</span>
+                    Fee Collection
                   </button>
-                <button
+                  <button
                     onClick={() => setActiveTab('settings')}
-                    className={`px-6 py-2 rounded-lg font-semibold transition-all ${
+                    className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
                       activeTab === 'settings'
-                        ? 'bg-gradient-brand text-white shadow-glow-brand'
-                        : 'bg-white/5 text-gray-400 hover:bg-white/10'
+                        ? 'bg-gradient-brand text-white shadow-lg'
+                        : 'text-gray-400 hover:text-white hover:bg-white/5'
                     }`}
                   >
-                    ⚙️ Settings
-                </button>
+                    <span className="mr-2">⚙️</span>
+                    Settings
+                  </button>
                 </div>
               </div>
 
               {/* Fee Collection Tab */}
               {activeTab === 'fees' && (
                 <>
-                  {/* Quick Actions */}
-                  <div className="card mb-6">
-                    <div className="flex items-center justify-between">
+                  {/* Header Action */}
+                  <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6 mb-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div>
-                        <h2 className="text-xl font-bold mb-2">Protocol Fees Dashboard</h2>
-                        <p className="text-sm text-gray-400">View and collect accumulated protocol fees from all pools</p>
+                        <h2 className="text-lg sm:text-xl font-bold mb-1">Protocol Fees Dashboard</h2>
+                        <p className="text-xs sm:text-sm text-gray-400">View and collect accumulated fees from all pools</p>
                       </div>
-                  <button
+                      <button
                         onClick={fetchPoolFees}
                         disabled={loading}
-                    className="btn-primary"
-                  >
-                        {loading ? '🔄 Loading...' : '🔄 Refresh Fees'}
-                  </button>
-              </div>
-            </div>
+                        className="btn-primary whitespace-nowrap"
+                      >
+                        {loading ? '🔄 Loading...' : '🔄 Refresh'}
+                      </button>
+                    </div>
+                  </div>
 
                   {/* Total Fees Summary */}
                   {Object.keys(totalFees).length > 0 && (
-                    <div className="card mb-6">
-                      <h3 className="text-lg font-bold mb-4">📊 Total Collectable Fees</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6 mb-6">
+                      <h3 className="text-base sm:text-lg font-bold mb-4 flex items-center gap-2">
+                        <span>📊</span>
+                        <span>Total Collectable Fees</span>
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                         {Object.entries(totalFees).map(([token, fees]) => {
                           const totalFees = fees.protocol + fees.fund + fees.creator;
                           return (
-                            <div key={token} className="bg-gradient-to-br from-brand-cyan/10 to-brand-purple/10 rounded-lg p-4 border border-brand-cyan/20">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <div className="w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-sm font-bold">
-                                    {token[0]}
-                                  </div>
-                                  <div className="font-bold text-white text-sm">{token}</div>
+                            <div key={token} className="bg-gradient-to-br from-brand-cyan/10 to-brand-purple/10 rounded-lg p-4 border border-white/10">
+                              <div className="flex items-center gap-2 mb-3">
+                                <div className="w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-xs font-bold">
+                                  {token[0]}
                                 </div>
+                                <div className="font-bold text-white text-sm truncate">{token}</div>
                               </div>
-                              <div className="mt-3">
-                                <div className="text-2xl font-bold text-brand-cyan">{totalFees.toFixed(4)}</div>
-                                <div className="text-xs text-gray-400 mt-1">Total Available</div>
+                              <div className="text-xl font-bold text-brand-cyan mb-1">
+                                {totalFees.toFixed(4)}
                               </div>
+                              <div className="text-xs text-gray-400">Total Available</div>
                             </div>
                           );
                         })}
@@ -519,157 +527,151 @@ export default function Admin() {
 
                   {/* Individual Pool Fees */}
                   {poolFees.length > 0 && (
-              <div className="card">
-                      <h3 className="text-lg font-bold mb-4">🏊 Pool-by-Pool Breakdown</h3>
-                <div className="space-y-4">
+                    <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                      <h3 className="text-base sm:text-lg font-bold mb-4 flex items-center gap-2">
+                        <span>🏊</span>
+                        <span>Pool-by-Pool Breakdown</span>
+                      </h3>
+                      <div className="space-y-3">
                         {poolFees.map((pool) => (
-                          <div key={pool.poolAddress} className="bg-dark-900 rounded-xl p-4 border border-white/10">
-                            <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center gap-3">
-                                <div className="text-lg font-bold text-white">
+                          <div key={pool.poolAddress} className="bg-dark-900/80 rounded-lg p-4 border border-white/5">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                              <div className="flex items-center gap-2">
+                                <div className="text-base font-bold text-white">
                                   {pool.token0Symbol}/{pool.token1Symbol}
-                          </div>
+                                </div>
                                 <span className="text-xs text-gray-500 font-mono">
                                   {pool.poolAddress.slice(0, 8)}...
-                            </span>
-                        </div>
-                          <button
+                                </span>
+                              </div>
+                              <button
                                 onClick={() => collectAllFees(pool.poolAddress, pool)}
-                                className="px-3 py-1.5 text-xs font-semibold bg-gradient-brand text-white rounded-lg hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="px-3 py-1.5 text-xs font-semibold bg-gradient-brand text-white rounded-lg hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                                 disabled={
                                   (pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0) === 0 && 
                                   (pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1) === 0
                                 }
                               >
                                 💸 Collect All
-                          </button>
+                              </button>
                             </div>
                             
                             <div className="grid grid-cols-2 gap-3">
-                              {/* Token 0 Total */}
-                              <div className="bg-gradient-to-br from-brand-cyan/5 to-brand-purple/5 rounded-lg p-3 border border-brand-cyan/20">
-                                <div className="text-xs text-gray-400 mb-1">{pool.token0Symbol}</div>
-                                <div className="text-lg font-bold text-white">
+                              <div className="bg-brand-cyan/5 rounded-lg p-3 border border-brand-cyan/20">
+                                <div className="text-xs text-gray-400 mb-1 truncate">{pool.token0Symbol}</div>
+                                <div className="text-base font-bold text-white break-all">
                                   {(pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0).toFixed(4)}
                                 </div>
-                      </div>
-                      
-                              {/* Token 1 Total */}
-                              <div className="bg-gradient-to-br from-brand-pink/5 to-orange-400/5 rounded-lg p-3 border border-brand-pink/20">
-                                <div className="text-xs text-gray-400 mb-1">{pool.token1Symbol}</div>
-                                <div className="text-lg font-bold text-white">
+                              </div>
+                              
+                              <div className="bg-brand-pink/5 rounded-lg p-3 border border-brand-pink/20">
+                                <div className="text-xs text-gray-400 mb-1 truncate">{pool.token1Symbol}</div>
+                                <div className="text-base font-bold text-white break-all">
                                   {(pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1).toFixed(4)}
                                 </div>
-                        </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                  )}
 
                   {poolFees.length === 0 && !loading && (
-              <div className="card text-center text-gray-400">
-                      <p>No pool fees loaded. Click "Refresh Fees" to fetch data.</p>
+                    <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-8 text-center text-gray-400">
+                      <div className="text-4xl mb-3">📭</div>
+                      <p>No pool fees loaded yet.</p>
+                      <p className="text-sm mt-1">Click "Refresh" to fetch data</p>
                     </div>
                   )}
                 </>
               )}
 
-              
-
               {/* Settings Tab */}
               {activeTab === 'settings' && (
-                <div className="space-y-6">
-                  {/* Current Fee Receiver */}
-                  <div className="card">
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
-                        <h3 className="text-lg font-bold">Current Fee Receiver</h3>
-                        <p className="text-sm text-gray-400">All fees are sent to this address</p>
+                <div className="space-y-4">
+                  {/* Current Receiver */}
+                  <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-base font-bold mb-1">Current Fee Receiver</h3>
+                        <p className="text-xs text-gray-400">Address that receives protocol fees</p>
                       </div>
                       <button
                         onClick={fetchCurrentFeeReceiver}
                         disabled={loadingConfig}
-                        className="px-4 py-2 text-sm bg-white/5 hover:bg-white/10 rounded-lg transition-all disabled:opacity-50"
+                        className="px-4 py-2 text-xs font-semibold bg-white/5 hover:bg-white/10 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap"
                       >
-                        {loadingConfig ? '🔄 Loading...' : '🔄 Load'}
+                        {loadingConfig ? '⏳ Loading…' : '🔄 Load Current'}
                       </button>
                     </div>
-                    
                     {currentFeeReceiver && (
-                      <div className="bg-gradient-to-br from-brand-cyan/10 to-brand-purple/10 rounded-lg p-4 border border-brand-cyan/20">
-                        <div className="text-xs text-gray-400 mb-2">Current Address</div>
-                        <div className="font-mono text-sm text-white break-all bg-black/30 rounded-lg p-3">
+                      <div className="bg-black/30 rounded-lg p-3">
+                        <div className="font-mono text-xs text-white break-all">
                           {currentFeeReceiver}
                         </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Update Fee Receiver */}
-                  <div className="card">
-                    <h3 className="text-lg font-bold mb-4">Update Fee Receiver</h3>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm text-gray-400 mb-2">
-                          New Fee Receiver Address
-                        </label>
-                        <input
-                          type="text"
-                          value={newFeeReceiver}
-                          onChange={(e) => setNewFeeReceiver(e.target.value)}
-                          placeholder="Enter Solana address..."
-                          className="w-full bg-dark-900 border border-white/10 rounded-lg px-4 py-2.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-brand-cyan transition-colors font-mono"
-                        />
-                      </div>
+                  {/* Update Receiver */}
+                  <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                    <h3 className="text-base font-bold mb-1">Update Fee Receiver</h3>
+                    <p className="text-xs text-gray-400 mb-4">Set a new address to receive protocol fees</p>
+                    
+                    <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                      <input
+                        type="text"
+                        value={newFeeReceiver}
+                        onChange={(e) => setNewFeeReceiver(e.target.value)}
+                        placeholder="Enter new fee receiver public key"
+                        className="flex-1 bg-dark-900 border border-white/10 rounded-lg px-3 py-2.5 text-sm font-mono text-white placeholder-gray-500 focus:outline-none focus:border-brand-cyan focus:ring-1 focus:ring-brand-cyan"
+                      />
                       <button
                         onClick={updateFeeReceiver}
                         disabled={updating || !newFeeReceiver}
-                        className="w-full px-4 py-2.5 text-sm font-semibold bg-gradient-brand text-white rounded-lg hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="px-5 py-2.5 text-sm font-semibold bg-gradient-brand text-white rounded-lg hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                       >
-                        {updating ? '⏳ Updating...' : '✅ Update Fee Receiver'}
+                        {updating ? '⏳ Updating…' : '✅ Update'}
                       </button>
                     </div>
-                  </div>
-
-                  {/* How It Works */}
-                  <div className="card bg-gradient-to-br from-purple-500/5 to-pink-500/5 border-purple-500/20">
-                    <h3 className="text-base font-bold mb-3">How It Works</h3>
-                    <div className="space-y-2 text-sm text-gray-300">
-                      <p>• All protocol fees, fund fees, and creator fees are collected to this single address</p>
-                      <p>• The fee receiver can collect accumulated fees from any pool at any time</p>
-                      <p>• Liquidity provider fees (65%) remain in pools automatically</p>
+                    
+                    <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                      <p className="text-xs text-blue-300">
+                        ℹ️ Owner authority and fee receiver are unified. Updating this changes who can manage fees and protocol settings.
+                      </p>
                     </div>
                   </div>
 
-                  {/* Admin Info */}
-                  <div className="card bg-dark-900/50 border-white/5">
-                    <h3 className="text-base font-bold mb-3">Admin Information</h3>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Admin:</span>
-                        <span className="font-mono text-xs text-white break-all ml-2">{ADMIN_ADDRESS.toString().slice(0, 12)}...</span>
+                  {/* System Info */}
+                  <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                    <h3 className="text-base font-bold mb-4">System Information</h3>
+                    <div className="space-y-3">
+                      <div className="bg-white/5 rounded-lg p-3">
+                        <div className="text-xs text-gray-400 mb-1">Admin Address</div>
+                        <div className="font-mono text-xs text-white break-all">{ADMIN_ADDRESS.toString()}</div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Connected:</span>
-                        <span className="font-mono text-xs text-brand-cyan break-all ml-2">{publicKey?.toString().slice(0, 12)}...</span>
+                      <div className="bg-white/5 rounded-lg p-3">
+                        <div className="text-xs text-gray-400 mb-1">Connected Wallet</div>
+                        <div className="font-mono text-xs text-white break-all">{publicKey?.toString() || '—'}</div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Program:</span>
-                        <span className="font-mono text-xs text-white break-all ml-2">{PROGRAM_ID.toString().slice(0, 12)}...</span>
+                      <div className="bg-white/5 rounded-lg p-3">
+                        <div className="text-xs text-gray-400 mb-1">Program ID</div>
+                        <div className="font-mono text-xs text-white break-all">{PROGRAM_ID.toString()}</div>
                       </div>
                     </div>
                   </div>
-              </div>
-            )}
-          </>
-        )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
       
       {/* Toast Container */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </>
   );
 }
+
+

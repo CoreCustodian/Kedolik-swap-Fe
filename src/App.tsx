@@ -8,6 +8,7 @@ import Swap from './pages/Swap';
 import Pools from './pages/Pools';
 import Profile from './pages/Profile';
 import Admin from './pages/Admin';
+import Footer from './components/Footer';
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
                 <Route path="/admin" element={<Admin />} />
               </Routes>
             </div>
+            <Footer />
           </div>
           <Toaster 
             position="top-right"

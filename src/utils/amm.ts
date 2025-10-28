@@ -1580,7 +1580,7 @@ export const createPool = async (
       
       console.log('✅ Pool created successfully:', signature);
       console.log('📍 Pool State PDA:', poolState.toString());
-      console.log('🔗 View on Explorer:', `https://explorer.solana.com/tx/${signature}?cluster=devnet`);
+      console.log('🔗 View on Explorer:', `https://solscan.io/tx/${signature}?cluster=devnet`);
       
       return { tx: signature, poolState: poolState };
       

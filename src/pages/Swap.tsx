@@ -393,7 +393,7 @@ const Swap = () => {
         );
       }
       
-      // Show success modal
+      // Show success modal with explorer link
       setTxModal({
         isOpen: true,
         status: 'success',
@@ -540,7 +540,7 @@ const Swap = () => {
           </div>
 
           {/* Main Swap Card */}
-          <div className="card p-4 sm:p-6 md:p-8 relative overflow-hidden">
+          <div className="card p-4 sm:p-6 md:p-8 relative">
             {/* Settings Button - No overlap */}
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-300">Trade Details</h3>
@@ -566,7 +566,7 @@ const Swap = () => {
                 </h3>
                 <div>
                   <label className="text-xs text-gray-400 mb-3 block font-medium">Slippage Tolerance</label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-5 gap-2">
                     {['0.1', '0.5', '1.0', '2.0'].map((val) => (
                       <button
                         key={val}
@@ -580,6 +580,22 @@ const Swap = () => {
                         {val}%
                       </button>
                     ))}
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      step="0.1"
+                      min={0}
+                      max={50}
+                      value={slippage}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        // clamp to 0-50
+                        const n = Math.max(0, Math.min(50, parseFloat(v || '0')));
+                        setSlippage(isNaN(n) ? '0.5' : n.toString());
+                      }}
+                      className="px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-gray-200 focus:outline-none focus:border-brand-cyan"
+                      placeholder="Custom"
+                    />
                   </div>
                   <p className="text-xs text-gray-400 mt-3 bg-white/5 p-2 rounded">
                     💡 Your transaction will revert if price changes unfavorably by more than this percentage.
@@ -621,6 +637,13 @@ const Swap = () => {
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
+                        </button>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(fromToken.mint.toString())}
+                          className="mt-1 w-full text-[10px] text-gray-400 hover:text-brand-cyan transition-colors text-right"
+                          title="Copy contract address"
+                        >
+                          Copy CA
                         </button>
                         
                         {/* Token Dropdown */}
@@ -714,6 +737,13 @@ const Swap = () => {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
+                      </button>
+                      <button
+                        onClick={() => navigator.clipboard.writeText(toToken.mint.toString())}
+                        className="mt-1 w-full text-[10px] text-gray-400 hover:text-brand-cyan transition-colors text-right"
+                        title="Copy contract address"
+                      >
+                        Copy CA
                       </button>
                       
                       {/* Token Dropdown */}

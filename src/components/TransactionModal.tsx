@@ -64,12 +64,12 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             <p className="text-xs text-gray-400 mb-2">Transaction Signature:</p>
             <p className="text-xs font-mono text-brand-cyan break-all mb-3">{txSignature}</p>
             <a
-              href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
+              href={`https://solscan.io/tx/${txSignature}?cluster=devnet`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center space-x-2 text-sm text-brand-pink hover:text-brand-cyan transition-colors"
             >
-              <span>View on Solana Explorer</span>
+              <span>View on Explorer</span>
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
               </svg>

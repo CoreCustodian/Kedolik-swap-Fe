@@ -408,7 +408,7 @@ export const executeMultiHopSwap = async (
     });
     
     console.log('✅ Transaction sent:', signature);
-    console.log('🔗 Explorer:', `https://explorer.solana.com/tx/${signature}?cluster=devnet`);
+  console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}?cluster=devnet`);
     
     console.log('⏳ Confirming transaction...');
     const confirmation = await connection.confirmTransaction({

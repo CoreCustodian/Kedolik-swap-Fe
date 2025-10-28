@@ -61,7 +61,7 @@ export const Toast: React.FC<ToastProps> = ({
         <p className="text-sm font-medium break-words">{message}</p>
         {txSignature && (
           <a
-            href={`https://explorer.solana.com/tx/${txSignature}?cluster=devnet`}
+            href={`https://solscan.io/tx/${txSignature}?cluster=devnet`}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs underline hover:text-gray-200 mt-1 inline-block"

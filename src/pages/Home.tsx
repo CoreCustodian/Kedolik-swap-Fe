@@ -300,125 +300,18 @@ const Home = () => {
               Ready to Join the DeFi Revolution?
             </h2>
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-              <button className="btn-primary bg-white text-brand-pink hover:bg-gray-100">
+              <Link to="/swap" className="btn-primary bg-white text-brand-pink hover:bg-gray-100">
                 Buy $KEDOL
-              </button>
-              <Link to="/swap" className="btn-secondary">
-                Trade Now
               </Link>
+              <a href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/" target="_blank" rel="noopener noreferrer" className="btn-secondary">
+                Learn More
+              </a>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="relative border-t border-white/10 bg-dark-900/80 backdrop-blur-lg">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
-            <div>
-              <div className="flex items-center gap-3 mb-4">
-                <img src="/logo.png" alt="Kedolik" className="w-8 h-8" />
-                <span className="font-bold gradient-text font-heading">KEDOLIK SWAP</span>
-              </div>
-              <p className="text-gray-400 text-sm">
-                The Swap Hub for Alpha Hunters
-              </p>
-            </div>
-
-            <div>
-              <h4 className="font-bold mb-4 font-heading">Swap</h4>
-              <ul className="space-y-2 text-gray-400 text-sm">
-                <li><Link to="/pools" className="hover:text-brand-cyan transition-colors">Pools</Link></li>
-                <li><Link to="/swap" className="hover:text-brand-cyan transition-colors">Farming</Link></li>
-                <li><Link to="/swap" className="hover:text-brand-cyan transition-colors">Bridge</Link></li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-bold mb-4 font-heading">Earn</h4>
-              <ul className="space-y-2 text-gray-400 text-sm">
-                <li><Link to="/pools" className="hover:text-brand-cyan transition-colors">Staking</Link></li>
-                <li>
-                  <a
-                    href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="hover:text-brand-cyan transition-colors"
-                  >
-                    Guide
-                  </a>
-                </li>
-              </ul>
-            </div>
-
-            <div>
-              <h4 className="font-bold mb-4 font-heading">Follow us</h4>
-              <div className="flex gap-3">
-                <a
-                  href="https://x.com/kedolik_swap"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="X (Twitter)"
-                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
-                >
-                  𝕏
-                </a>
-                <a
-                  href="https://t.me/Kedolik_Swap"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Telegram"
-                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
-                >
-                  📢
-                </a>
-                <a
-                  href="https://www.facebook.com/kedolik/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Facebook"
-                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
-                >
-                  f
-                </a>
-                <a
-                  href="https://www.instagram.com/kedolikswap/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Instagram"
-                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
-                >
-                  ◯
-                </a>
-                <a
-                  href="https://medium.com/@kedolik"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Medium"
-                  className="w-10 h-10 bg-white/5 hover:bg-gradient-brand rounded-lg flex items-center justify-center transition-all duration-300 hover:scale-110"
-                >
-                  M
-                </a>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-white/10 pt-8 text-center text-gray-400 text-sm">
-            <div className="flex flex-col md:flex-row items-center justify-center gap-3">
-              <p>Copyright © Kedolik Swap 2025. All rights reserved</p>
-              <span className="hidden md:inline">•</span>
-              <a
-                href="https://kedolik.com/privacy-policy/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="hover:text-brand-cyan transition-colors"
-              >
-                Privacy Policy
-              </a>
-            </div>
-          </div>
-        </div>
-      </footer>
+      {/* Footer now global */}
     </div>
   );
 };

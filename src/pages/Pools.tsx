@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance, FEE_TIERS } from '../utils/amm';
+import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance } from '../utils/amm';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -427,7 +427,7 @@ const CreatePoolModal = ({
   const [amount1, setAmount1] = useState('');
   const [token0Balance, setToken0Balance] = useState<number>(0);
   const [token1Balance, setToken1Balance] = useState<number>(0);
-  const [selectedFeeTier, setSelectedFeeTier] = useState(0); // Index of selected fee tier
+  // Fee tier selector removed; default AMM config will be used
   
   const tokenList = getTokenList();
   
@@ -519,8 +519,7 @@ const CreatePoolModal = ({
         token0.mint,
         token1.mint,
         parseFloat(amount0),
-        parseFloat(amount1),
-        FEE_TIERS[selectedFeeTier].address // Pass selected fee tier config
+        parseFloat(amount1)
       );
       
       // Show success modal
@@ -626,33 +625,7 @@ const CreatePoolModal = ({
           </div>
               </div>
 
-        {/* Fee Tier Selection */}
-        <div className="mb-6">
-          <label className="block text-sm text-gray-400 mb-3">Fee Tier</label>
-          <div className="grid grid-cols-1 gap-2">
-            {FEE_TIERS.map((tier, index) => (
-              <button
-                key={tier.index}
-                onClick={() => setSelectedFeeTier(index)}
-                className={`p-3 rounded-lg border transition-all text-left ${
-                  selectedFeeTier === index
-                    ? 'border-brand-cyan bg-brand-cyan/10'
-                    : 'border-white/10 bg-dark-900/50 hover:border-white/20'
-                }`}
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <div className="font-bold text-white">{tier.label}</div>
-                    <div className="text-xs text-gray-400">{tier.description}</div>
-                  </div>
-                  {selectedFeeTier === index && (
-                    <div className="text-brand-cyan">✓</div>
-                  )}
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
+        {/* Fee Tier Selection removed - using default config */}
 
         {/* Info Alert */}
         <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">

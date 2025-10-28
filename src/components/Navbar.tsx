@@ -15,7 +15,7 @@ const Navbar = () => {
   const isAdmin = publicKey ? publicKey.equals(ADMIN_ADDRESS) : false;
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-dark-900/70 backdrop-blur-xl border-b border-white/10">
+    <nav className="fixed top-0 left-0 right-0 z-[60] bg-dark-900/70 backdrop-blur-xl border-b border-white/10">
       {/* Gradient line at top */}
       <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-brand"></div>
       
@@ -122,7 +122,7 @@ const Navbar = () => {
           </div>
 
           {/* Wallet Button & Profile */}
-          <div className="hidden lg:flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-3 z-[70]">
             {location.pathname !== '/profile' && (
               <Link 
                 to="/profile" 
@@ -138,8 +138,8 @@ const Navbar = () => {
           </div>
 
           {/* Mobile menu button */}
-          <div className="lg:hidden flex items-center gap-3">
-            <WalletMultiButton className="!bg-gradient-brand !rounded-full !text-xs !px-4 !py-2" />
+          <div className="lg:hidden flex items-center gap-3 z-[70]">
+            <WalletMultiButton className="!bg-gradient-brand !rounded-full !text-xs !px-4 !py-2 !z-[75]" />
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-all duration-300"

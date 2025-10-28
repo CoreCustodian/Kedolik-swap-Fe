@@ -1,4 +1,5 @@
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useState, useEffect } from 'react';
 import { fetchAllBalances, TokenBalance } from '../utils/balances';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
@@ -9,11 +10,13 @@ const Profile = () => {
   const { connected, publicKey, disconnect } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
+  const { setVisible: setWalletModalVisible } = useWalletModal();
   
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [solBalance, setSolBalance] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
-  const [txHistory, setTxHistory] = useState<any[]>([]);
+  type TxSig = { signature: string; blockTime?: number; err?: unknown };
+  const [txHistory, setTxHistory] = useState<TxSig[]>([]);
   const [lpTokens, setLpTokens] = useState<Array<{
     poolAddress: string;
     token0Symbol: string;
@@ -134,7 +137,8 @@ const Profile = () => {
       
       try {
         const signatures = await connection.getSignaturesForAddress(publicKey, { limit: 5 });
-        setTxHistory(signatures);
+        const mapped = signatures.map(s => ({ signature: s.signature, blockTime: s.blockTime ?? undefined, err: s.err }));
+        setTxHistory(mapped);
       } catch (error) {
         console.error('Error fetching transaction history:', error);
       }
@@ -155,7 +159,7 @@ const Profile = () => {
             <div className="text-8xl mb-6">👤</div>
             <h1 className="text-5xl font-bold mb-4 gradient-text font-heading">Profile</h1>
             <p className="text-gray-400 text-lg mb-8">Connect your wallet to view your profile</p>
-            <button className="btn-primary">Connect Wallet</button>
+            <button className="btn-primary" onClick={() => setWalletModalVisible(true)}>Connect Wallet</button>
           </div>
         </div>
       </div>
@@ -205,7 +209,7 @@ const Profile = () => {
               </div>
               <div className="flex gap-3">
                 <a
-                  href={`https://explorer.solana.com/address/${publicKey.toString()}?cluster=devnet`}
+                  href={`https://solscan.io/account/${publicKey.toString()}?cluster=devnet`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-semibold border border-white/10 transition-all"
@@ -213,7 +217,7 @@ const Profile = () => {
                   View on Explorer
                 </a>
                 <button
-                  onClick={() => disconnect()}
+                  onClick={async () => { try { await disconnect(); } catch (e) { console.error('Disconnect failed:', e); } }}
                   className="px-6 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl font-semibold border border-red-500/30 transition-all"
                 >
                   Disconnect
@@ -411,7 +415,7 @@ const Profile = () => {
                 {txHistory.map((tx, index) => (
                   <a
                     key={index}
-                    href={`https://explorer.solana.com/tx/${tx.signature}?cluster=devnet`}
+                    href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block p-4 bg-dark-900/50 rounded-xl border border-white/10 hover:border-brand-cyan/30 transition-all group"
