@@ -8,6 +8,7 @@ This document explains the fee structure for Kedolik Swap, which is based on Ray
 
 Based on the [Raydium Protocol Fees Documentation](https://docs.raydium.io/raydium/protocol/protocol-fees):
 
+
 ### **Standard AMM Pools (AMM v4)**
 - **Trading Fee:** 0.25% per swap
 - **Distribution:**
