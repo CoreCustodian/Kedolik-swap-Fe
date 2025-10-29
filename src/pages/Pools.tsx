@@ -7,13 +7,14 @@ import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 
 const Pools = () => {
-  const { connected } = useWallet();
+  const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
   
   const [activeTab, setActiveTab] = useState<'all' | 'my'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [pools, setPools] = useState<PoolInfo[]>([]);
+  const [userLpBalances, setUserLpBalances] = useState<Map<string, number>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [showCreatePool, setShowCreatePool] = useState(false);
   const [showAddLiquidity, setShowAddLiquidity] = useState<PoolInfo | null>(null);
@@ -79,17 +80,55 @@ const Pools = () => {
     // No auto-refresh - user can manually refresh if needed
   }, [connection, wallet]);
   
+  // Fetch user's LP token balances for each pool
+  useEffect(() => {
+    const fetchUserLpBalances = async () => {
+      if (!connected || !publicKey || pools.length === 0) {
+        setUserLpBalances(new Map());
+        return;
+      }
+      
+      const balances = new Map<string, number>();
+      
+      // Fetch LP balance for each pool
+      await Promise.all(
+        pools.map(async (pool) => {
+          try {
+            const lpMint = getLpMint(pool.address);
+            const userLpAccount = await getAssociatedTokenAddress(lpMint, publicKey);
+            const lpAccountInfo = await connection.getTokenAccountBalance(userLpAccount);
+            const balance = parseFloat(lpAccountInfo.value.amount) / Math.pow(10, lpAccountInfo.value.decimals);
+            
+            if (balance > 0) {
+              balances.set(pool.address.toString(), balance);
+            }
+          } catch (error) {
+            // User doesn't have LP tokens for this pool
+            // This is expected, so we don't log it as an error
+          }
+        })
+      );
+      
+      setUserLpBalances(balances);
+    };
+    
+    fetchUserLpBalances();
+  }, [connected, publicKey, pools, connection]);
+  
   // Calculate stats
   const totalTVL = pools.reduce((sum, pool) => sum + (pool.token0Reserve + pool.token1Reserve), 0);
   const totalVolume = totalTVL * 0.5; // Simplified
-  const avgAPR = 34.2; // Placeholder
   
   // Filter pools
   const filteredPools = pools.filter(pool => {
     const matchesSearch = searchQuery === '' || 
       pool.token0Symbol.toLowerCase().includes(searchQuery.toLowerCase()) ||
       pool.token1Symbol.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTab = activeTab === 'all' || (activeTab === 'my' && connected);
+    
+    // For "My Pools", only show pools where user has LP tokens
+    const matchesTab = activeTab === 'all' || 
+      (activeTab === 'my' && userLpBalances.has(pool.address.toString()));
+    
     return matchesSearch && matchesTab;
   });
 
@@ -108,7 +147,7 @@ const Pools = () => {
         </div>
 
           {/* Stats Grid - Responsive */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6 mb-8 sm:mb-12">
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 md:gap-6 mb-8 sm:mb-12">
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">Total Value Locked</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold gradient-text">
@@ -125,12 +164,6 @@ const Pools = () => {
               <p className="text-xs sm:text-sm text-gray-400 mb-2">Active Pools</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-pink">
                 {pools.length}
-              </p>
-            </div>
-            <div className="card p-4 sm:p-6">
-              <p className="text-xs sm:text-sm text-gray-400 mb-2">Avg APR</p>
-              <p className="text-lg sm:text-2xl md:text-3xl font-bold text-green-400">
-                {avgAPR}%
               </p>
             </div>
           </div>
@@ -200,6 +233,7 @@ const Pools = () => {
                   onAddLiquidity={() => setShowAddLiquidity(pool)}
                   onRemoveLiquidity={() => setShowRemoveLiquidity(pool)}
                   connected={connected}
+                  userLpBalance={userLpBalances.get(pool.address.toString()) || 0}
                 />
               ))}
             </div>
@@ -286,16 +320,21 @@ const PoolCard = ({
   pool,
   onAddLiquidity,
   onRemoveLiquidity,
-  connected
+  connected,
+  userLpBalance
 }: {
   pool: PoolInfo;
   onAddLiquidity: () => void;
   onRemoveLiquidity: () => void;
   connected: boolean;
+  userLpBalance: number;
 }) => {
   // Detect dust pool
   const isDustPool = (pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || 
                      (pool.lpSupply / 1e9) < 0.01;
+  
+  // Calculate user's share of the pool
+  const userPoolShare = pool.lpSupply > 0 ? (userLpBalance / (pool.lpSupply / 1e9)) * 100 : 0;
   
   return (
     <div className="card p-4 sm:p-6 hover:scale-105 transition-transform">
@@ -320,43 +359,6 @@ const PoolCard = ({
             </div>
             <p className="text-xs text-gray-400">{(pool.tradeFeeRate / 100).toFixed(2)}% Fee</p>
           </div>
-        </div>
-        <div className="flex items-center gap-1 bg-green-500/20 px-2 py-1 rounded-lg">
-          <span className="text-green-400 text-xs sm:text-sm font-semibold">APR</span>
-          <span className="text-green-400 text-xs sm:text-sm font-bold">
-            {(() => {
-              // Calculate APR based on trading fee rate and assumed daily volume
-              // For new pools with no history, estimate based on fee tier
-              const tvl = pool.token0Reserve + pool.token1Reserve;
-              
-              if (tvl > 0) {
-                // Calculate total fees collected
-                const totalFeesToken0 = pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0;
-                const totalFeesToken1 = pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1;
-                const totalFees = totalFeesToken0 + totalFeesToken1;
-                
-                // If pool has collected fees, use that for APR calculation
-                if (totalFees > 0.01) {
-                  // Assume current fees represent 1 day of trading (rough estimate)
-                  const estimatedDailyFees = totalFees;
-                  const estimatedAnnualFees = estimatedDailyFees * 365;
-                  const apr = (estimatedAnnualFees / tvl) * 100;
-                  return apr > 1 ? `${apr.toFixed(1)}%` : `${apr.toFixed(2)}%`;
-                }
-                
-                // For new pools, estimate based on fee rate and assumed volume
-                // Assume 10% of TVL trades daily (conservative estimate)
-                const assumedDailyVolume = tvl * 0.1;
-                const feeRate = pool.tradeFeeRate / 1000000; // Convert basis points to decimal
-                const dailyFees = assumedDailyVolume * feeRate;
-                const annualFees = dailyFees * 365;
-                const estimatedAPR = (annualFees / tvl) * 100;
-                
-                return estimatedAPR > 0 ? `~${estimatedAPR.toFixed(1)}%` : '0.0%';
-              }
-              return 'N/A';
-            })()}
-          </span>
         </div>
       </div>
       
@@ -385,6 +387,18 @@ const PoolCard = ({
           <span className="text-gray-400">LP Supply</span>
           <span className="font-semibold">{(pool.lpSupply / 1e9).toFixed(2)}</span>
         </div>
+        {userLpBalance > 0 && (
+          <>
+            <div className="flex justify-between text-xs sm:text-sm bg-brand-cyan/10 -mx-3 px-3 py-2 rounded-lg">
+              <span className="text-brand-cyan font-semibold">Your LP Tokens</span>
+              <span className="font-bold text-brand-cyan">{userLpBalance.toFixed(6)}</span>
+            </div>
+            <div className="flex justify-between text-xs sm:text-sm">
+              <span className="text-gray-400">Your Pool Share</span>
+              <span className="font-semibold text-brand-pink">{userPoolShare.toFixed(4)}%</span>
+            </div>
+          </>
+        )}
               </div>
       
       <div className="grid grid-cols-2 gap-2 sm:gap-3">
