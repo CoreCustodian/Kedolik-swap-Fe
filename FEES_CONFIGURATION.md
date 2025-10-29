@@ -13,6 +13,7 @@ Based on the [Raydium Protocol Fees Documentation](https://docs.raydium.io/raydi
 - **Distribution:**
   - 0.22% (88%) → Liquidity Providers
   - 0.03% (12%) → Protocol (RAY buybacks)
+  
 
 ### **CP-Swap (CPMM) Pools**
 - **Available Tiers:** 0.25%, 1%, 2%, and 4%
