@@ -357,7 +357,7 @@ const PoolCard = ({
                 </span>
               )}
             </div>
-            <p className="text-xs text-gray-400">{(pool.tradeFeeRate / 100).toFixed(2)}% Fee</p>
+            <p className="text-xs text-gray-400">{(pool.tradeFeeRate / 10000).toFixed(2)}% Fee</p>
           </div>
         </div>
       </div>

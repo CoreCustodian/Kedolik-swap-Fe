@@ -40,7 +40,7 @@ const Swap = () => {
   const [toBalance, setToBalance] = useState<number>(0);
   
   // Pool data
-  const [poolReserves, setPoolReserves] = useState<{ reserve0: number; reserve1: number } | null>(null);
+  const [poolReserves, setPoolReserves] = useState<{ reserve0: number; reserve1: number; tradeFeeRate: number } | null>(null);
   const [quoteData, setQuoteData] = useState<{ amountOut: number; priceImpact: number; fee: number } | null>(null);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
   const [poolRefreshTrigger, setPoolRefreshTrigger] = useState(0);
@@ -163,10 +163,12 @@ const Swap = () => {
           console.log('✅ Direct pool found:', {
             reserve0: pool.token0Reserve,
             reserve1: pool.token1Reserve,
+            tradeFeeRate: pool.tradeFeeRate,
           });
           setPoolReserves({
             reserve0: pool.token0Reserve,
             reserve1: pool.token1Reserve,
+            tradeFeeRate: pool.tradeFeeRate,
           });
           setIsMultiHop(false);
           setSwapRoute(null);
@@ -241,14 +243,14 @@ const Swap = () => {
     const calculateQuote = () => {
       try {
         if (poolReserves) {
-          // Direct pool swap
+          // Direct pool swap - use pool's actual fee rate
           const { token0 } = sortTokenMints(fromToken.mint, toToken.mint);
           const isInputToken0 = fromToken.mint.equals(token0);
           
           const reserveIn = isInputToken0 ? poolReserves.reserve0 : poolReserves.reserve1;
           const reserveOut = isInputToken0 ? poolReserves.reserve1 : poolReserves.reserve0;
           
-          const quote = calculateSwapOutput(amount, reserveIn, reserveOut);
+          const quote = calculateSwapOutput(amount, reserveIn, reserveOut, poolReserves.tradeFeeRate);
           setQuoteData(quote);
           setToAmount(quote.amountOut.toFixed(6));
         } else if (swapRoute) {
@@ -259,7 +261,7 @@ const Swap = () => {
           let totalFee = 0;
           let currentAmount = amount;
           for (const pool of swapRoute.pools) {
-            const feeRate = pool.tradeFeeRate / 1000000; // Convert basis points to decimal
+            const feeRate = pool.tradeFeeRate / 1000000; // Convert parts per million to decimal
             const hopFee = currentAmount * feeRate;
             totalFee += hopFee;
             currentAmount = currentAmount - hopFee; // Reduce amount for next hop

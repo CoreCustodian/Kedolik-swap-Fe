@@ -429,7 +429,7 @@ export interface PoolInfo {
   creatorFeesToken0: number;
   creatorFeesToken1: number;
   // Trading fee rate (from AMM config)
-  tradeFeeRate: number; // in basis points (100 = 1%)
+  tradeFeeRate: number; // in parts per million (10000 = 1%, 1000000 = 100%)
   // AMM config address for this pool (important for multi-hop swaps)
   ammConfig: PublicKey;
 }
@@ -468,16 +468,6 @@ export const fetchPools = async (
     console.log('🔄 Fetching pools from RPC...');
     const program = getProgram(connection, wallet);
     
-    // Fetch AMM config to get trade fee rate
-    let tradeFeeRate = 100; // Default 1% (100 basis points)
-    try {
-      const ammConfigData = await (program.account as any).ammConfig.fetch(AMM_CONFIG);
-      tradeFeeRate = ammConfigData.tradeFeeRate || 100;
-      console.log('📊 AMM Config - Trade Fee Rate:', tradeFeeRate, 'basis points (', tradeFeeRate / 100, '%)');
-    } catch (error) {
-      console.warn('Could not fetch AMM config, using default fee rate');
-    }
-    
     // Fetch all pool accounts
     const pools = await (program.account as any).poolState.all();
     
@@ -505,6 +495,17 @@ export const fetchPools = async (
       const creatorFeesToken0 = Number(data.creatorFeesToken0?.toString() || '0') / Math.pow(10, token0Decimals);
       const creatorFeesToken1 = Number(data.creatorFeesToken1?.toString() || '0') / Math.pow(10, token1Decimals);
       
+      // Fetch trade fee rate from pool's specific AMM config
+      let tradeFeeRate = 100; // Default 0.01% (100 parts per million)
+      const poolAmmConfig = data.ammConfig || AMM_CONFIG;
+      try {
+        const ammConfigData = await (program.account as any).ammConfig.fetch(poolAmmConfig);
+        tradeFeeRate = ammConfigData.tradeFeeRate || 100;
+        console.log(`📊 Pool ${pool.publicKey.toString().slice(0, 8)}... - Trade Fee Rate: ${tradeFeeRate} (${tradeFeeRate / 10000}%)`);
+      } catch (error) {
+        console.warn(`Could not fetch AMM config for pool ${pool.publicKey.toString().slice(0, 8)}..., using default fee rate`);
+      }
+      
       poolInfos.push({
         address: pool.publicKey,
         token0Mint: data.token0Mint,
@@ -527,7 +528,7 @@ export const fetchPools = async (
         creatorFeesToken0,
         creatorFeesToken1,
         tradeFeeRate,
-        ammConfig: data.ammConfig || AMM_CONFIG, // Store pool's AMM config
+        ammConfig: poolAmmConfig, // Store pool's AMM config
       });
     }
     
@@ -588,7 +589,7 @@ export const calculateSwapOutput = (
   amountIn: number,
   reserveIn: number,
   reserveOut: number,
-  tradeFeeRate: number = 100 // 0.01% = 100 in basis points (10000 = 1%)
+  tradeFeeRate: number = 100 // 0.01% = 100 in parts per million (10000 = 1%, 1000000 = 100%)
 ): { amountOut: number; priceImpact: number; fee: number } => {
   if (reserveIn === 0 || reserveOut === 0) {
     return { amountOut: 0, priceImpact: 0, fee: 0 };
