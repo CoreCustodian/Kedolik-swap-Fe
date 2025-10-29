@@ -23,17 +23,17 @@ const Navbar = () => {
         <div className="flex items-center justify-between h-20">
           {/* Logo */}
           <div className="flex items-center">
-            <Link to="/" className="flex items-center space-x-3 group">
+            <Link to="/" className="flex items-center space-x-2 sm:space-x-3 group">
               <div className="relative">
                 <img 
                   src="/logo.png" 
                   alt="Kedolik" 
-                  className="w-10 h-10 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" 
+                  className="w-10 h-10 rounded-full transition-transform duration-300 group-hover:scale-110 group-hover:rotate-12" 
                 />
                 <div className="absolute inset-0 bg-gradient-brand rounded-full blur-lg opacity-0 group-hover:opacity-50 transition-opacity duration-300"></div>
               </div>
-              <span className="text-xl font-bold gradient-text font-heading tracking-wide">
-                KEDOLIK SWAP
+              <span className="text-base sm:text-xl font-bold gradient-text font-heading tracking-wide whitespace-nowrap">
+                Kedolik Swap
               </span>
             </Link>
           </div>
@@ -138,13 +138,15 @@ const Navbar = () => {
           </div>
 
           {/* Mobile menu button */}
-          <div className="lg:hidden flex items-center gap-3 z-[70]">
-            <WalletMultiButton className="!bg-gradient-brand !rounded-full !text-xs !px-4 !py-2 !z-[75]" />
+          <div className="lg:hidden flex items-center gap-2 z-[70]">
+            <WalletMultiButton className="!bg-gradient-brand !rounded-full !text-[10px] sm:!text-xs !px-2 sm:!px-3 !py-1.5 sm:!py-2 !z-[75] !max-w-[100px] !overflow-hidden" style={{ 
+              '--wallet-button-text': 'Connect' 
+            } as React.CSSProperties} />
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-all duration-300"
             >
-              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-5 w-5 sm:h-6 sm:w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 {isOpen ? (
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 ) : (

@@ -325,17 +325,34 @@ const PoolCard = ({
           <span className="text-green-400 text-xs sm:text-sm font-semibold">APR</span>
           <span className="text-green-400 text-xs sm:text-sm font-bold">
             {(() => {
-              // Calculate APR based on total fees collected and TVL
-              const totalFeesToken0 = pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0;
-              const totalFeesToken1 = pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1;
+              // Calculate APR based on trading fee rate and assumed daily volume
+              // For new pools with no history, estimate based on fee tier
               const tvl = pool.token0Reserve + pool.token1Reserve;
               
               if (tvl > 0) {
-                // Estimate annual fees (current fees * projected annual multiplier)
-                // This is a rough estimate - ideally you'd track 24h fees
-                const estimatedAnnualFees = (totalFeesToken0 + totalFeesToken1) * 365;
-                const apr = (estimatedAnnualFees / tvl) * 100;
-                return apr > 0 ? `~${apr.toFixed(1)}%` : 'N/A';
+                // Calculate total fees collected
+                const totalFeesToken0 = pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0;
+                const totalFeesToken1 = pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1;
+                const totalFees = totalFeesToken0 + totalFeesToken1;
+                
+                // If pool has collected fees, use that for APR calculation
+                if (totalFees > 0.01) {
+                  // Assume current fees represent 1 day of trading (rough estimate)
+                  const estimatedDailyFees = totalFees;
+                  const estimatedAnnualFees = estimatedDailyFees * 365;
+                  const apr = (estimatedAnnualFees / tvl) * 100;
+                  return apr > 1 ? `${apr.toFixed(1)}%` : `${apr.toFixed(2)}%`;
+                }
+                
+                // For new pools, estimate based on fee rate and assumed volume
+                // Assume 10% of TVL trades daily (conservative estimate)
+                const assumedDailyVolume = tvl * 0.1;
+                const feeRate = pool.tradeFeeRate / 1000000; // Convert basis points to decimal
+                const dailyFees = assumedDailyVolume * feeRate;
+                const annualFees = dailyFees * 365;
+                const estimatedAPR = (annualFees / tvl) * 100;
+                
+                return estimatedAPR > 0 ? `~${estimatedAPR.toFixed(1)}%` : '0.0%';
               }
               return 'N/A';
             })()}
@@ -392,8 +409,8 @@ const PoolCard = ({
           }`}
         >
           {connected ? '- Remove' : 'Connect'}
-              </button>
-            </div>
+        </button>
+      </div>
     </div>
   );
 };
@@ -532,17 +549,18 @@ const CreatePoolModal = ({
       
       showToast('Pool created successfully!', 'success', result.tx);
       onSuccess();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { message?: string };
       console.error('Create pool error:', error);
       
       // Show error modal
       setTxModal({
         isOpen: true,
         status: 'error',
-        message: error.message || 'Failed to create pool. Please try again.',
+        message: err.message || 'Failed to create pool. Please try again.',
       });
       
-      showToast(`Failed to create pool: ${error.message || 'Unknown error'}`, 'error');
+      showToast(`Failed to create pool: ${err.message || 'Unknown error'}`, 'error');
     }
   };
   
@@ -756,16 +774,17 @@ const AddLiquidityModal = ({
       
       showToast('Liquidity added successfully!', 'success', result);
       onSuccess();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { message?: string };
       console.error('Add liquidity error:', error);
       
       setTxModal({
         isOpen: true,
         status: 'error',
-        message: error.message || 'Failed to add liquidity',
+        message: err.message || 'Failed to add liquidity',
       });
       
-      showToast(`Failed: ${error.message || 'Unknown error'}`, 'error');
+      showToast(`Failed: ${err.message || 'Unknown error'}`, 'error');
     }
   };
   
@@ -979,14 +998,15 @@ const RemoveLiquidityModal = ({
 
       onSuccess();
       onClose();
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const err = error as { message?: string };
       console.error('Remove liquidity error:', error);
       setTxModal({
         isOpen: true,
         status: 'error',
-        message: error.message || 'Failed to remove liquidity'
+        message: err.message || 'Failed to remove liquidity'
       });
-      showToast(error.message || 'Failed to remove liquidity', 'error');
+      showToast(err.message || 'Failed to remove liquidity', 'error');
     }
   };
 

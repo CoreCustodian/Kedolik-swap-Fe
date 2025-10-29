@@ -638,13 +638,21 @@ const Swap = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
                         </button>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(fromToken.mint.toString())}
-                          className="mt-1 w-full text-[10px] text-gray-400 hover:text-brand-cyan transition-colors text-right"
-                          title="Copy contract address"
-                        >
-                          Copy CA
-                        </button>
+                        {fromToken.symbol !== 'SOL' && (
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(fromToken.mint.toString());
+                              showToast('Contract address copied!', 'success');
+                            }}
+                            className="mt-2 w-full px-2 py-1.5 text-[10px] sm:text-xs text-gray-400 hover:text-brand-cyan bg-dark-900/50 hover:bg-brand-cyan/10 rounded-lg transition-all border border-white/5 hover:border-brand-cyan/30 flex items-center gap-1.5 justify-center"
+                            title="Copy contract address"
+                          >
+                            <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <span className="font-medium">Copy CA</span>
+                          </button>
+                        )}
                         
                         {/* Token Dropdown */}
                         {showFromTokenList && (
@@ -738,13 +746,21 @@ const Swap = () => {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
                       </button>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(toToken.mint.toString())}
-                        className="mt-1 w-full text-[10px] text-gray-400 hover:text-brand-cyan transition-colors text-right"
-                        title="Copy contract address"
-                      >
-                        Copy CA
-                      </button>
+                      {toToken.symbol !== 'SOL' && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(toToken.mint.toString());
+                            showToast('Contract address copied!', 'success');
+                          }}
+                          className="mt-2 w-full px-2 py-1.5 text-[10px] sm:text-xs text-gray-400 hover:text-brand-cyan bg-dark-900/50 hover:bg-brand-cyan/10 rounded-lg transition-all border border-white/5 hover:border-brand-cyan/30 flex items-center gap-1.5 justify-center"
+                          title="Copy contract address"
+                        >
+                          <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                          </svg>
+                          <span className="font-medium">Copy CA</span>
+                        </button>
+                      )}
                       
                       {/* Token Dropdown */}
                       {showToTokenList && (

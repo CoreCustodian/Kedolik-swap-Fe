@@ -58,12 +58,12 @@ const Home = () => {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
               </Link>
-              <button className="btn-secondary inline-flex items-center justify-center gap-2 text-sm sm:text-base">
+              <a href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/" target="_blank" rel="noopener noreferrer" className="btn-secondary inline-flex items-center justify-center gap-2 text-sm sm:text-base">
                 Learn more
                 <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                 </svg>
-              </button>
+              </a>
             </div>
           </div>
         </div>

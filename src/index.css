@@ -68,6 +68,22 @@
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     @apply brightness-110;
   }
+  
+  /* Wallet button customization for mobile */
+  @media (max-width: 640px) {
+    .wallet-adapter-button {
+      font-size: 10px !important;
+      padding: 6px 8px !important;
+      white-space: nowrap !important;
+      overflow: hidden !important;
+      text-overflow: ellipsis !important;
+    }
+    
+    .wallet-adapter-button-trigger {
+      font-size: 10px !important;
+      white-space: nowrap !important;
+    }
+  }
 }
 
 @layer utilities {

@@ -240,6 +240,118 @@ export const getAuthority = () => {
   return authority;
 };
 
+/**
+ * Collect creator fees from a pool
+ * Only the pool creator can call this function
+ */
+export const collectCreatorFees = async (
+  connection: Connection,
+  wallet: any,
+  poolAddress: PublicKey,
+  token0Mint: PublicKey,
+  token1Mint: PublicKey,
+  ammConfig: PublicKey
+): Promise<string> => {
+  try {
+    const program = getProgram(connection, wallet);
+    const authority = getAuthority();
+    
+    // Get token programs
+    const token0Info = await connection.getAccountInfo(token0Mint);
+    const token1Info = await connection.getAccountInfo(token1Mint);
+    const token0Program = token0Info?.owner || TOKEN_PROGRAM_ID;
+    const token1Program = token1Info?.owner || TOKEN_PROGRAM_ID;
+    
+    // Get vault addresses
+    const [vault0] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool_vault'), poolAddress.toBuffer(), token0Mint.toBuffer()],
+      PROGRAM_ID
+    );
+    const [vault1] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool_vault'), poolAddress.toBuffer(), token1Mint.toBuffer()],
+      PROGRAM_ID
+    );
+    
+    // Get or create creator token accounts
+    const creatorToken0 = await getAssociatedTokenAddress(
+      token0Mint,
+      wallet.publicKey,
+      false,
+      token0Program
+    );
+    const creatorToken1 = await getAssociatedTokenAddress(
+      token1Mint,
+      wallet.publicKey,
+      false,
+      token1Program
+    );
+    
+    // Check if accounts exist and create if needed
+    const tx = new Transaction();
+    
+    const token0AccountInfo = await connection.getAccountInfo(creatorToken0);
+    if (!token0AccountInfo) {
+      tx.add(
+        createAssociatedTokenAccountInstruction(
+          wallet.publicKey,
+          creatorToken0,
+          wallet.publicKey,
+          token0Mint,
+          token0Program,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      );
+    }
+    
+    const token1AccountInfo = await connection.getAccountInfo(creatorToken1);
+    if (!token1AccountInfo) {
+      tx.add(
+        createAssociatedTokenAccountInstruction(
+          wallet.publicKey,
+          creatorToken1,
+          wallet.publicKey,
+          token1Mint,
+          token1Program,
+          ASSOCIATED_TOKEN_PROGRAM_ID
+        )
+      );
+    }
+    
+    // Call collect_creator_fee instruction
+    const collectIx = await (program.methods as any)
+      .collectCreatorFee()
+      .accounts({
+        creator: wallet.publicKey,
+        authority,
+        poolState: poolAddress,
+        ammConfig,
+        token0Vault: vault0,
+        token1Vault: vault1,
+        vault0Mint: token0Mint,
+        vault1Mint: token1Mint,
+        creatorToken0,
+        creatorToken1,
+        token0Program,
+        token1Program,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .instruction();
+    
+    tx.add(collectIx);
+    
+    // Send transaction
+    const signature = await wallet.sendTransaction(tx, connection);
+    await connection.confirmTransaction(signature, 'confirmed');
+    
+    console.log('✅ Creator fees collected:', signature);
+    return signature;
+  } catch (error) {
+    console.error('❌ Error collecting creator fees:', error);
+    throw error;
+  }
+};
+
 // Get Pool State PDA
 export const getPoolState = (token0Mint: PublicKey, token1Mint: PublicKey, ammConfig?: PublicKey) => {
   const config = ammConfig || AMM_CONFIG; // Use provided config or default
@@ -307,6 +419,8 @@ export interface PoolInfo {
   token1Symbol: string;
   token0Decimals: number;
   token1Decimals: number;
+  // Pool creator
+  creator: PublicKey;
   // Fee data
   protocolFeesToken0: number;
   protocolFeesToken1: number;
@@ -405,6 +519,7 @@ export const fetchPools = async (
         token1Symbol: getTokenSymbol(data.token1Mint),
         token0Decimals,
         token1Decimals,
+        creator: data.poolCreator || data.pool_creator || PublicKey.default, // Pool creator address
         protocolFeesToken0,
         protocolFeesToken1,
         fundFeesToken0,
