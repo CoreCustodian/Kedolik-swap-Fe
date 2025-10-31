@@ -334,11 +334,11 @@ const Swap = () => {
             priceImpact = routeOutput.priceImpact;
             
             // Calculate total fee
-            let currentAmount = amount;
-            for (const pool of swapRoute.pools) {
+          let currentAmount = amount;
+          for (const pool of swapRoute.pools) {
               const feeRate = pool.tradeFeeRate / 1000000;
-              const hopFee = currentAmount * feeRate;
-              totalFee += hopFee;
+            const hopFee = currentAmount * feeRate;
+            totalFee += hopFee;
               currentAmount = currentAmount - hopFee;
             }
           }
@@ -553,9 +553,9 @@ const Swap = () => {
       }
     } else {
       // Balance validation for other tokens
-      if (amountIn > fromBalance) {
-        showToast(`Insufficient ${fromToken.symbol} balance`, 'error');
-        return;
+    if (amountIn > fromBalance) {
+      showToast(`Insufficient ${fromToken.symbol} balance`, 'error');
+      return;
       }
     }
     
@@ -617,16 +617,16 @@ const Swap = () => {
       let signature: string;
       
       if (useKedologDiscount && estimatedKedologFee) {
-        if (isMultiHop && swapRoute) {
+      if (isMultiHop && swapRoute) {
           // Execute multi-hop swap with KEDOLOG discount
           console.log('🔄💰 Executing multi-hop swap with KEDOLOG discount (atomic transaction)...');
-          const signatures = await executeMultiHopSwap(
-            swapRoute,
-            amountIn,
-            minimumOut,
-            connection,
-            wallet,
-            publicKey,
+        const signatures = await executeMultiHopSwap(
+          swapRoute,
+          amountIn,
+          minimumOut,
+          connection,
+          wallet,
+          publicKey,
             slippageBps,
             true // Enable KEDOLOG discount
           );
@@ -643,8 +643,8 @@ const Swap = () => {
             toToken.mint,
             amountIn,
             minimumOut,
-            slippageBps
-          );
+          slippageBps
+        );
         }
       } else if (isMultiHop && swapRoute) {
         // Execute normal multi-hop swap (no discount)
@@ -907,17 +907,41 @@ const Swap = () => {
                       </button>
                     ))}
                     <input
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      step="0.1"
-                      min={0}
-                      max={50}
                       value={slippage}
                       onChange={(e) => {
                         const v = e.target.value;
-                        // clamp to 0-50
-                        const n = Math.max(0, Math.min(50, parseFloat(v || '0')));
-                        setSlippage(isNaN(n) ? '0.5' : n.toString());
+                        // Allow empty string
+                        if (v === '') {
+                          setSlippage('');
+                          return;
+                        }
+                        // Allow valid decimal number patterns while typing
+                        // Allows: "0", "0.", "0.1", "0.10", "10", "10.", "10.5", etc.
+                        if (/^\d*\.?\d*$/.test(v)) {
+                          // If it's a valid number, check if it's within range
+                          const n = parseFloat(v);
+                          if (!isNaN(n) && n >= 0 && n <= 50) {
+                            setSlippage(v);
+                          } else if (isNaN(n)) {
+                            // Still typing (e.g., "0.", "10."), allow it
+                            setSlippage(v);
+                          } else if (n > 50) {
+                            setSlippage('50');
+                          }
+                        }
+                      }}
+                      onBlur={(e) => {
+                        // On blur, clean up the value
+                        const v = e.target.value;
+                        if (v === '' || v === '.' || isNaN(parseFloat(v))) {
+                          setSlippage('0.5');
+                        } else {
+                          // Clean up trailing decimal point
+                          const n = parseFloat(v);
+                          setSlippage(n.toString());
+                        }
                       }}
                       onWheel={(e) => e.currentTarget.blur()} // Prevent scroll from changing value
                       className="px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-gray-200 focus:outline-none focus:border-brand-cyan [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -1060,19 +1084,19 @@ const Swap = () => {
                           </svg>
                         </button>
                         {fromToken.symbol !== 'SOL' && (
-                          <button
+                        <button
                             onClick={() => {
                               navigator.clipboard.writeText(fromToken.mint.toString());
                               showToast('Contract address copied!', 'success');
                             }}
                             className="mt-2 w-full px-2 py-1.5 text-[10px] sm:text-xs text-gray-400 hover:text-brand-cyan bg-dark-900/50 hover:bg-brand-cyan/10 rounded-lg transition-all border border-white/5 hover:border-brand-cyan/30 flex items-center gap-1.5 justify-center"
-                            title="Copy contract address"
-                          >
+                          title="Copy contract address"
+                        >
                             <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                             </svg>
                             <span className="font-medium">Copy CA</span>
-                          </button>
+                        </button>
                         )}
                         
                         {/* Token Dropdown */}
@@ -1180,19 +1204,19 @@ const Swap = () => {
                         </svg>
                       </button>
                       {toToken.symbol !== 'SOL' && (
-                        <button
+                      <button
                           onClick={() => {
                             navigator.clipboard.writeText(toToken.mint.toString());
                             showToast('Contract address copied!', 'success');
                           }}
                           className="mt-2 w-full px-2 py-1.5 text-[10px] sm:text-xs text-gray-400 hover:text-brand-cyan bg-dark-900/50 hover:bg-brand-cyan/10 rounded-lg transition-all border border-white/5 hover:border-brand-cyan/30 flex items-center gap-1.5 justify-center"
-                          title="Copy contract address"
-                        >
+                        title="Copy contract address"
+                      >
                           <svg className="w-3 h-3 sm:w-3.5 sm:h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                           </svg>
                           <span className="font-medium">Copy CA</span>
-                        </button>
+                      </button>
                       )}
                       
                       {/* Token Dropdown */}
@@ -1263,11 +1287,11 @@ const Swap = () => {
                   {/* Fee */}
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">
-                      {useKedologDiscount && estimatedKedologFee ? 'Estimated Fee (with discount)' : 'Estimated Fee (0.25%)'}
+                      {useKedologDiscount && estimatedKedologFee ? `Estimated Fee (${fromToken.symbol})` : 'Estimated Fee (0.25%)'}
                     </span>
                     <span className="font-semibold text-white">
                       {useKedologDiscount && estimatedKedologFee 
-                        ? `${estimatedKedologFee.discountedTotalFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
+                        ? `${estimatedKedologFee.lpFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
                         : `${quoteData.fee.toFixed(6)} ${fromToken.symbol}`
                       }
                     </span>
@@ -1275,10 +1299,13 @@ const Swap = () => {
                   
                   {/* Fee Breakdown when discount is enabled */}
                   {useKedologDiscount && estimatedKedologFee && (
-                    <div className="text-[10px] text-gray-500 -mt-1">
-                      <span className="text-gray-500">LP: {estimatedKedologFee.lpFeeInInputToken.toFixed(6)} {fromToken.symbol}</span>
-                      <span className="mx-1">+</span>
-                      <span className="text-purple-400">{estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG</span>
+                    <div className="text-[10px] -mt-1 flex items-center gap-1">
+                      <span className="text-gray-500">LP fee only</span>
+                      <span className="text-gray-600">|</span>
+                      <span className="text-gray-500">Protocol fee:</span>
+                      <span className="text-purple-400 font-semibold">{estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG</span>
+                      <span className="text-gray-600">|</span>
+                      <span className="text-green-400">Saves {estimatedKedologFee.savingsInInputToken.toFixed(6)} {fromToken.symbol}</span>
                     </div>
                   )}
                   
