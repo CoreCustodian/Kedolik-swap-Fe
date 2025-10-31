@@ -118,6 +118,21 @@ export default function Admin() {
         ammConfig: pool.ammConfig,
       }));
       
+      // Log fee data for debugging
+      console.log('💰 Admin: Fetched fees for', fees.length, 'pools:');
+      fees.forEach(f => {
+        const hasAnyFees = f.protocolFeesToken0 > 0 || f.protocolFeesToken1 > 0 || 
+                          f.fundFeesToken0 > 0 || f.fundFeesToken1 > 0 ||
+                          f.creatorFeesToken0 > 0 || f.creatorFeesToken1 > 0;
+        if (hasAnyFees) {
+          console.log(`  ${f.token0Symbol}/${f.token1Symbol} (${f.poolAddress.slice(0, 8)}...):`, {
+            protocol: `${f.protocolFeesToken0} ${f.token0Symbol} / ${f.protocolFeesToken1} ${f.token1Symbol}`,
+            fund: `${f.fundFeesToken0} ${f.token0Symbol} / ${f.fundFeesToken1} ${f.token1Symbol}`,
+            creator: `${f.creatorFeesToken0} ${f.token0Symbol} / ${f.creatorFeesToken1} ${f.token1Symbol}`,
+          });
+        }
+      });
+      
       setPoolFees(fees);
       
       // Calculate totals
@@ -515,7 +530,9 @@ export default function Admin() {
                                 <div className="font-bold text-white text-sm truncate">{token}</div>
                               </div>
                               <div className="text-xl font-bold text-brand-cyan mb-1">
-                                {totalFees.toFixed(4)}
+                                {totalFees < 0.0001 && totalFees > 0 
+                                  ? totalFees.toExponential(2) 
+                                  : totalFees.toFixed(Math.min(9, Math.max(4, -Math.floor(Math.log10(totalFees || 1)))))}
                               </div>
                               <div className="text-xs text-gray-400">Total Available</div>
                             </div>
@@ -560,14 +577,34 @@ export default function Admin() {
                               <div className="bg-brand-cyan/5 rounded-lg p-3 border border-brand-cyan/20">
                                 <div className="text-xs text-gray-400 mb-1 truncate">{pool.token0Symbol}</div>
                                 <div className="text-base font-bold text-white break-all">
-                                  {(pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0).toFixed(4)}
+                                  {(() => {
+                                    const total = pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0;
+                                    return total < 0.0001 && total > 0 
+                                      ? total.toExponential(2) 
+                                      : total.toFixed(Math.min(9, Math.max(4, -Math.floor(Math.log10(total || 1)))));
+                                  })()}
+                                </div>
+                                <div className="text-[10px] text-gray-500 mt-1 space-y-0.5">
+                                  {pool.protocolFeesToken0 > 0 && <div>Protocol: {pool.protocolFeesToken0.toExponential(2)}</div>}
+                                  {pool.fundFeesToken0 > 0 && <div>Fund: {pool.fundFeesToken0.toExponential(2)}</div>}
+                                  {pool.creatorFeesToken0 > 0 && <div>Creator: {pool.creatorFeesToken0.toExponential(2)}</div>}
                                 </div>
                               </div>
                               
                               <div className="bg-brand-pink/5 rounded-lg p-3 border border-brand-pink/20">
                                 <div className="text-xs text-gray-400 mb-1 truncate">{pool.token1Symbol}</div>
                                 <div className="text-base font-bold text-white break-all">
-                                  {(pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1).toFixed(4)}
+                                  {(() => {
+                                    const total = pool.protocolFeesToken1 + pool.fundFeesToken1 + pool.creatorFeesToken1;
+                                    return total < 0.0001 && total > 0 
+                                      ? total.toExponential(2) 
+                                      : total.toFixed(Math.min(9, Math.max(4, -Math.floor(Math.log10(total || 1)))));
+                                  })()}
+                                </div>
+                                <div className="text-[10px] text-gray-500 mt-1 space-y-0.5">
+                                  {pool.protocolFeesToken1 > 0 && <div>Protocol: {pool.protocolFeesToken1.toExponential(2)}</div>}
+                                  {pool.fundFeesToken1 > 0 && <div>Fund: {pool.fundFeesToken1.toExponential(2)}</div>}
+                                  {pool.creatorFeesToken1 > 0 && <div>Creator: {pool.creatorFeesToken1.toExponential(2)}</div>}
                                 </div>
                               </div>
                             </div>

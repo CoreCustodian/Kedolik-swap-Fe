@@ -7,11 +7,15 @@ import {
   fetchPools, 
   calculateSwapOutput, 
   swapBaseInput,
+  swapWithKedologDiscount,
+  calculateKedologFee,
   getPoolState,
   sortTokenMints,
   getTokenBalance,
   clearPoolCache,
+  WSOL_MINT,
 } from '../utils/amm';
+import { KEDOLOG_CONFIG } from '../config/fees';
 import { 
   findBestRoute, 
   executeMultiHopSwap,
@@ -49,6 +53,15 @@ const Swap = () => {
   const [swapRoute, setSwapRoute] = useState<SwapRoute | null>(null);
   const [isMultiHop, setIsMultiHop] = useState(false);
   
+  // KEDOLOG discount feature
+  const [useKedologDiscount, setUseKedologDiscount] = useState(false);
+  const [kedologBalance, setKedologBalance] = useState<number>(0);
+  const [estimatedKedologFee, setEstimatedKedologFee] = useState<{
+    kedologFee: number;
+    discountedFeeUsd: number;
+    normalFeeUsd: number;
+  } | null>(null);
+  
   // Toast notifications state
   const [toasts, setToasts] = useState<Array<{
     id: string;
@@ -78,7 +91,8 @@ const Swap = () => {
   
   // Toast helper functions
   const showToast = (message: string, type: ToastType, txSignature?: string) => {
-    const id = Date.now().toString();
+    // Use timestamp + random number to ensure unique IDs even when called in same millisecond
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     setToasts(prev => [...prev, { id, message, type, txSignature }]);
   };
   
@@ -118,6 +132,10 @@ const Swap = () => {
         // Fetch to token balance (handles both native SOL and SPL tokens)
         const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
         setToBalance(toBal);
+        
+        // Fetch KEDOLOG balance
+        const kedologBal = await getTokenBalance(connection, KEDOLOG_CONFIG.MINT, publicKey);
+        setKedologBalance(kedologBal);
       } catch (error) {
         console.error('Error fetching balances:', error);
         showToast('Failed to fetch token balances', 'error');
@@ -295,6 +313,34 @@ const Swap = () => {
     return () => clearTimeout(timer);
   }, [fromAmount, poolReserves, swapRoute, fromToken, toToken]);
   
+  // Calculate KEDOLOG fee estimate
+  useEffect(() => {
+    const calculateFee = async () => {
+      if (!fromAmount || !wallet || !useKedologDiscount) {
+        setEstimatedKedologFee(null);
+        return;
+      }
+      
+      const amount = parseFloat(fromAmount);
+      if (isNaN(amount) || amount <= 0) {
+        setEstimatedKedologFee(null);
+        return;
+      }
+      
+      try {
+        // For now, use default price of 1 USD per input token (can be improved with price oracle)
+        const inputTokenPrice = 1;
+        const fee = await calculateKedologFee(connection, wallet, amount, inputTokenPrice);
+        setEstimatedKedologFee(fee);
+      } catch (error) {
+        console.error('Error calculating KEDOLOG fee:', error);
+        setEstimatedKedologFee(null);
+      }
+    };
+    
+    calculateFee();
+  }, [fromAmount, useKedologDiscount, wallet, connection]);
+  
   // Handle swap
   const handleSwap = async () => {
     // Prevent multiple transactions at once
@@ -333,6 +379,22 @@ const Swap = () => {
     if (amountIn > fromBalance) {
       showToast(`Insufficient ${fromToken.symbol} balance`, 'error');
       return;
+    }
+    
+    // KEDOLOG balance validation
+    if (useKedologDiscount && estimatedKedologFee) {
+      if (kedologBalance < estimatedKedologFee.kedologFee) {
+        showToast(`Insufficient KEDOLOG balance. You need ${estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.`, 'error');
+        return;
+      }
+      
+      // Check minimum swap amount for KEDOLOG discount
+      // Protocol fee needs to be at least 0.001 USD to avoid rounding to 0
+      if (amountIn < 2) {
+        showToast(`KEDOLOG discount requires a minimum swap of 2 ${fromToken.symbol}. Try a larger amount or disable the discount.`, 'warning');
+        setUseKedologDiscount(false);
+        return;
+      }
     }
     
     if (amountIn <= 0) {
@@ -381,8 +443,21 @@ const Swap = () => {
         );
         signature = signatures[0]; // Only one signature for atomic transaction
         console.log('✅ Multi-hop swap completed atomically');
+      } else if (useKedologDiscount && estimatedKedologFee) {
+        // Execute KEDOLOG discount swap
+        console.log('💰 Executing KEDOLOG discount swap...');
+        signature = await swapWithKedologDiscount(
+          connection,
+          wallet,
+          publicKey,
+          fromToken.mint,
+          toToken.mint,
+          amountIn,
+          minimumOut,
+          slippageBps
+        );
       } else {
-        // Execute direct swap
+        // Execute normal swap
         signature = await swapBaseInput(
           connection,
           wallet,
@@ -396,10 +471,12 @@ const Swap = () => {
       }
       
       // Show success modal with explorer link
+      // If swapping to SOL, the unwrap happens automatically in the same transaction!
+      const outputToken = toToken.mint.equals(WSOL_MINT) ? 'SOL' : toToken.symbol;
       setTxModal({
         isOpen: true,
         status: 'success',
-        message: `Successfully swapped ${fromAmount} ${fromToken.symbol} for ${toAmount} ${toToken.symbol}!`,
+        message: `Successfully swapped ${fromAmount} ${fromToken.symbol} for ${outputToken}!`,
         txSignature: signature,
       });
       
@@ -602,6 +679,60 @@ const Swap = () => {
                   <p className="text-xs text-gray-400 mt-3 bg-white/5 p-2 rounded">
                     💡 Your transaction will revert if price changes unfavorably by more than this percentage.
                   </p>
+                </div>
+              </div>
+            )}
+
+            {/* KEDOLOG Discount Feature */}
+            {!isMultiHop && poolReserves && (
+              <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/20">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="kedolog-discount"
+                    checked={useKedologDiscount}
+                    onChange={(e) => setUseKedologDiscount(e.target.checked)}
+                    className="mt-0.5 w-5 h-5 rounded border-purple-500/50 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 cursor-pointer"
+                  />
+                  <div className="flex-1">
+                <label htmlFor="kedolog-discount" className="text-sm font-semibold text-white cursor-pointer flex items-center gap-2">
+                  💰 Pay protocol fee with KEDOLOG (Save 20%!)
+                </label>
+                <p className="text-xs text-gray-300 mt-1">
+                  Get 20% discount on protocol fees and receive more output tokens
+                </p>
+                <p className="text-xs text-yellow-400 mt-1">
+                  ⚠️ Minimum swap: 2 {fromToken.symbol}
+                </p>
+                    
+                    {useKedologDiscount && (
+                      <div className="mt-3 space-y-2">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Your KEDOLOG Balance:</span>
+                          <span className="font-semibold text-purple-300">{kedologBalance.toFixed(2)} KEDOLOG</span>
+                        </div>
+                        {estimatedKedologFee && (
+                          <>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Estimated KEDOLOG Fee:</span>
+                              <span className="font-semibold text-pink-300">{estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">You Save:</span>
+                              <span className="font-semibold text-green-400">${(estimatedKedologFee.normalFeeUsd - estimatedKedologFee.discountedFeeUsd).toFixed(4)} USD</span>
+                            </div>
+                            {kedologBalance < estimatedKedologFee.kedologFee && (
+                              <div className="mt-2 px-3 py-2 bg-red-500/20 border border-red-500/30 rounded-lg">
+                                <p className="text-xs text-red-300">
+                                  ⚠️ Insufficient KEDOLOG balance. You need {estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.
+                                </p>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -886,7 +1017,7 @@ const Swap = () => {
             {/* Swap Action Button */}
             <button 
               onClick={handleSwap}
-              disabled={!connected || (!poolReserves && !swapRoute) || !fromAmount || !toAmount || isLoadingQuote}
+              disabled={!connected || (!poolReserves && !swapRoute) || !fromAmount || !toAmount || isLoadingQuote || isTransactionInProgress}
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
               {!connected ? (
@@ -895,6 +1026,11 @@ const Swap = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
                   </svg>
                   Connect Wallet to Swap
+                </>
+              ) : isTransactionInProgress ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Processing...
                 </>
               ) : isLoadingQuote ? (
                 <>

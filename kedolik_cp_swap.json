@@ -1,5 +1,5 @@
 {
-  "address": "GCm8bqvSuJ4nwj3SN3pk2eSJWTwcRjkU6KhXE96AnBod",
+  "address": "2LdLPZbRokzmcJyFE7fLyTgMKNxuR9PE6PKfunn6fkUi",
   "metadata": {
     "name": "kedolik_cp_swap",
     "version": "0.2.0",
@@ -1358,7 +1358,7 @@
             "create pool fee account"
           ],
           "writable": true,
-          "address": "3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy"
+          "address": "67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa"
         },
         {
           "name": "observation_state",
@@ -1765,7 +1765,7 @@
             "create pool fee account"
           ],
           "writable": true,
-          "address": "3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy"
+          "address": "67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa"
         },
         {
           "name": "observation_state",
@@ -2236,6 +2236,21 @@
             "The program account for the most recent oracle observation"
           ],
           "writable": true
+        },
+        {
+          "name": "input_token_oracle",
+          "docs": [
+            "REQUIRED: Price oracle for input token (e.g., Pyth SOL/USD feed)",
+            "This ensures accurate pricing for the swap token"
+          ]
+        },
+        {
+          "name": "protocol_token_oracle",
+          "docs": [
+            "OPTIONAL: Price oracle for protocol token (e.g., Pyth KEDOLOG/USD feed)",
+            "If not provided (SystemProgram), uses manual price from protocol_token_config",
+            "This allows launching before KEDOLOG is listed on Pyth"
+          ]
         }
       ],
       "args": [
@@ -2933,6 +2948,21 @@
       "code": 6014,
       "name": "NoFeeCollect",
       "msg": "Fee is zero"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidOracle",
+      "msg": "Invalid oracle account"
+    },
+    {
+      "code": 6016,
+      "name": "OracleNotConfigured",
+      "msg": "Oracle not configured"
+    },
+    {
+      "code": 6017,
+      "name": "StaleOraclePrice",
+      "msg": "Stale oracle price"
     }
   ],
   "types": [

@@ -114,4 +114,30 @@ export const formatFeeBps = (bps: number): string => {
   return `${(bps / 100).toFixed(2)}%`;
 };
 
+// KEDOLOG Discount Feature Configuration
+export const KEDOLOG_CONFIG = {
+  // KEDOLOG token mint address
+  MINT: new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx'),
+  // Default AMM Config - using the deployed program's config
+  AMM_CONFIG: new PublicKey('6cYBQxes3T5CRStVgKNV4GiURNu2nCcUwmHwEWCcP4Zt'),
+  // Protocol Token Config (for KEDOLOG discount feature)
+  PROTOCOL_TOKEN_CONFIG: new PublicKey('7ZRkzDLJQkhYvoyKKJXHjk1qy1ArKtX8iqbNF7F4sETv'),
+  // Pool creation fee (0.15 SOL)
+  // This fee is collected in WSOL and sent to the protocol
+  POOL_CREATION_FEE_SOL: 0.15,
+  // Discount percentage (20%)
+  DISCOUNT_RATE: 2000, // in basis points (2000 = 20%)
+};
+
+/**
+ * Helper function to get protocol token config PDA
+ */
+export const getProtocolTokenConfigAddress = (programId: PublicKey): PublicKey => {
+  const [protocolTokenConfig] = PublicKey.findProgramAddressSync(
+    [Buffer.from('protocol_token_config')],
+    programId
+  );
+  return protocolTokenConfig;
+};
+
 

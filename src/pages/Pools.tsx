@@ -5,6 +5,7 @@ import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpM
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
+import { KEDOLOG_CONFIG } from '../config/fees';
 
 const Pools = () => {
   const { connected, publicKey } = useWallet();
@@ -42,7 +43,8 @@ const Pools = () => {
   
   // Toast helper functions
   const showToast = (message: string, type: ToastType, txSignature?: string) => {
-    const id = Date.now().toString();
+    // Use timestamp + random number to ensure unique IDs even when called in same millisecond
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     setToasts(prev => [...prev, { id, message, type, txSignature }]);
   };
   
@@ -589,6 +591,22 @@ const CreatePoolModal = ({
         
         {/* Scrollable Content */}
         <div className="overflow-y-auto px-4 sm:px-6 py-4 custom-scrollbar">
+        {/* Pool Creation Fee Notice */}
+        <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <h4 className="text-sm font-semibold text-yellow-400 mb-1">Pool Creation Fee</h4>
+              <p className="text-xs text-gray-300">
+                Creating a pool requires a one-time fee of <span className="font-bold text-yellow-300">{KEDOLOG_CONFIG.POOL_CREATION_FEE_SOL} SOL</span>.
+              </p>
+              <p className="text-xs text-gray-400 mt-1">
+                This fee helps prevent spam pools and ensures quality liquidity on the platform.
+              </p>
+            </div>
+          </div>
+        </div>
+        
         {/* Token 0 */}
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">First Token</label>

@@ -5,6 +5,7 @@ import {
   SYSVAR_RENT_PUBKEY,
   Transaction,
   TransactionInstruction,
+  Keypair,
 } from '@solana/web3.js';
 import { 
   Program, 
@@ -20,17 +21,19 @@ import {
   createAssociatedTokenAccountInstruction,
   createSyncNativeInstruction,
   createCloseAccountInstruction,
+  createInitializeAccount3Instruction,
   NATIVE_MINT,
 } from '@solana/spl-token';
 import IDLJson from '../../kedolik_cp_swap.json';
 import { getTokenByMint } from '../config/tokens';
-import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddress } from '../config/fees';
+import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddress, KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
 
-// Program and Config
-export const PROGRAM_ID = new PublicKey('GCm8bqvSuJ4nwj3SN3pk2eSJWTwcRjkU6KhXE96AnBod');
+// Program and Config  
+// Using the actual deployed program ID from the IDL
+export const PROGRAM_ID = new PublicKey('2LdLPZbRokzmcJyFE7fLyTgMKNxuR9PE6PKfunn6fkUi');
 export const AUTHORITY_SEED = Buffer.from('vault_and_lp_mint_auth_seed');
 
 // Extended FeeConfig with address (computed from index)
@@ -41,8 +44,8 @@ export interface FeeConfig extends BaseFeeConfig {
 // Get all available fee tiers with computed addresses
 export const FEE_TIERS: FeeConfig[] = getFeeTiersWithAddresses(PROGRAM_ID);
 
-// Default AMM config: use 0.25% (index 2) - the Raydium standard fee
-export const AMM_CONFIG = (FEE_TIERS[2] ?? FEE_TIERS[0]).address;
+// Default AMM config: use updated KEDOLOG config
+export const AMM_CONFIG = KEDOLOG_CONFIG.AMM_CONFIG;
 
 // Helper to get fee config by address
 export const getFeeConfigByAddress = (address: PublicKey): FeeConfig | undefined => {
@@ -127,6 +130,72 @@ export const createUnwrapSOLInstruction = async (
     owner,
     owner
   );
+};
+
+/**
+ * Unwrap WSOL to native SOL in a separate transaction
+ * Call this after swapping to SOL to convert WSOL → SOL
+ */
+export const unwrapSOL = async (
+  connection: Connection,
+  wallet: any,
+  walletPublicKey: PublicKey
+): Promise<string> => {
+  try {
+    console.log('🌊 Unwrapping WSOL to native SOL...');
+    
+    const wsolAccount = await getAssociatedTokenAddress(WSOL_MINT, walletPublicKey);
+    
+    // Check if WSOL account exists and has balance
+    const accountInfo = await connection.getAccountInfo(wsolAccount);
+    if (!accountInfo) {
+      throw new Error('No WSOL account found. Nothing to unwrap.');
+    }
+    
+    // Get WSOL balance
+    const balance = await connection.getTokenAccountBalance(wsolAccount);
+    const wsolBalance = parseFloat(balance.value.amount) / 1e9;
+    
+    if (wsolBalance === 0) {
+      throw new Error('WSOL balance is zero. Nothing to unwrap.');
+    }
+    
+    console.log(`💰 Unwrapping ${wsolBalance} WSOL...`);
+    
+    // Create close account instruction
+    const closeInstruction = createCloseAccountInstruction(
+      wsolAccount,
+      walletPublicKey,
+      walletPublicKey
+    );
+    
+    const transaction = new Transaction().add(closeInstruction);
+    
+    // Get fresh blockhash
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = walletPublicKey;
+    
+    // Sign and send
+    const signedTransaction = await wallet.signTransaction(transaction);
+    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'processed',
+    });
+    
+    // Confirm
+    await connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    }, 'processed');
+    
+    console.log(`✅ Unwrapped ${wsolBalance} WSOL to SOL`);
+    return signature;
+  } catch (error) {
+    console.error('Error unwrapping WSOL:', error);
+    throw error;
+  }
 };
 
 /**
@@ -488,12 +557,35 @@ export const fetchPools = async (
       const token1Decimals = (token1MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
       
       // Parse fee data (these are in base units)
-      const protocolFeesToken0 = Number(data.protocolFeesToken0?.toString() || '0') / Math.pow(10, token0Decimals);
-      const protocolFeesToken1 = Number(data.protocolFeesToken1?.toString() || '0') / Math.pow(10, token1Decimals);
-      const fundFeesToken0 = Number(data.fundFeesToken0?.toString() || '0') / Math.pow(10, token0Decimals);
-      const fundFeesToken1 = Number(data.fundFeesToken1?.toString() || '0') / Math.pow(10, token1Decimals);
-      const creatorFeesToken0 = Number(data.creatorFeesToken0?.toString() || '0') / Math.pow(10, token0Decimals);
-      const creatorFeesToken1 = Number(data.creatorFeesToken1?.toString() || '0') / Math.pow(10, token1Decimals);
+      // Log raw values for debugging
+      const rawProtocolFeesToken0 = data.protocolFeesToken0?.toString() || '0';
+      const rawProtocolFeesToken1 = data.protocolFeesToken1?.toString() || '0';
+      const rawFundFeesToken0 = data.fundFeesToken0?.toString() || '0';
+      const rawFundFeesToken1 = data.fundFeesToken1?.toString() || '0';
+      const rawCreatorFeesToken0 = data.creatorFeesToken0?.toString() || '0';
+      const rawCreatorFeesToken1 = data.creatorFeesToken1?.toString() || '0';
+      
+      if (rawProtocolFeesToken0 !== '0' || rawProtocolFeesToken1 !== '0' || 
+          rawFundFeesToken0 !== '0' || rawFundFeesToken1 !== '0' ||
+          rawCreatorFeesToken0 !== '0' || rawCreatorFeesToken1 !== '0') {
+        console.log(`💰 Pool ${pool.publicKey.toString().slice(0, 8)}... has fees:`, {
+          protocolToken0: rawProtocolFeesToken0,
+          protocolToken1: rawProtocolFeesToken1,
+          fundToken0: rawFundFeesToken0,
+          fundToken1: rawFundFeesToken1,
+          creatorToken0: rawCreatorFeesToken0,
+          creatorToken1: rawCreatorFeesToken1,
+          token0Decimals,
+          token1Decimals,
+        });
+      }
+      
+      const protocolFeesToken0 = Number(rawProtocolFeesToken0) / Math.pow(10, token0Decimals);
+      const protocolFeesToken1 = Number(rawProtocolFeesToken1) / Math.pow(10, token1Decimals);
+      const fundFeesToken0 = Number(rawFundFeesToken0) / Math.pow(10, token0Decimals);
+      const fundFeesToken1 = Number(rawFundFeesToken1) / Math.pow(10, token1Decimals);
+      const creatorFeesToken0 = Number(rawCreatorFeesToken0) / Math.pow(10, token0Decimals);
+      const creatorFeesToken1 = Number(rawCreatorFeesToken1) / Math.pow(10, token1Decimals);
       
       // Fetch trade fee rate from pool's specific AMM config
       let tradeFeeRate = 100; // Default 0.01% (100 parts per million)
@@ -665,10 +757,25 @@ export const swapBaseInput = async (
       inputMint,
       walletPublicKey
     );
-    const userOutputAccount = await getAssociatedTokenAddress(
-      outputMint,
-      walletPublicKey
-    );
+    
+    // For WSOL output, we'll create a temporary account and close it in the same transaction
+    // This allows us to receive native SOL in ONE transaction!
+    let userOutputAccount: PublicKey;
+    let needsCreateOutputAccount = false;
+    let tempWsolKeypair: Keypair | null = null;
+    
+    if (needsUnwrapOutput) {
+      // Create a temporary WSOL account that we'll close immediately
+      tempWsolKeypair = Keypair.generate();
+      userOutputAccount = tempWsolKeypair.publicKey;
+      needsCreateOutputAccount = true;
+      console.log('🔑 Using temporary WSOL account for unwrap:', tempWsolKeypair.publicKey.toString());
+    } else {
+      userOutputAccount = await getAssociatedTokenAddress(
+        outputMint,
+        walletPublicKey
+      );
+    }
     
     // Get token programs
     const inputTokenProgram = TOKEN_PROGRAM_ID;
@@ -707,6 +814,36 @@ export const swapBaseInput = async (
     
     // Build the transaction
     const transaction = new Transaction();
+    const signers: Keypair[] = [];
+    
+    // Step 0: Create output account if needed
+    if (needsCreateOutputAccount && tempWsolKeypair) {
+      console.log('🔨 Creating temporary WSOL account...');
+      
+      // Calculate rent exemption for token account
+      const rentExemption = await connection.getMinimumBalanceForRentExemption(165); // Token account size
+      
+      // Create the temporary account
+      const createAccountIx = SystemProgram.createAccount({
+        fromPubkey: walletPublicKey,
+        newAccountPubkey: tempWsolKeypair.publicKey,
+        lamports: rentExemption,
+        space: 165,
+        programId: TOKEN_PROGRAM_ID,
+      });
+      
+      // Initialize the token account
+      const initAccountIx = createInitializeAccount3Instruction(
+        tempWsolKeypair.publicKey,
+        outputMint,
+        walletPublicKey
+      );
+      
+      transaction.add(createAccountIx, initAccountIx);
+      
+      // Add the temp keypair as a signer
+      signers.push(tempWsolKeypair);
+    }
     
     // Step 1: If input is SOL, wrap it first
     if (needsWrapInput) {
@@ -742,27 +879,42 @@ export const swapBaseInput = async (
     
     transaction.add(swapInstruction);
     
-    // Step 3: If output is SOL, unwrap it after
-    if (needsUnwrapOutput) {
-      console.log('🌊 Adding unwrap SOL instruction...');
-      const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
+    // Step 3: If output is SOL using temp account, close it to unwrap
+    if (needsUnwrapOutput && tempWsolKeypair) {
+      console.log('🌊 Adding unwrap SOL instruction (close temp account)...');
+      const unwrapInstruction = createCloseAccountInstruction(
+        tempWsolKeypair.publicKey,
+        walletPublicKey, // Send SOL to user's wallet
+        walletPublicKey  // Authority
+      );
       transaction.add(unwrapInstruction);
     }
     
     // Execute transaction - get fresh blockhash right before sending
     console.log('📡 Getting fresh blockhash...');
+    
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
+    console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (processed - freshest)`);
+    
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
     
     console.log('✍️ Signing transaction...');
+    
+    // If we have additional signers (temp account), we need to sign them first
+    if (signers.length > 0) {
+      console.log(`🔑 Pre-signing with ${signers.length} additional signer(s)...`);
+      transaction.partialSign(...signers);
+    }
+    
+    // Then sign with wallet
     const signedTransaction = await wallet.signTransaction(transaction);
     
     console.log('📤 Sending transaction...');
     const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
       skipPreflight: false,
-      preflightCommitment: 'processed',
-      maxRetries: 5, // Retry if blockhash expires
+      preflightCommitment: 'confirmed',
+      maxRetries: 3,
     });
     
     console.log(`🔗 Transaction sent: ${signature}`);
@@ -772,7 +924,7 @@ export const swapBaseInput = async (
       signature,
       blockhash,
       lastValidBlockHeight,
-    }, 'processed');
+    }, 'confirmed');
     
     if (confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
@@ -783,6 +935,313 @@ export const swapBaseInput = async (
   } catch (error) {
     console.error('Error swapping:', error);
     throw error;
+  }
+};
+
+// Swap tokens with KEDOLOG discount - with automatic SOL wrapping/unwrapping
+export const swapWithKedologDiscount = async (
+  connection: Connection,
+  wallet: any,
+  walletPublicKey: PublicKey,
+  inputMint: PublicKey,
+  outputMint: PublicKey,
+  amountIn: number,
+  minimumAmountOut: number,
+  _slippage: number = 0.5
+) => {
+  try {
+    const program = getProgram(connection, wallet);
+    
+    console.log('💰 Swapping with KEDOLOG discount - inputs:', {
+      inputMint: inputMint.toString(),
+      outputMint: outputMint.toString(),
+      amountIn,
+      minimumAmountOut,
+    });
+    
+    // Get protocol token config
+    const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
+    console.log('📊 Protocol Token Config:', protocolTokenConfig.toString());
+    
+    // Fetch config to get treasury and protocol token mint
+    const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
+    console.log('⚙️ Config loaded:', {
+      treasury: config.treasury.toString(),
+      protocolTokenMint: config.protocolTokenMint.toString(),
+      discountRate: config.discountRate.toString(),
+    });
+    
+    // Sort tokens
+    const { token0, token1 } = sortTokenMints(inputMint, outputMint);
+    const poolState = getPoolState(token0, token1);
+    const authority = getAuthority();
+    
+    console.log('🏊 Pool info:', {
+      poolState: poolState.toString(),
+      token0: token0.toString(),
+      token1: token1.toString(),
+    });
+    
+    // Determine token programs
+    const inputTokenInfo = await connection.getAccountInfo(inputMint);
+    const outputTokenInfo = await connection.getAccountInfo(outputMint);
+    const inputTokenProgram = inputTokenInfo?.owner || TOKEN_PROGRAM_ID;
+    const outputTokenProgram = outputTokenInfo?.owner || TOKEN_PROGRAM_ID;
+    const protocolTokenProgram = TOKEN_PROGRAM_ID; // KEDOLOG is standard SPL token
+    
+    // Convert amounts to BN
+    const inputTokenData = getTokenByMint(inputMint);
+    const outputTokenData = getTokenByMint(outputMint);
+    const inputDecimals = inputTokenData?.decimals || 9;
+    const outputDecimals = outputTokenData?.decimals || 9;
+    
+    const amountInBN = new BN(amountIn * Math.pow(10, inputDecimals));
+    const minAmountOutBN = new BN(minimumAmountOut * Math.pow(10, outputDecimals));
+    
+    // Calculate expected protocol fee for debugging
+    const protocolFeeRate = 500; // 0.05% in basis points
+    const protocolFeeAmount = (amountIn * protocolFeeRate) / 1000000;
+    const kedologPerUsd = config.protocolTokenPerUsd ? Number(config.protocolTokenPerUsd) / 1e9 : 10;
+    const estimatedKedologFee = protocolFeeAmount * kedologPerUsd;
+    
+    console.log('💱 Amounts:', {
+      amountIn,
+      amountInBN: amountInBN.toString(),
+      minAmountOutBN: minAmountOutBN.toString(),
+      protocolFeeUsd: protocolFeeAmount.toFixed(6),
+      kedologPerUsd,
+      estimatedKedologFee: estimatedKedologFee.toFixed(6),
+    });
+    
+    // Get vault PDAs
+    const [inputVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool_vault'), poolState.toBuffer(), inputMint.toBuffer()],
+      PROGRAM_ID
+    );
+    const [outputVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool_vault'), poolState.toBuffer(), outputMint.toBuffer()],
+      PROGRAM_ID
+    );
+    
+    // Get observation state
+    const poolData = await (program.account as any).poolState.fetch(poolState);
+    const observationState = poolData.observationKey;
+    
+    // Create transaction
+    const transaction = new Transaction();
+    
+    // Handle SOL wrapping if needed (Step 1: Wrap SOL)
+    const needsInputWrap = isNativeSOL(inputMint);
+    const needsOutputWrap = isNativeSOL(outputMint);
+    
+    // Get or create user token accounts
+    let userInputAccount: PublicKey;
+    let userOutputAccount: PublicKey;
+    
+    if (needsInputWrap) {
+      // Use WSOL account for input
+      userInputAccount = await getAssociatedTokenAddress(
+        NATIVE_MINT,
+        walletPublicKey,
+        false,
+        inputTokenProgram
+      );
+      
+      console.log('🌯 Wrapping SOL input...');
+      const { instructions: wrapInstructions } = await createWrapSOLInstructions(
+        connection,
+        walletPublicKey,
+        amountIn
+      );
+      transaction.add(...wrapInstructions);
+    } else {
+      userInputAccount = await getAssociatedTokenAddress(
+        inputMint,
+        walletPublicKey,
+        false,
+        inputTokenProgram
+      );
+    }
+    
+    if (needsOutputWrap) {
+      // Use WSOL account for output
+      userOutputAccount = await getAssociatedTokenAddress(
+        NATIVE_MINT,
+        walletPublicKey,
+        false,
+        outputTokenProgram
+      );
+      
+      // Create WSOL account if it doesn't exist
+      const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
+      if (!outputAccountInfo) {
+        console.log('🆕 Creating WSOL output account...');
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            walletPublicKey,
+            userOutputAccount,
+            walletPublicKey,
+            NATIVE_MINT,
+            outputTokenProgram
+          )
+        );
+      }
+    } else {
+      userOutputAccount = await getAssociatedTokenAddress(
+        outputMint,
+        walletPublicKey,
+        false,
+        outputTokenProgram
+      );
+      
+      // Create output account if it doesn't exist
+      const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
+      if (!outputAccountInfo) {
+        console.log('🆕 Creating output token account...');
+        transaction.add(
+          createAssociatedTokenAccountInstruction(
+            walletPublicKey,
+            userOutputAccount,
+            walletPublicKey,
+            outputMint,
+            outputTokenProgram
+          )
+        );
+      }
+    }
+    
+    // Get user's KEDOLOG account
+    const userKedologAccount = await getAssociatedTokenAddress(
+      config.protocolTokenMint,
+      walletPublicKey,
+      false,
+      protocolTokenProgram
+    );
+    
+    // Check if user has KEDOLOG account
+    const kedologAccountInfo = await connection.getAccountInfo(userKedologAccount);
+    if (!kedologAccountInfo) {
+      throw new Error('You need a KEDOLOG token account. Please acquire some KEDOLOG tokens first.');
+    }
+    
+    // Get treasury KEDOLOG account
+    const treasuryKedologAccount = await getAssociatedTokenAddress(
+      config.protocolTokenMint,
+      config.treasury,
+      false,
+      protocolTokenProgram
+    );
+    
+    // Step 2: Build the swap instruction with KEDOLOG discount
+    console.log('🚀 Building KEDOLOG discount swap instruction...');
+    const swapInstruction = await program.methods
+      .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
+      .accountsPartial({
+        payer: walletPublicKey,
+        authority,
+        ammConfig: AMM_CONFIG,
+        protocolTokenConfig,
+        poolState,
+        inputTokenAccount: userInputAccount,
+        outputTokenAccount: userOutputAccount,
+        protocolTokenAccount: userKedologAccount,
+        protocolTokenTreasury: treasuryKedologAccount,
+        inputVault,
+        outputVault,
+        inputTokenProgram,
+        outputTokenProgram,
+        protocolTokenProgram,
+        inputTokenMint: inputMint,
+        outputTokenMint: outputMint,
+        protocolTokenMint: config.protocolTokenMint,
+        observationState,
+        // For manual pricing (current setup)
+        inputTokenOracle: SystemProgram.programId,
+        protocolTokenOracle: SystemProgram.programId,
+      })
+      .instruction();
+    
+    transaction.add(swapInstruction);
+    
+    // Step 3: Unwrap SOL if output is SOL
+    if (needsOutputWrap) {
+      console.log('🌯 Unwrapping SOL output...');
+      const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
+      transaction.add(unwrapInstruction);
+    }
+    
+    // Get fresh blockhash - use 'processed' for freshest possible blockhash
+    console.log('📡 Getting fresh blockhash...');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
+    console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (processed - freshest)`);
+    transaction.recentBlockhash = blockhash;
+    transaction.feePayer = walletPublicKey;
+    
+    // Sign and send transaction
+    console.log('✍️ Signing transaction...');
+    const signedTransaction = await wallet.signTransaction(transaction);
+    
+    console.log('📤 Sending transaction...');
+    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 3,
+    });
+    
+    console.log('⏳ Confirming transaction...');
+    await connection.confirmTransaction({
+      signature,
+      blockhash,
+      lastValidBlockHeight,
+    }, 'confirmed');
+    
+    console.log('✅ KEDOLOG discount swap successful!');
+    console.log('💚 You saved 20% on protocol fees!');
+    return signature;
+  } catch (error) {
+    console.error('Error swapping with KEDOLOG discount:', error);
+    throw error;
+  }
+};
+
+// Calculate KEDOLOG fee for a swap (for UI display)
+export const calculateKedologFee = async (
+  connection: Connection,
+  wallet: any,
+  amountIn: number,
+  inputTokenPrice: number = 1 // Default to 1 if price not available
+): Promise<{ kedologFee: number; discountedFeeUsd: number; normalFeeUsd: number }> => {
+  try {
+    const program = getProgram(connection, wallet);
+    
+    // Get protocol token config
+    const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
+    const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
+    
+    // Calculate protocol fee in USD
+    const amountInUsd = amountIn * inputTokenPrice;
+    const protocolFeeRate = 500; // 0.05% = 500 parts per million
+    const discountRate = config.discountRate.toNumber(); // e.g., 2000 = 20%
+    const protocolFeeUsd = (amountInUsd * protocolFeeRate) / 1_000_000;
+    const discountedFeeUsd = (protocolFeeUsd * (10000 - discountRate)) / 10000;
+    
+    // Convert to KEDOLOG
+    const kedologPerUsd = config.protocolTokenPerUsd.toNumber() / 1_000_000;
+    const kedologFee = discountedFeeUsd * kedologPerUsd;
+    
+    return {
+      kedologFee,
+      discountedFeeUsd,
+      normalFeeUsd: protocolFeeUsd,
+    };
+  } catch (error) {
+    console.error('Error calculating KEDOLOG fee:', error);
+    // Return default values if calculation fails
+    return {
+      kedologFee: 0,
+      discountedFeeUsd: 0,
+      normalFeeUsd: 0,
+    };
   }
 };
 
@@ -1485,11 +1944,24 @@ export const createPool = async (
     const token0Vault = getTokenVault(poolState, token0);
     const token1Vault = getTokenVault(poolState, token1);
     const observationState = getObservationState(poolState);
-    const createPoolFee = new PublicKey('3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy');
+    // Direct SOL transfer to fee receiver wallet (no WSOL wrapping needed!)
+    // The contract now transfers 0.15 SOL directly as native SOL
+    const createPoolFee = new PublicKey('67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa');
     
-    // Get user token accounts
-    const userToken0Account = await getAssociatedTokenAddress(token0, walletPublicKey);
-    const userToken1Account = await getAssociatedTokenAddress(token1, walletPublicKey);
+    // Determine the correct token programs FIRST (before getting ATAs)
+    const token0Info = await connection.getAccountInfo(token0);
+    const token1Info = await connection.getAccountInfo(token1);
+    const token0Program = token0Info?.owner || TOKEN_PROGRAM_ID;
+    const token1Program = token1Info?.owner || TOKEN_PROGRAM_ID;
+    
+    console.log('🔍 Token programs detected:', {
+      token0Program: token0Program.toString(),
+      token1Program: token1Program.toString(),
+    });
+    
+    // Get user token accounts with correct token programs
+    const userToken0Account = await getAssociatedTokenAddress(token0, walletPublicKey, false, token0Program);
+    const userToken1Account = await getAssociatedTokenAddress(token1, walletPublicKey, false, token1Program);
     const userLpAccount = await getAssociatedTokenAddress(lpMint, walletPublicKey);
     
     // Convert amounts to BN with correct decimals
@@ -1542,28 +2014,31 @@ export const createPool = async (
     
     // Step 1: Create token accounts if they don't exist (CRITICAL!)
     if (needsCreateToken0Account) {
-      console.log('🔧 Creating token0 account...');
+      console.log('🔧 Creating token0 account with program:', token0Program.toString());
       const createToken0AccountIx = createAssociatedTokenAccountInstruction(
         walletPublicKey, // payer
         userToken0Account, // ata
         walletPublicKey, // owner
-        token0 // mint
+        token0, // mint
+        token0Program // token program
       );
       transaction.add(createToken0AccountIx);
     }
     
     if (needsCreateToken1Account) {
-      console.log('🔧 Creating token1 account...');
+      console.log('🔧 Creating token1 account with program:', token1Program.toString());
       const createToken1AccountIx = createAssociatedTokenAccountInstruction(
         walletPublicKey, // payer
         userToken1Account, // ata
         walletPublicKey, // owner
-        token1 // mint
+        token1, // mint
+        token1Program // token program
       );
       transaction.add(createToken1AccountIx);
     }
     
     // Step 2: Wrap SOL if needed (AFTER creating accounts, BEFORE initialize instruction)
+    // ONLY wrap if actually needed!
     if (needsWrapToken0) {
       console.log('🌊 Wrapping SOL for token0...');
       const { instructions: wrapInstructions } = await createWrapSOLInstructions(
@@ -1572,6 +2047,7 @@ export const createPool = async (
         finalAmount0
       );
       transaction.add(...wrapInstructions);
+      console.log(`✅ Added ${wrapInstructions.length} wrap instructions for token0`);
     }
     
     if (needsWrapToken1) {
@@ -1582,9 +2058,12 @@ export const createPool = async (
         finalAmount1
       );
       transaction.add(...wrapInstructions);
+      console.log(`✅ Added ${wrapInstructions.length} wrap instructions for token1`);
     }
     
-    // Step 3: Build the initialize pool instruction
+    console.log(`📝 Total instructions before initialize: ${transaction.instructions.length}`);
+    
+    // Step 3: Build the initialize pool instruction (token programs already detected above)
     console.log('🏗️ Building initialize pool instruction...');
     const initializeInstruction = await program.methods
       .initialize(initAmount0BN, initAmount1BN, openTime)
@@ -1604,8 +2083,8 @@ export const createPool = async (
         createPoolFee,
         observationState,
         tokenProgram: TOKEN_PROGRAM_ID,
-        token0Program: TOKEN_PROGRAM_ID,
-        token1Program: TOKEN_PROGRAM_ID,
+        token0Program,  // Use detected program
+        token1Program,  // Use detected program
         associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         rent: SYSVAR_RENT_PUBKEY,
