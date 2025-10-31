@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance } from '../utils/amm';
+import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance, getPoolCreationFee } from '../utils/amm';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
-import { KEDOLOG_CONFIG } from '../config/fees';
 
 const Pools = () => {
   const { connected, publicKey } = useWallet();
@@ -373,6 +372,25 @@ const PoolCard = ({
           <span className="text-gray-400">{pool.token1Symbol} Reserve</span>
           <span className="font-semibold">{pool.token1Reserve.toLocaleString(undefined, { maximumFractionDigits: 4 })}</span>
         </div>
+        
+        {/* Pool Prices */}
+        {pool.token0Reserve > 0 && pool.token1Reserve > 0 && (
+          <div className="pt-2 pb-2 space-y-1 border-t border-b border-white/10">
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">1 {pool.token0Symbol} =</span>
+              <span className="font-semibold text-brand-cyan">
+                {(pool.token1Reserve / pool.token0Reserve).toFixed(6)} {pool.token1Symbol}
+              </span>
+            </div>
+            <div className="flex justify-between text-xs">
+              <span className="text-gray-400">1 {pool.token1Symbol} =</span>
+              <span className="font-semibold text-brand-cyan">
+                {(pool.token0Reserve / pool.token1Reserve).toFixed(6)} {pool.token0Symbol}
+              </span>
+            </div>
+          </div>
+        )}
+        
         <div className="flex justify-between text-xs sm:text-sm">
           <span className="text-gray-400">Total Liquidity</span>
           <span className="font-semibold text-brand-cyan">
@@ -382,7 +400,16 @@ const PoolCard = ({
         <div className="flex justify-between text-xs sm:text-sm">
           <span className="text-gray-400">Total Fees Collected</span>
           <span className="font-semibold text-green-400">
-            {(pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0).toFixed(4)} {pool.token0Symbol}
+            {(() => {
+              const totalFees = pool.protocolFeesToken0 + pool.fundFeesToken0 + pool.creatorFeesToken0;
+              if (totalFees === 0) return '0';
+              if (totalFees < 0.0001 && totalFees > 0) {
+                // For very small numbers, use exponential notation
+                return totalFees.toExponential(2);
+              }
+              // For normal numbers, show appropriate decimal places
+              return totalFees.toFixed(Math.min(9, Math.max(4, -Math.floor(Math.log10(totalFees)))));
+            })()} {pool.token0Symbol}
           </span>
         </div>
         <div className="flex justify-between text-xs sm:text-sm">
@@ -460,9 +487,36 @@ const CreatePoolModal = ({
   const [amount1, setAmount1] = useState('');
   const [token0Balance, setToken0Balance] = useState<number>(0);
   const [token1Balance, setToken1Balance] = useState<number>(0);
+  const [poolCreationFee, setPoolCreationFee] = useState<number>(0.15); // Default 0.15 SOL, will be fetched from contract
   // Fee tier selector removed; default AMM config will be used
   
   const tokenList = getTokenList();
+  
+  // Calculate pool prices
+  const token0Price = amount0 && amount1 && parseFloat(amount0) > 0 && parseFloat(amount1) > 0
+    ? parseFloat(amount1) / parseFloat(amount0)
+    : 0;
+  
+  const token1Price = amount0 && amount1 && parseFloat(amount0) > 0 && parseFloat(amount1) > 0
+    ? parseFloat(amount0) / parseFloat(amount1)
+    : 0;
+  
+  // Fetch pool creation fee from contract
+  useEffect(() => {
+    const fetchFee = async () => {
+      if (!wallet) return;
+      
+      try {
+        const fee = await getPoolCreationFee(connection, wallet);
+        setPoolCreationFee(fee);
+        console.log(`💰 Pool creation fee: ${fee} SOL`);
+      } catch (error) {
+        console.error('Error fetching pool creation fee:', error);
+      }
+    };
+    
+    fetchFee();
+  }, [connection, wallet]);
   
   // Fetch token 0 balance when it changes
   useEffect(() => {
@@ -598,7 +652,7 @@ const CreatePoolModal = ({
             <div>
               <h4 className="text-sm font-semibold text-yellow-400 mb-1">Pool Creation Fee</h4>
               <p className="text-xs text-gray-300">
-                Creating a pool requires a one-time fee of <span className="font-bold text-yellow-300">{KEDOLOG_CONFIG.POOL_CREATION_FEE_SOL} SOL</span>.
+                Creating a pool requires a one-time fee of <span className="font-bold text-yellow-300">{poolCreationFee} SOL</span>.
               </p>
               <p className="text-xs text-gray-400 mt-1">
                 This fee helps prevent spam pools and ensures quality liquidity on the platform.
@@ -606,6 +660,26 @@ const CreatePoolModal = ({
             </div>
           </div>
         </div>
+        
+        {/* Initial Pool Price Display */}
+        {token0Price > 0 && token1Price > 0 && (
+          <div className="mb-6 p-4 bg-brand-cyan/10 border border-brand-cyan/20 rounded-xl">
+            <h4 className="text-sm font-semibold text-brand-cyan mb-3">Initial Pool Prices</h4>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-gray-400">1 {token0.symbol} =</span>
+                <span className="text-sm font-semibold text-white">{token0Price.toFixed(6)} {token1.symbol}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs text-gray-400">1 {token1.symbol} =</span>
+                <span className="text-sm font-semibold text-white">{token1Price.toFixed(6)} {token0.symbol}</span>
+              </div>
+            </div>
+            <p className="text-xs text-gray-400 mt-2">
+              💡 These prices will be set as the initial exchange rate for this pool
+            </p>
+          </div>
+        )}
         
         {/* Token 0 */}
         <div className="mb-4">

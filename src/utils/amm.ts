@@ -233,6 +233,36 @@ export const getProgram = (connection: Connection, wallet: any) => {
   return new Program(IDL, provider);
 };
 
+// Fetch pool creation fee from AMM config
+export const getPoolCreationFee = async (
+  connection: Connection,
+  wallet: any,
+  ammConfigAddress?: PublicKey
+): Promise<number> => {
+  try {
+    const program = getProgram(connection, wallet);
+    const configAddress = ammConfigAddress || AMM_CONFIG;
+    
+    // Fetch AMM config account
+    const ammConfig = await (program.account as any).ammConfig.fetch(configAddress);
+    
+    // Pool creation fee is stored in lamports
+    const feeLamports = ammConfig.createPoolFee?.toNumber() || 0;
+    const feeSOL = feeLamports / 1e9; // Convert lamports to SOL
+    
+    console.log('💰 Pool creation fee from contract:', {
+      lamports: feeLamports,
+      SOL: feeSOL
+    });
+    
+    return feeSOL;
+  } catch (error) {
+    console.error('Error fetching pool creation fee:', error);
+    // Fallback to default value if fetch fails
+    return 1;
+  }
+};
+
 // Create an AMM config (fee tier) on-chain
 export const createAmmConfig = async (
   connection: Connection,

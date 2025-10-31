@@ -122,9 +122,6 @@ export const KEDOLOG_CONFIG = {
   AMM_CONFIG: new PublicKey('6cYBQxes3T5CRStVgKNV4GiURNu2nCcUwmHwEWCcP4Zt'),
   // Protocol Token Config (for KEDOLOG discount feature)
   PROTOCOL_TOKEN_CONFIG: new PublicKey('7ZRkzDLJQkhYvoyKKJXHjk1qy1ArKtX8iqbNF7F4sETv'),
-  // Pool creation fee (0.15 SOL)
-  // This fee is collected in WSOL and sent to the protocol
-  POOL_CREATION_FEE_SOL: 0.15,
   // Discount percentage (20%)
   DISCOUNT_RATE: 2000, // in basis points (2000 = 20%)
 };
