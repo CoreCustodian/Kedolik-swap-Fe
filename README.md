@@ -9,7 +9,7 @@ A next-generation decentralized exchange built on Solana, offering secure, light
 Run the following commands in order:
 
 ```bash
-# Install all dependencies
+# Install all dependencies 
 npm install
 
 # Start the development server
