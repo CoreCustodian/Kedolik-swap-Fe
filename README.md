@@ -10,7 +10,6 @@ Run the following commands in order:
 
 ```bash
 # Install all dependencies 
-
 npm install
 
 # Start the development server
