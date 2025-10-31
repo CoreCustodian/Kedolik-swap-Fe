@@ -35,7 +35,7 @@ const Swap = () => {
   
   // Token selection
   const [fromToken, setFromToken] = useState<TokenInfo>(DEVNET_TOKENS.SOL);
-  const [toToken, setToToken] = useState<TokenInfo>(DEVNET_TOKENS.USDC);
+  const [toToken, setToToken] = useState<TokenInfo>(DEVNET_TOKENS.KEDOLOG);
   const [showFromTokenList, setShowFromTokenList] = useState(false);
   const [showToTokenList, setShowToTokenList] = useState(false);
   
@@ -1344,7 +1344,7 @@ const Swap = () => {
             {quoteData && quoteData.priceImpact > 5 && (
               <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-lg animate-scale-in">
                 <div className="text-xs text-center text-red-400 flex items-center justify-center gap-2">
-                  <span>⚠️</span> High price impact ({quoteData.priceImpact.toFixed(2)}%)! Consider adding more liquidity to pools or reducing swap amount.
+                  <span>⚠️</span> High price impact ({quoteData.priceImpact.toFixed(2)}%)! Consider reducing swap amount.
                 </div>
               </div>
             )}

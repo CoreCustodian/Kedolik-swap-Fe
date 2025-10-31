@@ -1292,8 +1292,12 @@ export const calculateKedologFee = async (
     
     // Calculate discount
     const discountRate = config.discountRate.toNumber(); // e.g., 2000 = 20%
+    // When using KEDOLOG discount, protocol fee is paid in KEDOLOG (not input token)
+    // So the actual fee deducted from input token is ONLY the LP fee
+    const discountedTotalFeeInInputToken = lpFeeInInputToken;
+    // Savings in input token = full protocol fee (since you're not paying it in input token)
+    // Plus 20% discount on the KEDOLOG you pay (represented as input token equivalent)
     const savingsInInputToken = (protocolFeeInInputToken * discountRate) / 10000;
-    const discountedTotalFeeInInputToken = totalFeeInInputToken - savingsInInputToken;
     
     // Calculate protocol fee in USD for KEDOLOG conversion
     const amountInUsd = amountIn * inputTokenPrice;
