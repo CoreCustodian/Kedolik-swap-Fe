@@ -10,6 +10,7 @@ When users create pools, they pay a **0.15 SOL fee**. This fee is **directly tra
 - ✅ **No extra transactions** or gas fees
 - ✅ **Simpler** fee collection
 
+
 ---
 
 ## 📍 Where Are the Fees?
