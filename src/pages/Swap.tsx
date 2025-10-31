@@ -45,7 +45,7 @@ const Swap = () => {
   
   // Pool data
   const [poolReserves, setPoolReserves] = useState<{ reserve0: number; reserve1: number; tradeFeeRate: number } | null>(null);
-  const [quoteData, setQuoteData] = useState<{ amountOut: number; priceImpact: number; fee: number } | null>(null);
+  const [quoteData, setQuoteData] = useState<{ amountOut: number; priceImpact: number; fee: number; bonusAmount?: number } | null>(null);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
   const [poolRefreshTrigger, setPoolRefreshTrigger] = useState(0);
   
@@ -60,6 +60,11 @@ const Swap = () => {
     kedologFee: number;
     discountedFeeUsd: number;
     normalFeeUsd: number;
+    protocolFeeInInputToken: number;
+    savingsInInputToken: number;
+    lpFeeInInputToken: number;
+    totalFeeInInputToken: number;
+    discountedTotalFeeInInputToken: number;
   } | null>(null);
   
   // Toast notifications state
@@ -268,27 +273,81 @@ const Swap = () => {
           const reserveIn = isInputToken0 ? poolReserves.reserve0 : poolReserves.reserve1;
           const reserveOut = isInputToken0 ? poolReserves.reserve1 : poolReserves.reserve0;
           
-          const quote = calculateSwapOutput(amount, reserveIn, reserveOut, poolReserves.tradeFeeRate);
-          setQuoteData(quote);
+          // Apply KEDOLOG discount if enabled: only LP fee (0.20%) is taken from input
+          // Protocol fee (0.05%) is paid in KEDOLOG, so effective fee is 2000 instead of 2500
+          const effectiveFeeRate = useKedologDiscount ? 2000 : poolReserves.tradeFeeRate;
+          
+          const quote = calculateSwapOutput(amount, reserveIn, reserveOut, effectiveFeeRate);
+          
+          // Calculate bonus amount if discount is enabled (for UI display)
+          let bonusAmount = 0;
+          if (useKedologDiscount && poolReserves.tradeFeeRate !== 2000) {
+            const normalQuote = calculateSwapOutput(amount, reserveIn, reserveOut, poolReserves.tradeFeeRate);
+            bonusAmount = quote.amountOut - normalQuote.amountOut;
+          }
+          
+          setQuoteData({ ...quote, bonusAmount });
           setToAmount(quote.amountOut.toFixed(6));
         } else if (swapRoute) {
-          // Multi-hop swap - use actual fee rates from pools
-          const { expectedOutput, priceImpact } = calculateRouteOutput(swapRoute, amount);
-          
-          // Calculate total fee more accurately based on actual pool fees
+          // Multi-hop swap - apply KEDOLOG discount if enabled
+          let expectedOutput = 0;
+          let priceImpact = 0;
           let totalFee = 0;
-          let currentAmount = amount;
-          for (const pool of swapRoute.pools) {
-            const feeRate = pool.tradeFeeRate / 1000000; // Convert parts per million to decimal
-            const hopFee = currentAmount * feeRate;
-            totalFee += hopFee;
-            currentAmount = currentAmount - hopFee; // Reduce amount for next hop
+          let bonusAmount = 0;
+          
+          if (useKedologDiscount) {
+            // Calculate with KEDOLOG discount: only LP fee (0.20%) per hop
+            let currentAmount = amount;
+            
+            for (let i = 0; i < swapRoute.pools.length; i++) {
+              const pool = swapRoute.pools[i];
+              const inputMint = swapRoute.path[i];
+              const isInputToken0 = inputMint.equals(pool.token0Mint);
+              
+              const reserveIn = isInputToken0 ? pool.token0Reserve : pool.token1Reserve;
+              const reserveOut = isInputToken0 ? pool.token1Reserve : pool.token0Reserve;
+              
+              // Only LP fee (0.20% = 2000 basis points) is taken from input
+              const lpFeeRate = 2000;
+              const quote = calculateSwapOutput(currentAmount, reserveIn, reserveOut, lpFeeRate);
+              
+              totalFee += quote.fee;
+              priceImpact += quote.priceImpact;
+              currentAmount = quote.amountOut;
+            }
+            
+            expectedOutput = currentAmount;
+            
+            // Calculate bonus (difference vs normal fees)
+            const normalOutput = calculateRouteOutput(swapRoute, amount).expectedOutput;
+            bonusAmount = expectedOutput - normalOutput;
+            
+            console.log('💰 Multi-hop with discount:', {
+              normalOutput,
+              discountedOutput: expectedOutput,
+              bonus: bonusAmount,
+            });
+          } else {
+            // Normal multi-hop calculation
+            const routeOutput = calculateRouteOutput(swapRoute, amount);
+            expectedOutput = routeOutput.expectedOutput;
+            priceImpact = routeOutput.priceImpact;
+            
+            // Calculate total fee
+            let currentAmount = amount;
+            for (const pool of swapRoute.pools) {
+              const feeRate = pool.tradeFeeRate / 1000000;
+              const hopFee = currentAmount * feeRate;
+              totalFee += hopFee;
+              currentAmount = currentAmount - hopFee;
+            }
           }
           
           setQuoteData({
             amountOut: expectedOutput,
             priceImpact,
             fee: totalFee,
+            bonusAmount,
           });
           setToAmount(expectedOutput.toFixed(6));
         } else {
@@ -311,7 +370,7 @@ const Swap = () => {
     }, 50); // Minimal debounce (50ms) for render optimization
     
     return () => clearTimeout(timer);
-  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken]);
+  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount]);
   
   // Calculate KEDOLOG fee estimate
   useEffect(() => {
@@ -330,8 +389,83 @@ const Swap = () => {
       try {
         // For now, use default price of 1 USD per input token (can be improved with price oracle)
         const inputTokenPrice = 1;
-        const fee = await calculateKedologFee(connection, wallet, amount, inputTokenPrice);
-        setEstimatedKedologFee(fee);
+        
+        if (isMultiHop && swapRoute) {
+          // Calculate fee for EACH hop in the route
+          console.log('💰 Calculating multi-hop KEDOLOG fees:', swapRoute.hops, 'hops');
+          
+          let totalKedologFee = 0;
+          let totalProtocolFeeInInputToken = 0;
+          let totalSavingsInInputToken = 0;
+          let totalLpFeeInInputToken = 0;
+          let currentAmount = amount;
+          
+          for (let i = 0; i < swapRoute.pools.length; i++) {
+            const pool = swapRoute.pools[i];
+            const inputMint = swapRoute.path[i];
+            const outputMint = swapRoute.path[i + 1];
+            
+            // Calculate protocol fee for this hop (0.05% of input)
+            const protocolFeeRate = 500; // 0.05% in basis points
+            const protocolFeeAmount = (currentAmount * protocolFeeRate) / 1_000_000;
+            
+            // Calculate LP fee for this hop (0.20% of input)
+            const lpFeeRate = 2000; // 0.20% in basis points
+            const lpFeeAmount = (currentAmount * lpFeeRate) / 1_000_000;
+            
+            // Get KEDOLOG fee for this hop
+            const hopFee = await calculateKedologFee(connection, wallet, currentAmount, inputTokenPrice);
+            
+            totalKedologFee += hopFee.kedologFee;
+            totalProtocolFeeInInputToken += protocolFeeAmount;
+            totalSavingsInInputToken += hopFee.savingsInInputToken;
+            totalLpFeeInInputToken += lpFeeAmount;
+            
+            console.log(`  Hop ${i + 1}:`, {
+              input: inputMint.toString().slice(0, 8),
+              output: outputMint.toString().slice(0, 8),
+              amount: currentAmount,
+              protocolFee: protocolFeeAmount,
+              kedologFee: hopFee.kedologFee,
+            });
+            
+            // Calculate output for this hop to use as input for next hop
+            const isInputToken0 = inputMint.equals(pool.token0Mint);
+            const reserveIn = isInputToken0 ? pool.token0Reserve : pool.token1Reserve;
+            const reserveOut = isInputToken0 ? pool.token1Reserve : pool.token0Reserve;
+            
+            // Simple AMM formula: amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
+            // Subtract fees first
+            const amountAfterFees = currentAmount - lpFeeAmount - protocolFeeAmount;
+            currentAmount = (amountAfterFees * reserveOut) / (reserveIn + amountAfterFees);
+          }
+          
+          console.log('💰 Total multi-hop fees:', {
+            totalKedologFee,
+            totalProtocolFeeInInputToken,
+            totalSavingsInInputToken,
+            totalLpFeeInInputToken,
+          });
+          
+          // Return aggregated fees for all hops
+          const normalFeeUsd = totalProtocolFeeInInputToken * inputTokenPrice;
+          const discountedFeeUsd = normalFeeUsd * 0.8; // 20% discount
+          
+          setEstimatedKedologFee({
+            kedologFee: totalKedologFee,
+            discountedFeeUsd,
+            normalFeeUsd,
+            protocolFeeInInputToken: totalProtocolFeeInInputToken,
+            savingsInInputToken: totalSavingsInInputToken,
+            lpFeeInInputToken: totalLpFeeInInputToken,
+            totalFeeInInputToken: totalLpFeeInInputToken + totalProtocolFeeInInputToken,
+            discountedTotalFeeInInputToken: totalLpFeeInInputToken,
+          });
+        } else {
+          // Single hop - use existing calculation
+          const fee = await calculateKedologFee(connection, wallet, amount, inputTokenPrice);
+          setEstimatedKedologFee(fee);
+        }
       } catch (error) {
         console.error('Error calculating KEDOLOG fee:', error);
         setEstimatedKedologFee(null);
@@ -339,7 +473,18 @@ const Swap = () => {
     };
     
     calculateFee();
-  }, [fromAmount, useKedologDiscount, wallet, connection]);
+  }, [fromAmount, useKedologDiscount, wallet, connection, isMultiHop, swapRoute]);
+  
+  // Auto-disable KEDOLOG discount for multi-hop swaps
+  const prevIsMultiHopRef = useRef(isMultiHop);
+  useEffect(() => {
+    // Only trigger when transitioning to multi-hop
+    if (isMultiHop && !prevIsMultiHopRef.current && useKedologDiscount) {
+      setUseKedologDiscount(false);
+      showToast('KEDOLOG discount is currently only available for direct swaps', 'info');
+    }
+    prevIsMultiHopRef.current = isMultiHop;
+  }, [isMultiHop, useKedologDiscount]);
   
   // Handle swap
   const handleSwap = async () => {
@@ -375,24 +520,47 @@ const Swap = () => {
     
     const amountIn = parseFloat(fromAmount);
     
-    // Balance validation
-    if (amountIn > fromBalance) {
-      showToast(`Insufficient ${fromToken.symbol} balance`, 'error');
-      return;
-    }
-    
-    // KEDOLOG balance validation
-    if (useKedologDiscount && estimatedKedologFee) {
-      if (kedologBalance < estimatedKedologFee.kedologFee) {
-        showToast(`Insufficient KEDOLOG balance. You need ${estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.`, 'error');
+    // Special handling for native SOL swaps
+    if (fromToken.symbol === 'SOL') {
+      // Reserve SOL for transaction fees and rent (~0.005 SOL)
+      const MIN_SOL_RESERVE = 0.005;
+      const maxSwappableSOL = fromBalance - MIN_SOL_RESERVE;
+      
+      if (amountIn > maxSwappableSOL) {
+        showToast(
+          `Keep at least ${MIN_SOL_RESERVE} SOL for transaction fees. Maximum you can swap: ${maxSwappableSOL.toFixed(4)} SOL`,
+          'error'
+        );
         return;
       }
-      
-      // Check minimum swap amount for KEDOLOG discount
-      // Protocol fee needs to be at least 0.001 USD to avoid rounding to 0
-      if (amountIn < 2) {
-        showToast(`KEDOLOG discount requires a minimum swap of 2 ${fromToken.symbol}. Try a larger amount or disable the discount.`, 'warning');
-        setUseKedologDiscount(false);
+    } else {
+      // Balance validation for other tokens
+      if (amountIn > fromBalance) {
+        showToast(`Insufficient ${fromToken.symbol} balance`, 'error');
+        return;
+      }
+    }
+    
+    // KEDOLOG balance and minimum amount validation
+    if (useKedologDiscount) {
+      if (estimatedKedologFee) {
+        // Check if KEDOLOG fee is too small (would round to 0 in contract)
+        if (estimatedKedologFee.kedologFee < 0.01) {
+          const minAmount = (amountIn * 0.01) / estimatedKedologFee.kedologFee;
+          showToast(
+            `Swap amount too small for KEDOLOG discount. Minimum ${minAmount.toFixed(2)} ${fromToken.symbol} required. Try without discount or increase amount.`,
+            'warning'
+          );
+          return;
+        }
+        
+        // Check KEDOLOG balance
+        if (kedologBalance < estimatedKedologFee.kedologFee) {
+          showToast(`Insufficient KEDOLOG balance. You need ${estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.`, 'error');
+          return;
+        }
+      } else {
+        showToast('Unable to calculate KEDOLOG fee. Please try again.', 'error');
         return;
       }
     }
@@ -429,8 +597,38 @@ const Swap = () => {
       
       let signature: string;
       
-      if (isMultiHop && swapRoute) {
-        // Execute multi-hop swap in ONE transaction
+      if (useKedologDiscount && estimatedKedologFee) {
+        if (isMultiHop && swapRoute) {
+          // Execute multi-hop swap with KEDOLOG discount
+          console.log('🔄💰 Executing multi-hop swap with KEDOLOG discount (atomic transaction)...');
+          const signatures = await executeMultiHopSwap(
+            swapRoute,
+            amountIn,
+            minimumOut,
+            connection,
+            wallet,
+            publicKey,
+            slippageBps,
+            true // Enable KEDOLOG discount
+          );
+          signature = signatures[0];
+          console.log('✅ Multi-hop swap with KEDOLOG discount completed atomically');
+        } else {
+          // Execute KEDOLOG discount swap (direct)
+          console.log('💰 Executing KEDOLOG discount swap...');
+          signature = await swapWithKedologDiscount(
+            connection,
+            wallet,
+            publicKey,
+            fromToken.mint,
+            toToken.mint,
+            amountIn,
+            minimumOut,
+            slippageBps
+          );
+        }
+      } else if (isMultiHop && swapRoute) {
+        // Execute normal multi-hop swap (no discount)
         console.log('🔄 Executing multi-hop swap (atomic transaction)...');
         const signatures = await executeMultiHopSwap(
           swapRoute,
@@ -439,23 +637,11 @@ const Swap = () => {
           connection,
           wallet,
           publicKey,
-          slippageBps
+          slippageBps,
+          false // No KEDOLOG discount
         );
-        signature = signatures[0]; // Only one signature for atomic transaction
+        signature = signatures[0];
         console.log('✅ Multi-hop swap completed atomically');
-      } else if (useKedologDiscount && estimatedKedologFee) {
-        // Execute KEDOLOG discount swap
-        console.log('💰 Executing KEDOLOG discount swap...');
-        signature = await swapWithKedologDiscount(
-          connection,
-          wallet,
-          publicKey,
-          fromToken.mint,
-          toToken.mint,
-          amountIn,
-          minimumOut,
-          slippageBps
-        );
       } else {
         // Execute normal swap
         signature = await swapBaseInput(
@@ -530,6 +716,48 @@ const Swap = () => {
         code: e?.code,
         name: e?.name,
       });
+      
+      // Check if it's "already processed" error - transaction likely succeeded!
+      if (e?.message && e.message.includes('already been processed')) {
+        console.log('✅ Transaction was already processed - treating as success!');
+        
+        // Show success modal (without signature since we don't have it)
+        const outputToken = toToken.mint.equals(WSOL_MINT) ? 'SOL' : toToken.symbol;
+        setTxModal({
+          isOpen: true,
+          status: 'success',
+          message: `Swap completed! ${fromAmount} ${fromToken.symbol} → ${outputToken}. Please check your wallet balance.`,
+        });
+        
+        showToast(`Swap completed! Check your wallet.`, 'success');
+        
+        // Reset form
+        setFromAmount('');
+        setToAmount('');
+        setQuoteData(null);
+        
+        // Refresh data
+        clearPoolCache();
+        setPoolRefreshTrigger(prev => prev + 1);
+        
+        setTimeout(() => {
+          const refreshBalances = async () => {
+            if (!publicKey) return;
+            const fromBal = await getTokenBalance(connection, fromToken.mint, publicKey);
+            setFromBalance(fromBal);
+            const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
+            setToBalance(toBal);
+          };
+          refreshBalances();
+          setPoolRefreshTrigger(prev => prev + 1);
+        }, 2000);
+        
+        setTimeout(() => {
+          setIsTransactionInProgress(false);
+        }, 3000);
+        
+        return; // Exit early - this is actually a success!
+      }
       
       // Parse error message
       let errorMessage = 'Swap failed. Please try again.';
@@ -672,7 +900,8 @@ const Swap = () => {
                         const n = Math.max(0, Math.min(50, parseFloat(v || '0')));
                         setSlippage(isNaN(n) ? '0.5' : n.toString());
                       }}
-                      className="px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-gray-200 focus:outline-none focus:border-brand-cyan"
+                      onWheel={(e) => e.currentTarget.blur()} // Prevent scroll from changing value
+                      className="px-3 py-2 rounded-lg text-sm bg-white/5 border border-white/10 text-gray-200 focus:outline-none focus:border-brand-cyan [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       placeholder="Custom"
                     />
                   </div>
@@ -683,26 +912,34 @@ const Swap = () => {
               </div>
             )}
 
-            {/* KEDOLOG Discount Feature */}
-            {!isMultiHop && poolReserves && (
+            {/* KEDOLOG Discount Feature - Disabled for multi-hop due to small intermediate amounts */}
+            {(
               <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/20">
                 <div className="flex items-start gap-3">
                   <input
                     type="checkbox"
                     id="kedolog-discount"
                     checked={useKedologDiscount}
-                    onChange={(e) => setUseKedologDiscount(e.target.checked)}
-                    className="mt-0.5 w-5 h-5 rounded border-purple-500/50 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 cursor-pointer"
+                    onChange={(e) => {
+                      if (isMultiHop) {
+                        showToast('KEDOLOG discount is currently only available for direct swaps', 'warning');
+                        return;
+                      }
+                      setUseKedologDiscount(e.target.checked);
+                    }}
+                    disabled={isMultiHop}
+                    className={`mt-0.5 w-5 h-5 rounded border-purple-500/50 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 ${isMultiHop ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                   />
                   <div className="flex-1">
-                <label htmlFor="kedolog-discount" className="text-sm font-semibold text-white cursor-pointer flex items-center gap-2">
+                <label htmlFor="kedolog-discount" className={`text-sm font-semibold text-white ${isMultiHop ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} flex items-center gap-2`}>
                   💰 Pay protocol fee with KEDOLOG (Save 20%!)
+                  {isMultiHop && <span className="text-[10px] text-yellow-400">(Direct swaps only)</span>}
                 </label>
                 <p className="text-xs text-gray-300 mt-1">
-                  Get 20% discount on protocol fees and receive more output tokens
-                </p>
-                <p className="text-xs text-yellow-400 mt-1">
-                  ⚠️ Minimum swap: 2 {fromToken.symbol}
+                  {isMultiHop 
+                    ? 'Currently available for direct swaps only. Multi-hop support coming soon!'
+                    : 'Get 20% discount on protocol fees and receive more output tokens'
+                  }
                 </p>
                     
                     {useKedologDiscount && (
@@ -713,15 +950,41 @@ const Swap = () => {
                         </div>
                         {estimatedKedologFee && (
                           <>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-400">Estimated KEDOLOG Fee:</span>
-                              <span className="font-semibold text-pink-300">{estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG</span>
+                            {/* Fee Breakdown */}
+                            <div className="mt-2 p-2 bg-black/30 rounded-lg space-y-1.5">
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-gray-500">LP Fee (0.20%):</span>
+                                <span className="text-gray-300">{estimatedKedologFee.lpFeeInInputToken.toFixed(6)} {fromToken.symbol}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-gray-500">Protocol Fee (0.05%):</span>
+                                <span className="text-gray-300 line-through">{estimatedKedologFee.protocolFeeInInputToken.toFixed(6)} {fromToken.symbol}</span>
+                              </div>
+                              <div className="flex justify-between text-[10px]">
+                                <span className="text-purple-400">Paid in KEDOLOG:</span>
+                                <span className="text-purple-300 font-semibold">{estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG</span>
+                              </div>
+                              <div className="border-t border-white/10 pt-1.5 flex justify-between text-xs">
+                                <span className="text-green-400 font-semibold">You Save:</span>
+                                <span className="text-green-400 font-bold">{estimatedKedologFee.savingsInInputToken.toFixed(6)} {fromToken.symbol}</span>
+                              </div>
                             </div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-400">You Save:</span>
-                              <span className="font-semibold text-green-400">${(estimatedKedologFee.normalFeeUsd - estimatedKedologFee.discountedFeeUsd).toFixed(4)} USD</span>
-                            </div>
-                            {kedologBalance < estimatedKedologFee.kedologFee && (
+                            
+                            {estimatedKedologFee.kedologFee < 0.01 && (() => {
+                              const currentAmount = parseFloat(fromAmount) || 0;
+                              const minAmount = currentAmount > 0 && estimatedKedologFee.kedologFee > 0
+                                ? ((currentAmount * 0.01) / estimatedKedologFee.kedologFee).toFixed(2)
+                                : '0';
+                              return (
+                                <div className="mt-2 px-3 py-2 bg-yellow-500/20 border border-yellow-500/30 rounded-lg">
+                                  <p className="text-xs text-yellow-300">
+                                    ⚠️ Amount too small for KEDOLOG discount. Minimum {minAmount} {fromToken.symbol} required. Increase amount or disable discount.
+                                  </p>
+                                </div>
+                              );
+                            })()}
+                            
+                            {kedologBalance < estimatedKedologFee.kedologFee && estimatedKedologFee.kedologFee >= 0.01 && (
                               <div className="mt-2 px-3 py-2 bg-red-500/20 border border-red-500/30 rounded-lg">
                                 <p className="text-xs text-red-300">
                                   ⚠️ Insufficient KEDOLOG balance. You need {estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.
@@ -744,6 +1007,11 @@ const Swap = () => {
                   <label className="text-sm text-gray-400 font-medium">You Pay</label>
                   <span className="text-xs text-gray-500">
                     Balance: <span className="text-brand-cyan font-semibold">{fromBalance.toFixed(2)}</span>
+                    {fromToken.symbol === 'SOL' && fromBalance > 0.005 && (
+                      <span className="text-yellow-400 ml-1" title="Keep 0.005 SOL for transaction fees">
+                        (Max: {(fromBalance - 0.005).toFixed(4)})
+                      </span>
+                    )}
                   </span>
                 </div>
                 <div className="bg-dark-900/50 rounded-2xl p-4 sm:p-5 border border-white/10 hover:border-brand-cyan/30 transition-all duration-300">
@@ -754,7 +1022,8 @@ const Swap = () => {
                         placeholder="0.0"
                         value={fromAmount}
                         onChange={(e) => setFromAmount(e.target.value)}
-                        className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600"
+                        onWheel={(e) => e.currentTarget.blur()} // Prevent scroll from changing value
+                        className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
                     <div className="flex flex-col items-end gap-2">
@@ -816,7 +1085,13 @@ const Swap = () => {
                           <button
                             key={pct}
                             onClick={() => {
-                              const amt = (fromBalance * pct) / 100;
+                              // For SOL, reserve some for transaction fees
+                              let maxBalance = fromBalance;
+                              if (fromToken.symbol === 'SOL') {
+                                const MIN_SOL_RESERVE = 0.005;
+                                maxBalance = Math.max(0, fromBalance - MIN_SOL_RESERVE);
+                              }
+                              const amt = (maxBalance * pct) / 100;
                               setFromAmount(amt.toString());
                             }}
                             className={`text-[10px] sm:text-xs px-2 py-1 rounded bg-white/5 hover:bg-white/10 transition-colors ${pct===100 ? 'text-brand-cyan' : 'text-gray-300'}`}
@@ -845,7 +1120,12 @@ const Swap = () => {
               {/* To Token */}
               <div className="relative">
                 <div className="flex justify-between mb-2">
-                  <label className="text-sm text-gray-400 font-medium">You Receive</label>
+                  <label className="text-sm text-gray-400 font-medium">
+                    You Receive
+                    {useKedologDiscount && estimatedKedologFee && quoteData && quoteData.bonusAmount && quoteData.bonusAmount > 0 && (
+                      <span className="ml-2 text-xs text-green-400 font-semibold">↑ +{quoteData.bonusAmount.toFixed(6)}</span>
+                    )}
+                  </label>
                   <span className="text-xs text-gray-500">
                     Balance: <span className="text-brand-cyan font-semibold">{toBalance.toFixed(2)}</span>
                   </span>
@@ -863,7 +1143,8 @@ const Swap = () => {
                         placeholder="0.0"
                         value={toAmount}
                         readOnly
-                        className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600"
+                        onWheel={(e) => e.currentTarget.blur()} // Prevent scroll from changing value
+                        className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                     </div>
                     <div className="relative" ref={toTokenDropdownRef}>
@@ -962,15 +1243,34 @@ const Swap = () => {
                   
                   {/* Fee */}
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-400">Estimated Fee</span>
+                    <span className="text-gray-400">
+                      {useKedologDiscount && estimatedKedologFee ? 'Estimated Fee (with discount)' : 'Estimated Fee (0.25%)'}
+                    </span>
                     <span className="font-semibold text-white">
-                      {quoteData.fee.toFixed(6)} {fromToken.symbol}
+                      {useKedologDiscount && estimatedKedologFee 
+                        ? `${estimatedKedologFee.discountedTotalFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
+                        : `${quoteData.fee.toFixed(6)} ${fromToken.symbol}`
+                      }
                     </span>
                   </div>
                   
+                  {/* Fee Breakdown when discount is enabled */}
+                  {useKedologDiscount && estimatedKedologFee && (
+                    <div className="text-[10px] text-gray-500 -mt-1">
+                      <span className="text-gray-500">LP: {estimatedKedologFee.lpFeeInInputToken.toFixed(6)} {fromToken.symbol}</span>
+                      <span className="mx-1">+</span>
+                      <span className="text-purple-400">{estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG</span>
+                    </div>
+                  )}
+                  
                   {/* Min Received */}
                   <div className="flex justify-between items-center pt-2 border-t border-white/10">
-                    <span className="text-gray-400 font-medium">Min. Received</span>
+                    <span className="text-gray-400 font-medium">
+                      Min. Received
+                      {useKedologDiscount && estimatedKedologFee && (
+                        <span className="ml-2 text-xs text-green-400">↑ boosted</span>
+                      )}
+                    </span>
                     <span className="font-bold text-brand-cyan">
                       {(parseFloat(toAmount) * (1 - parseFloat(slippage) / 100)).toFixed(6)} {toToken.symbol}
                     </span>
@@ -1017,7 +1317,15 @@ const Swap = () => {
             {/* Swap Action Button */}
             <button 
               onClick={handleSwap}
-              disabled={!connected || (!poolReserves && !swapRoute) || !fromAmount || !toAmount || isLoadingQuote || isTransactionInProgress}
+              disabled={
+                !connected || 
+                (!poolReserves && !swapRoute) || 
+                !fromAmount || 
+                !toAmount || 
+                isLoadingQuote || 
+                isTransactionInProgress ||
+                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.01)
+              }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
               {!connected ? (

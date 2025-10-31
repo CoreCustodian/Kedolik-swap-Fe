@@ -771,10 +771,20 @@ export const swapBaseInput = async (
       needsCreateOutputAccount = true;
       console.log('🔑 Using temporary WSOL account for unwrap:', tempWsolKeypair.publicKey.toString());
     } else {
+      // For regular tokens, get the ATA address
       userOutputAccount = await getAssociatedTokenAddress(
         outputMint,
         walletPublicKey
       );
+      
+      // Check if the output account exists
+      const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
+      if (!outputAccountInfo) {
+        console.log('⚠️ Output token account does not exist, will create it');
+        needsCreateOutputAccount = true;
+      } else {
+        console.log('✅ Output token account exists');
+      }
     }
     
     // Get token programs
@@ -817,32 +827,45 @@ export const swapBaseInput = async (
     const signers: Keypair[] = [];
     
     // Step 0: Create output account if needed
-    if (needsCreateOutputAccount && tempWsolKeypair) {
-      console.log('🔨 Creating temporary WSOL account...');
-      
-      // Calculate rent exemption for token account
-      const rentExemption = await connection.getMinimumBalanceForRentExemption(165); // Token account size
-      
-      // Create the temporary account
-      const createAccountIx = SystemProgram.createAccount({
-        fromPubkey: walletPublicKey,
-        newAccountPubkey: tempWsolKeypair.publicKey,
-        lamports: rentExemption,
-        space: 165,
-        programId: TOKEN_PROGRAM_ID,
-      });
-      
-      // Initialize the token account
-      const initAccountIx = createInitializeAccount3Instruction(
-        tempWsolKeypair.publicKey,
-        outputMint,
-        walletPublicKey
-      );
-      
-      transaction.add(createAccountIx, initAccountIx);
-      
-      // Add the temp keypair as a signer
-      signers.push(tempWsolKeypair);
+    if (needsCreateOutputAccount) {
+      if (tempWsolKeypair) {
+        // For WSOL unwrap, create a temporary account
+        console.log('🔨 Creating temporary WSOL account...');
+        
+        // Calculate rent exemption for token account
+        const rentExemption = await connection.getMinimumBalanceForRentExemption(165); // Token account size
+        
+        // Create the temporary account
+        const createAccountIx = SystemProgram.createAccount({
+          fromPubkey: walletPublicKey,
+          newAccountPubkey: tempWsolKeypair.publicKey,
+          lamports: rentExemption,
+          space: 165,
+          programId: TOKEN_PROGRAM_ID,
+        });
+        
+        // Initialize the token account
+        const initAccountIx = createInitializeAccount3Instruction(
+          tempWsolKeypair.publicKey,
+          outputMint,
+          walletPublicKey
+        );
+        
+        transaction.add(createAccountIx, initAccountIx);
+        
+        // Add the temp keypair as a signer
+        signers.push(tempWsolKeypair);
+      } else {
+        // For regular tokens, create an ATA (Associated Token Account)
+        console.log('🔨 Creating Associated Token Account for output token...');
+        const createAtaIx = createAssociatedTokenAccountInstruction(
+          walletPublicKey,      // payer
+          userOutputAccount,    // ata
+          walletPublicKey,      // owner
+          outputMint            // mint
+        );
+        transaction.add(createAtaIx);
+      }
     }
     
     // Step 1: If input is SOL, wrap it first
@@ -1182,22 +1205,52 @@ export const swapWithKedologDiscount = async (
     const signedTransaction = await wallet.signTransaction(transaction);
     
     console.log('📤 Sending transaction...');
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 3,
-    });
+    let signature: string;
+    
+    try {
+      signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3,
+      });
+      console.log(`🔗 Transaction sent: ${signature}`);
+    } catch (sendError: any) {
+      console.error('❌ Error sending transaction:', sendError);
+      
+      // Check if it's "already processed" error - transaction might have succeeded!
+      if (sendError.message && sendError.message.includes('already been processed')) {
+        console.log('⚠️ Transaction might have already succeeded despite error!');
+        console.log('✅ Treating as success - please check your wallet balance');
+        // Return a success indicator even though we don't have the signature
+        return 'success-already-processed';
+      }
+      
+      throw sendError;
+    }
     
     console.log('⏳ Confirming transaction...');
-    await connection.confirmTransaction({
-      signature,
-      blockhash,
-      lastValidBlockHeight,
-    }, 'confirmed');
-    
-    console.log('✅ KEDOLOG discount swap successful!');
-    console.log('💚 You saved 20% on protocol fees!');
-    return signature;
+    try {
+      await connection.confirmTransaction({
+        signature,
+        blockhash,
+        lastValidBlockHeight,
+      }, 'confirmed');
+      
+      console.log('✅ KEDOLOG discount swap successful!');
+      console.log('💚 You saved 20% on protocol fees!');
+      return signature;
+    } catch (confirmError: any) {
+      console.error('❌ Confirmation error:', confirmError);
+      
+      // Check if it's "already processed" error
+      if (confirmError.message && confirmError.message.includes('already been processed')) {
+        console.log('⚠️ Confirmation failed but transaction was already processed');
+        console.log('✅ Swap likely succeeded! Signature:', signature);
+        return signature;
+      }
+      
+      throw confirmError;
+    }
   } catch (error) {
     console.error('Error swapping with KEDOLOG discount:', error);
     throw error;
@@ -1210,7 +1263,16 @@ export const calculateKedologFee = async (
   wallet: any,
   amountIn: number,
   inputTokenPrice: number = 1 // Default to 1 if price not available
-): Promise<{ kedologFee: number; discountedFeeUsd: number; normalFeeUsd: number }> => {
+): Promise<{ 
+  kedologFee: number; 
+  discountedFeeUsd: number; 
+  normalFeeUsd: number;
+  protocolFeeInInputToken: number; // Protocol fee in input token (0.05% of input)
+  savingsInInputToken: number; // Savings in input token (20% of protocol fee)
+  lpFeeInInputToken: number; // LP fee in input token (0.20% of input)
+  totalFeeInInputToken: number; // Total fee without discount (0.25% of input)
+  discountedTotalFeeInInputToken: number; // Effective total fee with discount
+}> => {
   try {
     const program = getProgram(connection, wallet);
     
@@ -1218,10 +1280,23 @@ export const calculateKedologFee = async (
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
     
-    // Calculate protocol fee in USD
-    const amountInUsd = amountIn * inputTokenPrice;
+    // Fee breakdown (in parts per million)
+    const lpFeeRate = 2000; // 0.20% = 2000 parts per million
     const protocolFeeRate = 500; // 0.05% = 500 parts per million
+    const totalFeeRate = 2500; // 0.25% = 2500 parts per million
+    
+    // Calculate fees in input token
+    const lpFeeInInputToken = (amountIn * lpFeeRate) / 1_000_000;
+    const protocolFeeInInputToken = (amountIn * protocolFeeRate) / 1_000_000;
+    const totalFeeInInputToken = (amountIn * totalFeeRate) / 1_000_000;
+    
+    // Calculate discount
     const discountRate = config.discountRate.toNumber(); // e.g., 2000 = 20%
+    const savingsInInputToken = (protocolFeeInInputToken * discountRate) / 10000;
+    const discountedTotalFeeInInputToken = totalFeeInInputToken - savingsInInputToken;
+    
+    // Calculate protocol fee in USD for KEDOLOG conversion
+    const amountInUsd = amountIn * inputTokenPrice;
     const protocolFeeUsd = (amountInUsd * protocolFeeRate) / 1_000_000;
     const discountedFeeUsd = (protocolFeeUsd * (10000 - discountRate)) / 10000;
     
@@ -1233,14 +1308,28 @@ export const calculateKedologFee = async (
       kedologFee,
       discountedFeeUsd,
       normalFeeUsd: protocolFeeUsd,
+      protocolFeeInInputToken,
+      savingsInInputToken,
+      lpFeeInInputToken,
+      totalFeeInInputToken,
+      discountedTotalFeeInInputToken,
     };
   } catch (error) {
     console.error('Error calculating KEDOLOG fee:', error);
     // Return default values if calculation fails
+    const lpFee = (amountIn * 2000) / 1_000_000; // 0.20%
+    const protocolFee = (amountIn * 500) / 1_000_000; // 0.05%
+    const totalFee = (amountIn * 2500) / 1_000_000; // 0.25%
+    
     return {
       kedologFee: 0,
       discountedFeeUsd: 0,
       normalFeeUsd: 0,
+      protocolFeeInInputToken: protocolFee,
+      savingsInInputToken: 0,
+      lpFeeInInputToken: lpFee,
+      totalFeeInInputToken: totalFee,
+      discountedTotalFeeInInputToken: totalFee,
     };
   }
 };

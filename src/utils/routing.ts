@@ -1,6 +1,7 @@
-import { Connection, PublicKey, Transaction } from '@solana/web3.js';
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID } from '@solana/spl-token';
-import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction } from './amm';
+import { Connection, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
+import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction, PROGRAM_ID } from './amm';
+import { KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 import * as anchor from '@coral-xyz/anchor';
 
 export interface SwapRoute {
@@ -149,8 +150,8 @@ export const calculateRouteOutput = (
     const reserveIn = isToken0Input ? pool.token0Reserve : pool.token1Reserve;
     const reserveOut = isToken0Input ? pool.token1Reserve : pool.token0Reserve;
     
-    // Calculate output for this hop
-    const result = calculateSwapOutput(currentAmount, reserveIn, reserveOut);
+    // Calculate output for this hop - USE ACTUAL POOL FEE RATE! ✅
+    const result = calculateSwapOutput(currentAmount, reserveIn, reserveOut, pool.tradeFeeRate);
     
     currentAmount = result.amountOut;
     totalPriceImpact += result.priceImpact;
@@ -227,11 +228,13 @@ export const executeMultiHopSwap = async (
   connection: Connection,
   wallet: any,
   walletPublicKey: PublicKey,
-  slippage: number = 0.5
+  slippage: number = 0.5,
+  useKedologDiscount: boolean = false
 ): Promise<string[]> => {
   console.log('🚀 Executing multi-hop swap in ONE transaction:', {
     hops: route.hops,
     path: route.path.map((mint) => mint.toString().slice(0, 8)).join(' → '),
+    kedologDiscount: useKedologDiscount ? 'ENABLED ✅' : 'Disabled',
   });
 
   let signature: string = ''; // Declare here so catch block can access
@@ -350,24 +353,89 @@ export const executeMultiHopSwap = async (
       const poolAmmConfig = pool.ammConfig || AMM_CONFIG; // Fallback to default if not set
       console.log(`    Using AMM config: ${poolAmmConfig.toString().slice(0, 8)}...`);
       
-      const swapInstruction = await program.methods
-        .swapBaseInput(amountInTokens, minimumAmountOutTokens)
-        .accounts({
-          payer: walletPublicKey,
-          authority: authority,
-          ammConfig: poolAmmConfig, // Use pool's specific AMM config
-          poolState: poolState,
-          inputTokenAccount: userInputAccount,
-          outputTokenAccount: userOutputAccount,
-          inputVault: inputVault,
-          outputVault: outputVault,
-          inputTokenProgram: TOKEN_PROGRAM_ID,
-          outputTokenProgram: TOKEN_PROGRAM_ID,
-          inputTokenMint: inputMint,
-          outputTokenMint: outputMint,
-          observationState: observationState,
-        })
-        .instruction();
+      let swapInstruction;
+      
+      if (useKedologDiscount) {
+        // Build KEDOLOG discount swap instruction
+        console.log(`    💰 Building KEDOLOG discount swap instruction for hop ${i + 1}`);
+        
+        // Get protocol token config
+        const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
+        const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
+        
+        // Get KEDOLOG token accounts
+        const userKedologAccount = await getAssociatedTokenAddress(
+          new PublicKey(KEDOLOG_CONFIG.MINT),
+          walletPublicKey
+        );
+        
+        const treasuryKedologAccount = await getAssociatedTokenAddress(
+          new PublicKey(KEDOLOG_CONFIG.MINT),
+          config.treasury
+        );
+        
+        // Check if user's KEDOLOG account exists, create if not
+        const kedologAccountInfo = await connection.getAccountInfo(userKedologAccount);
+        if (!kedologAccountInfo && i === 0) {
+          // Only add creation instruction on first hop to avoid duplicates
+          console.log(`    🔨 Adding KEDOLOG account creation instruction`);
+          transaction.add(
+            createAssociatedTokenAccountInstruction(
+              walletPublicKey,
+              userKedologAccount,
+              walletPublicKey,
+              new PublicKey(KEDOLOG_CONFIG.MINT)
+            )
+          );
+        }
+        
+        swapInstruction = await program.methods
+          .swapBaseInputWithProtocolToken(amountInTokens, minimumAmountOutTokens)
+          .accountsPartial({
+            payer: walletPublicKey,
+            authority: authority,
+            ammConfig: poolAmmConfig,
+            protocolTokenConfig,
+            poolState: poolState,
+            inputTokenAccount: userInputAccount,
+            outputTokenAccount: userOutputAccount,
+            protocolTokenAccount: userKedologAccount, // ✅ Correct name
+            protocolTokenTreasury: treasuryKedologAccount, // ✅ Correct name
+            inputVault: inputVault,
+            outputVault: outputVault,
+            inputTokenProgram: TOKEN_PROGRAM_ID,
+            outputTokenProgram: TOKEN_PROGRAM_ID,
+            protocolTokenProgram: TOKEN_PROGRAM_ID,
+            inputTokenMint: inputMint,
+            outputTokenMint: outputMint,
+            protocolTokenMint: new PublicKey(KEDOLOG_CONFIG.MINT),
+            observationState: observationState,
+            // For manual pricing (current setup)
+            inputTokenOracle: SystemProgram.programId, // ✅ Required
+            protocolTokenOracle: SystemProgram.programId, // ✅ Required
+          })
+          .instruction();
+      } else {
+        // Build normal swap instruction
+        swapInstruction = await program.methods
+          .swapBaseInput(amountInTokens, minimumAmountOutTokens)
+          .accounts({
+            payer: walletPublicKey,
+            authority: authority,
+            ammConfig: poolAmmConfig, // Use pool's specific AMM config
+            poolState: poolState,
+            inputTokenAccount: userInputAccount,
+            outputTokenAccount: userOutputAccount,
+            inputVault: inputVault,
+            outputVault: outputVault,
+            inputTokenProgram: TOKEN_PROGRAM_ID,
+            outputTokenProgram: TOKEN_PROGRAM_ID,
+            inputTokenMint: inputMint,
+            outputTokenMint: outputMint,
+            observationState: observationState,
+          })
+          .instruction();
+      }
       
       transaction.add(swapInstruction);
       
