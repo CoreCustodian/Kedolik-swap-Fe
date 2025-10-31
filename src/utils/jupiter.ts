@@ -8,7 +8,7 @@ export interface JupiterRoute {
   marketInfos: {
     id: string;
     label: string;
-    inputMint: string;
+    inputMint: string; 
     outputMint: string;
     notEnoughLiquidity: boolean;
     inAmount: string;
