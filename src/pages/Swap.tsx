@@ -387,8 +387,25 @@ const Swap = () => {
       }
       
       try {
-        // For now, use default price of 1 USD per input token (can be improved with price oracle)
-        const inputTokenPrice = 1;
+        // Estimate USD value from the swap quote
+        // If we're getting USDC/USDT out, use that as USD value
+        // Otherwise use a conservative estimate based on output token
+        let inputTokenPrice = 1;
+        if (quoteData && quoteData.amountOut > 0) {
+          // Use the swap rate to estimate value
+          // If output is a stablecoin, this gives us USD value directly
+          if (toToken.symbol === 'USDC' || toToken.symbol === 'USDT') {
+            inputTokenPrice = quoteData.amountOut / amount;
+            console.log(`💰 Estimated ${fromToken.symbol} price from quote: $${inputTokenPrice.toFixed(2)} (${amount} ${fromToken.symbol} → ${quoteData.amountOut.toFixed(2)} ${toToken.symbol})`);
+          } else {
+            // For non-stablecoins, use a conservative multiplier
+            // to avoid false minimums (better to allow than block)
+            inputTokenPrice = Math.max(10, quoteData.amountOut / amount);
+            console.log(`💰 Using conservative ${fromToken.symbol} price estimate: $${inputTokenPrice.toFixed(2)}`);
+          }
+        } else {
+          console.log(`⚠️ No quote data available, using default price: $1`);
+        }
         
         if (isMultiHop && swapRoute) {
           // Calculate fee for EACH hop in the route
@@ -464,6 +481,7 @@ const Swap = () => {
         } else {
           // Single hop - use existing calculation
           const fee = await calculateKedologFee(connection, wallet, amount, inputTokenPrice);
+          console.log(`💰 KEDOLOG fee calculation: ${fee.kedologFee.toFixed(4)} KEDOLOG (threshold: 0.009)`);
           setEstimatedKedologFee(fee);
         }
       } catch (error) {
@@ -473,7 +491,7 @@ const Swap = () => {
     };
     
     calculateFee();
-  }, [fromAmount, useKedologDiscount, wallet, connection, isMultiHop, swapRoute]);
+  }, [fromAmount, useKedologDiscount, wallet, connection, isMultiHop, swapRoute, quoteData, toToken, fromToken]);
   
   // Auto-disable KEDOLOG discount for multi-hop swaps
   const prevIsMultiHopRef = useRef(isMultiHop);
@@ -545,10 +563,11 @@ const Swap = () => {
     if (useKedologDiscount) {
       if (estimatedKedologFee) {
         // Check if KEDOLOG fee is too small (would round to 0 in contract)
-        if (estimatedKedologFee.kedologFee < 0.01) {
+        // Use 0.009 threshold to account for rounding (contract needs >= 0.01)
+        if (estimatedKedologFee.kedologFee < 0.009) {
           const minAmount = (amountIn * 0.01) / estimatedKedologFee.kedologFee;
           showToast(
-            `Swap amount too small for KEDOLOG discount. Minimum ${minAmount.toFixed(2)} ${fromToken.symbol} required. Try without discount or increase amount.`,
+            `Swap amount too small for KEDOLOG discount. Minimum ${minAmount.toFixed(4)} ${fromToken.symbol} required. Try without discount or increase amount.`,
             'warning'
           );
           return;
@@ -970,10 +989,10 @@ const Swap = () => {
                               </div>
                             </div>
                             
-                            {estimatedKedologFee.kedologFee < 0.01 && (() => {
+                            {estimatedKedologFee.kedologFee < 0.009 && (() => {
                               const currentAmount = parseFloat(fromAmount) || 0;
                               const minAmount = currentAmount > 0 && estimatedKedologFee.kedologFee > 0
-                                ? ((currentAmount * 0.01) / estimatedKedologFee.kedologFee).toFixed(2)
+                                ? ((currentAmount * 0.01) / estimatedKedologFee.kedologFee).toFixed(4)
                                 : '0';
                               return (
                                 <div className="mt-2 px-3 py-2 bg-yellow-500/20 border border-yellow-500/30 rounded-lg">
@@ -984,7 +1003,7 @@ const Swap = () => {
                               );
                             })()}
                             
-                            {kedologBalance < estimatedKedologFee.kedologFee && estimatedKedologFee.kedologFee >= 0.01 && (
+                            {kedologBalance < estimatedKedologFee.kedologFee && estimatedKedologFee.kedologFee >= 0.009 && (
                               <div className="mt-2 px-3 py-2 bg-red-500/20 border border-red-500/30 rounded-lg">
                                 <p className="text-xs text-red-300">
                                   ⚠️ Insufficient KEDOLOG balance. You need {estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.
@@ -1324,7 +1343,7 @@ const Swap = () => {
                 !toAmount || 
                 isLoadingQuote || 
                 isTransactionInProgress ||
-                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.01)
+                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.009)
               }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
