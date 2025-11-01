@@ -1,4 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
+import * as ADDRESSES from './addresses';
 
 /**
  * Fee Tier Configuration
@@ -115,18 +116,22 @@ export const formatFeeBps = (bps: number): string => {
 };
 
 // KEDOLOG Discount Feature Configuration
+// All addresses imported from centralized config
 export const KEDOLOG_CONFIG = {
   // KEDOLOG token mint address
-  MINT: new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx'),
+  MINT: ADDRESSES.KEDOLOG_MINT,
   // Default AMM Config - using the deployed program's config (index 0)
-  AMM_CONFIG: new PublicKey('FfWb58U4MuhSBMjpG6dMRyC3CGYyV2GFT7Kaa4nYnLQg'),
+  AMM_CONFIG: ADDRESSES.DEFAULT_AMM_CONFIG,
   // Protocol Token Config (for KEDOLOG discount feature)
-  PROTOCOL_TOKEN_CONFIG: new PublicKey('uheCbdoykKfcQXJu9qm1WruK6vLgnsMyMCpzpD1FZ1G'),
+  PROTOCOL_TOKEN_CONFIG: ADDRESSES.PROTOCOL_TOKEN_CONFIG,
   // KEDOLOG/USDC pool for price oracle
-  PRICE_POOL: new PublicKey('HXfXjGqTsqhwLd4oc9ZwKpvdjGYmU8Tvbca6ftp8231w'),
+  PRICE_POOL: ADDRESSES.KEDOLOG_USDC_POOL,
+  // Pool vaults for on-chain price reading
+  KEDOLOG_VAULT: ADDRESSES.KEDOLOG_VAULT,
+  USDC_VAULT: ADDRESSES.USDC_VAULT_IN_KEDOLOG_POOL,
   // DEPRECATED: Use getDiscountRate() function instead
   // This fallback is used only if blockchain fetch fails
-  DISCOUNT_RATE_FALLBACK: 2500, // in basis points (2500 = 25%)
+  DISCOUNT_RATE_FALLBACK: ADDRESSES.KEDOLOG_DISCOUNT_CONFIG.DISCOUNT_RATE_FALLBACK,
 };
 
 /**
@@ -140,8 +145,13 @@ export const getDiscountRate = (discountRateFromBlockchain: number | null): numb
 
 /**
  * Helper function to get protocol token config PDA
+ * Note: This is for compatibility. Use ADDRESSES.getProtocolTokenConfigPDA() directly.
  */
 export const getProtocolTokenConfigAddress = (programId: PublicKey): PublicKey => {
+  if (programId.equals(ADDRESSES.PROGRAM_ID)) {
+    return ADDRESSES.PROTOCOL_TOKEN_CONFIG;
+  }
+  // Fallback for custom program IDs
   const [protocolTokenConfig] = PublicKey.findProgramAddressSync(
     [Buffer.from('protocol_token_config')],
     programId

@@ -27,19 +27,19 @@ import {
 import IDLJson from '../../kedolik_cp_swap.json';
 import { getTokenByMint } from '../config/tokens';
 import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddress, KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
+import * as ADDRESSES from '../config/addresses';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
 
 // Debug: Log the IDL address on module load
 console.log('🔧 IDL loaded with address:', (IDLJson as any).address);
-console.log('🔧 Hardcoded PROGRAM_ID:', 'HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq');
+console.log('🔧 Centralized PROGRAM_ID:', ADDRESSES.PROGRAM_ID.toString());
 
-// Program and Config  
-// Using the actual deployed program ID from the IDL
-export const PROGRAM_ID = new PublicKey('HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq');
-console.log('🔧 PROGRAM_ID initialized to:', PROGRAM_ID.toString());
-export const AUTHORITY_SEED = Buffer.from('vault_and_lp_mint_auth_seed');
+// Program and Config - Import from centralized config
+export const PROGRAM_ID = ADDRESSES.PROGRAM_ID;
+export const AUTHORITY_SEED = ADDRESSES.AUTHORITY_SEED;
+console.log('✅ Using centralized addresses from config/addresses.ts');
 
 // Extended FeeConfig with address (computed from index)
 export interface FeeConfig extends BaseFeeConfig {
@@ -2281,8 +2281,8 @@ export const createPool = async (
     const token1Vault = getTokenVault(poolState, token1);
     const observationState = getObservationState(poolState);
     // Direct SOL transfer to fee receiver wallet (no WSOL wrapping needed!)
-    // Pool creation fee goes to admin address (as configured in AMM Config)
-    const createPoolFee = new PublicKey('JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa');
+    // Pool creation fee goes to configured receiver address
+    const createPoolFee = ADDRESSES.CREATE_POOL_FEE_RECEIVER;
     
     // Determine the correct token programs FIRST (before getting ATAs)
     const token0Info = await connection.getAccountInfo(token0);
