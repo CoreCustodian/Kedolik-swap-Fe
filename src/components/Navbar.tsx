@@ -2,17 +2,16 @@ import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey } from '@solana/web3.js';
-
-const ADMIN_ADDRESS = new PublicKey('JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa');
+import { useConfig } from '../contexts/ConfigContext';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
   const { publicKey } = useWallet();
+  const { adminAddress } = useConfig();
 
   const isActive = (path: string) => location.pathname === path;
-  const isAdmin = publicKey ? publicKey.equals(ADMIN_ADDRESS) : false;
+  const isAdmin = publicKey && adminAddress ? publicKey.toString() === adminAddress : false;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-[60] bg-dark-900/70 backdrop-blur-xl border-b border-white/10">

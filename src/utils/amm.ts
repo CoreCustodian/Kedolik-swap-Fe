@@ -31,9 +31,14 @@ import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddre
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
 
+// Debug: Log the IDL address on module load
+console.log('🔧 IDL loaded with address:', (IDLJson as any).address);
+console.log('🔧 Hardcoded PROGRAM_ID:', 'HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq');
+
 // Program and Config  
 // Using the actual deployed program ID from the IDL
-export const PROGRAM_ID = new PublicKey('2LdLPZbRokzmcJyFE7fLyTgMKNxuR9PE6PKfunn6fkUi');
+export const PROGRAM_ID = new PublicKey('HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq');
+console.log('🔧 PROGRAM_ID initialized to:', PROGRAM_ID.toString());
 export const AUTHORITY_SEED = Buffer.from('vault_and_lp_mint_auth_seed');
 
 // Extended FeeConfig with address (computed from index)
@@ -565,10 +570,14 @@ export const fetchPools = async (
   
   try {
     console.log('🔄 Fetching pools from RPC...');
+    console.log('📍 PROGRAM_ID being used:', PROGRAM_ID.toString());
+    console.log('📍 Expected NEW program:', 'HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq');
     const program = getProgram(connection, wallet);
+    console.log('📍 Program address from program object:', program.programId.toString());
     
     // Fetch all pool accounts
     const pools = await (program.account as any).poolState.all();
+    console.log('📊 Found', pools.length, 'pools from program:', program.programId.toString());
     
     const poolInfos: PoolInfo[] = [];
     
@@ -624,9 +633,17 @@ export const fetchPools = async (
         const ammConfigData = await (program.account as any).ammConfig.fetch(poolAmmConfig);
         tradeFeeRate = ammConfigData.tradeFeeRate || 100;
         console.log(`📊 Pool ${pool.publicKey.toString().slice(0, 8)}... - Trade Fee Rate: ${tradeFeeRate} (${tradeFeeRate / 10000}%)`);
+        console.log(`   Full address: ${pool.publicKey.toString()}`);
       } catch (error) {
         console.warn(`Could not fetch AMM config for pool ${pool.publicKey.toString().slice(0, 8)}..., using default fee rate`);
       }
+      
+      const token0Symbol = getTokenSymbol(data.token0Mint);
+      const token1Symbol = getTokenSymbol(data.token1Mint);
+      
+      console.log(`   Tokens: ${token0Symbol}/${token1Symbol}`);
+      console.log(`   Token0: ${data.token0Mint.toString()}`);
+      console.log(`   Token1: ${data.token1Mint.toString()}`);
       
       poolInfos.push({
         address: pool.publicKey,
@@ -638,8 +655,8 @@ export const fetchPools = async (
         token0Reserve: parseFloat(token0VaultInfo.value.uiAmount?.toString() || '0'),
         token1Reserve: parseFloat(token1VaultInfo.value.uiAmount?.toString() || '0'),
         lpSupply: Number(data.lpSupply?.toString() || '0'),
-        token0Symbol: getTokenSymbol(data.token0Mint),
-        token1Symbol: getTokenSymbol(data.token1Mint),
+        token0Symbol,
+        token1Symbol,
         token0Decimals,
         token1Decimals,
         creator: data.poolCreator || data.pool_creator || PublicKey.default, // Pool creator address
@@ -1185,36 +1202,58 @@ export const swapWithKedologDiscount = async (
       protocolTokenProgram
     );
     
-    // Step 2: Build the swap instruction with KEDOLOG discount
-    console.log('🚀 Building KEDOLOG discount swap instruction...');
-    const swapInstruction = await program.methods
-      .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
-      .accountsPartial({
-        payer: walletPublicKey,
-        authority,
-        ammConfig: AMM_CONFIG,
-        protocolTokenConfig,
-        poolState,
-        inputTokenAccount: userInputAccount,
-        outputTokenAccount: userOutputAccount,
-        protocolTokenAccount: userKedologAccount,
-        protocolTokenTreasury: treasuryKedologAccount,
-        inputVault,
-        outputVault,
-        inputTokenProgram,
-        outputTokenProgram,
-        protocolTokenProgram,
-        inputTokenMint: inputMint,
-        outputTokenMint: outputMint,
-        protocolTokenMint: config.protocolTokenMint,
-        observationState,
-        // For manual pricing (current setup)
-        inputTokenOracle: SystemProgram.programId,
-        protocolTokenOracle: SystemProgram.programId,
-      })
-      .instruction();
-    
-    transaction.add(swapInstruction);
+      // Step 2: Build the swap instruction with KEDOLOG discount
+      console.log('🚀 Building KEDOLOG discount swap instruction...');
+      
+      // Get KEDOLOG price pool for on-chain price oracle
+      const kedologPricePool = KEDOLOG_CONFIG.PRICE_POOL;
+      
+      console.log('🔮 Using KEDOLOG/USDC pool for on-chain price oracle:', kedologPricePool.toString());
+      
+      // Fetch the pool data to get vault addresses
+      const kedologPoolData = await (program.account as any).poolState.fetch(kedologPricePool);
+      const kedologVault = kedologPoolData.token0Vault; // KEDOLOG vault
+      const usdcVault = kedologPoolData.token1Vault; // USDC vault
+      
+      console.log('📦 Pool vaults:', {
+        kedologVault: kedologVault.toString(),
+        usdcVault: usdcVault.toString(),
+      });
+      
+      const swapInstruction = await program.methods
+        .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
+        .accountsPartial({
+          payer: walletPublicKey,
+          authority,
+          ammConfig: AMM_CONFIG,
+          protocolTokenConfig,
+          poolState,
+          inputTokenAccount: userInputAccount,
+          outputTokenAccount: userOutputAccount,
+          protocolTokenAccount: userKedologAccount,
+          protocolTokenTreasury: treasuryKedologAccount,
+          inputVault,
+          outputVault,
+          inputTokenProgram,
+          outputTokenProgram,
+          protocolTokenProgram,
+          inputTokenMint: inputMint,
+          outputTokenMint: outputMint,
+          protocolTokenMint: config.protocolTokenMint,
+          observationState,
+          // No oracle for input token (uses 1:1 USD parity)
+          inputTokenOracle: SystemProgram.programId,
+          // Pass pool as protocol token oracle for pool-based pricing
+          protocolTokenOracle: kedologPricePool,
+        })
+        .remainingAccounts([
+          // Pass pool vaults so contract can read reserves
+          { pubkey: kedologVault, isSigner: false, isWritable: false },
+          { pubkey: usdcVault, isSigner: false, isWritable: false },
+        ])
+        .instruction();
+      
+      transaction.add(swapInstruction);
     
     // Step 3: Unwrap SOL if output is SOL
     if (needsOutputWrap) {
@@ -1267,7 +1306,7 @@ export const swapWithKedologDiscount = async (
       }, 'confirmed');
       
       console.log('✅ KEDOLOG discount swap successful!');
-      console.log('💚 You saved 20% on protocol fees!');
+      console.log('💚 You saved 25% on protocol fees!');
       return signature;
     } catch (confirmError: any) {
       console.error('❌ Confirmation error:', confirmError);
@@ -1288,6 +1327,134 @@ export const swapWithKedologDiscount = async (
 };
 
 // Calculate KEDOLOG fee for a swap (for UI display)
+/**
+ * Fetch KEDOLOG price from the KEDOLOG/USDC pool
+ * @returns Price of 1 KEDOLOG in USDC
+ */
+export const fetchKedologPrice = async (
+  connection: Connection,
+  wallet: any
+): Promise<number> => {
+  try {
+    const program = getProgram(connection, wallet);
+    const poolAddress = KEDOLOG_CONFIG.PRICE_POOL;
+    
+    console.log('💰 Fetching KEDOLOG price from pool:', poolAddress.toString());
+    
+    // Fetch pool data
+    const poolData = await (program.account as any).poolState.fetch(poolAddress);
+    
+    // Get token mints to verify order
+    const token0Mint = poolData.token0Mint || poolData.mint0;
+    const token1Mint = poolData.token1Mint || poolData.mint1;
+    
+    console.log('💰 Pool token mints:', {
+      token0: token0Mint?.toString(),
+      token1: token1Mint?.toString(),
+      expectedKEDOLOG: KEDOLOG_CONFIG.MINT.toString(),
+    });
+    
+    // Get vault addresses (these are PublicKeys, not amounts)
+    const token0VaultAddress = poolData.token0Vault || poolData.token_0_vault;
+    const token1VaultAddress = poolData.token1Vault || poolData.token_1_vault;
+    
+    // Get decimals
+    const token0Decimals = poolData.mint0Decimals || poolData.mint_0_decimals || 9;
+    const token1Decimals = poolData.mint1Decimals || poolData.mint_1_decimals || 6;
+    
+    if (!token0VaultAddress || !token1VaultAddress) {
+      console.error('💰 Could not find vault addresses in pool data');
+      console.log('💰 Available fields:', Object.keys(poolData));
+      return 0.01;
+    }
+    
+    console.log('💰 Vault addresses:', {
+      token0Vault: token0VaultAddress.toString(),
+      token1Vault: token1VaultAddress.toString(),
+    });
+    
+    // Fetch actual token account balances from the vault addresses
+    const { getAccount } = await import('@solana/spl-token');
+    
+    const token0VaultAccount = await getAccount(connection, token0VaultAddress);
+    const token1VaultAccount = await getAccount(connection, token1VaultAddress);
+    
+    // Get the actual balances
+    const token0Reserve = Number(token0VaultAccount.amount) / Math.pow(10, token0Decimals);
+    const token1Reserve = Number(token1VaultAccount.amount) / Math.pow(10, token1Decimals);
+    
+    console.log('💰 Reserves:', {
+      token0Reserve,
+      token1Reserve,
+      token0Decimals,
+      token1Decimals,
+    });
+    
+    // Validate reserves
+    if (!token0Reserve || !token1Reserve || token0Reserve === 0 || token1Reserve === 0 || isNaN(token0Reserve) || isNaN(token1Reserve)) {
+      console.error('💰 Invalid reserves - pool might be empty or not initialized:', { token0Reserve, token1Reserve });
+      console.warn('⚠️ Using fallback KEDOLOG price: $0.01 per KEDOLOG');
+      console.warn('⚠️ Please add liquidity to the KEDOLOG/USDC pool for accurate pricing');
+      return 0.01;
+    }
+    
+    // Determine which token is KEDOLOG
+    const isToken0Kedolog = token0Mint?.equals(KEDOLOG_CONFIG.MINT);
+    
+    // Calculate price of KEDOLOG in USDC
+    let kedologPrice: number;
+    if (isToken0Kedolog) {
+      // token0 = KEDOLOG, token1 = USDC
+      // Price = USDC reserve / KEDOLOG reserve
+      kedologPrice = token1Reserve / token0Reserve;
+      console.log('💰 KEDOLOG is token0, USDC is token1');
+    } else {
+      // token0 = USDC, token1 = KEDOLOG
+      // Price = USDC reserve / KEDOLOG reserve
+      kedologPrice = token0Reserve / token1Reserve;
+      console.log('💰 USDC is token0, KEDOLOG is token1');
+    }
+    
+    // Validate price
+    if (!isFinite(kedologPrice) || isNaN(kedologPrice) || kedologPrice <= 0) {
+      console.error('💰 Invalid price calculated:', kedologPrice);
+      return 0.01;
+    }
+    
+    // Sanity check: KEDOLOG price should be reasonable (between $0.0001 and $100)
+    // Note: Frontend uses pool price for display only. Contract uses manual price from config.
+    if (kedologPrice < 0.0001 || kedologPrice > 100) {
+      console.error('💰 KEDOLOG price out of reasonable range:', {
+        price: kedologPrice,
+        expectedRange: '$0.0001 - $100',
+      });
+      console.warn('⚠️ Pool might have incorrect liquidity ratios. Using fallback price.');
+      return 0.01;
+    }
+    
+    // Warn if price is suspiciously high
+    if (kedologPrice > 1) {
+      console.warn('⚠️ KEDOLOG price seems high:', {
+        price: `$${kedologPrice.toFixed(6)}`,
+        recommendation: 'Check pool liquidity ratios',
+      });
+    }
+    
+    console.log('💰 KEDOLOG Price:', {
+      token0Reserve: token0Reserve.toFixed(2),
+      token1Reserve: token1Reserve.toFixed(2),
+      price: kedologPrice.toFixed(6),
+      priceDisplay: `$${kedologPrice.toFixed(6)} per KEDOLOG`,
+    });
+    
+    return kedologPrice;
+  } catch (error) {
+    console.error('Error fetching KEDOLOG price from pool:', error);
+    // Return default price if fetch fails (e.g., 0.01 USDC per KEDOLOG)
+    return 0.01;
+  }
+};
+
 export const calculateKedologFee = async (
   connection: Connection,
   wallet: any,
@@ -1298,7 +1465,7 @@ export const calculateKedologFee = async (
   discountedFeeUsd: number; 
   normalFeeUsd: number;
   protocolFeeInInputToken: number; // Protocol fee in input token (0.05% of input)
-  savingsInInputToken: number; // Savings in input token (20% of protocol fee)
+  savingsInInputToken: number; // Savings in input token (25% of protocol fee)
   lpFeeInInputToken: number; // LP fee in input token (0.20% of input)
   totalFeeInInputToken: number; // Total fee without discount (0.25% of input)
   discountedTotalFeeInInputToken: number; // Effective total fee with discount
@@ -1306,7 +1473,7 @@ export const calculateKedologFee = async (
   try {
     const program = getProgram(connection, wallet);
     
-    // Get protocol token config
+    // Get protocol token config for discount rate
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
     
@@ -1321,12 +1488,12 @@ export const calculateKedologFee = async (
     const totalFeeInInputToken = (amountIn * totalFeeRate) / 1_000_000;
     
     // Calculate discount
-    const discountRate = config.discountRate.toNumber(); // e.g., 2000 = 20%
+    const discountRate = config.discountRate.toNumber(); // e.g., 2500 = 25%
     // When using KEDOLOG discount, protocol fee is paid in KEDOLOG (not input token)
     // So the actual fee deducted from input token is ONLY the LP fee
     const discountedTotalFeeInInputToken = lpFeeInInputToken;
     // Savings in input token = full protocol fee (since you're not paying it in input token)
-    // Plus 20% discount on the KEDOLOG you pay (represented as input token equivalent)
+    // Plus 25% discount on the KEDOLOG you pay (represented as input token equivalent)
     const savingsInInputToken = (protocolFeeInInputToken * discountRate) / 10000;
     
     // Calculate protocol fee in USD for KEDOLOG conversion
@@ -1334,9 +1501,28 @@ export const calculateKedologFee = async (
     const protocolFeeUsd = (amountInUsd * protocolFeeRate) / 1_000_000;
     const discountedFeeUsd = (protocolFeeUsd * (10000 - discountRate)) / 10000;
     
-    // Convert to KEDOLOG
-    const kedologPerUsd = config.protocolTokenPerUsd.toNumber() / 1_000_000;
-    const kedologFee = discountedFeeUsd * kedologPerUsd;
+    // Fetch KEDOLOG price from pool (price in USDC per KEDOLOG)
+    const kedologPriceUsd = await fetchKedologPrice(connection, wallet);
+    
+    console.log('💰 Calculating KEDOLOG fee:', {
+      amountIn,
+      inputTokenPrice,
+      amountInUsd,
+      protocolFeeUsd,
+      discountedFeeUsd,
+      kedologPriceUsd,
+    });
+    
+    // Convert discounted fee to KEDOLOG
+    let kedologFee = discountedFeeUsd / kedologPriceUsd;
+    
+    // Validate the calculated fee
+    if (!isFinite(kedologFee) || isNaN(kedologFee) || kedologFee < 0) {
+      console.error('💰 Invalid KEDOLOG fee calculated:', kedologFee);
+      kedologFee = 0;
+    }
+    
+    console.log('💰 Final KEDOLOG fee:', kedologFee);
     
     return {
       kedologFee,
@@ -1853,6 +2039,33 @@ export const removeLiquidity = async (
     // Build transaction
     const transaction = new Transaction();
     
+    // Step 0: Create token accounts if they don't exist
+    const { createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
+    
+    const token0AccountInfo = await connection.getAccountInfo(userToken0Account);
+    if (!token0AccountInfo) {
+      console.log('🔧 Creating token account for token0...');
+      const createToken0AccountIx = createAssociatedTokenAccountIdempotentInstruction(
+        wallet.publicKey,
+        userToken0Account,
+        wallet.publicKey,
+        token0
+      );
+      transaction.add(createToken0AccountIx);
+    }
+    
+    const token1AccountInfo = await connection.getAccountInfo(userToken1Account);
+    if (!token1AccountInfo) {
+      console.log('🔧 Creating token account for token1...');
+      const createToken1AccountIx = createAssociatedTokenAccountIdempotentInstruction(
+        wallet.publicKey,
+        userToken1Account,
+        wallet.publicKey,
+        token1
+      );
+      transaction.add(createToken1AccountIx);
+    }
+    
     // Step 1: Build the withdraw instruction
     console.log('💰 Building withdraw instruction...');
     const withdrawInstruction = await program.methods
@@ -2068,8 +2281,8 @@ export const createPool = async (
     const token1Vault = getTokenVault(poolState, token1);
     const observationState = getObservationState(poolState);
     // Direct SOL transfer to fee receiver wallet (no WSOL wrapping needed!)
-    // The contract now transfers 0.15 SOL directly as native SOL
-    const createPoolFee = new PublicKey('67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa');
+    // Pool creation fee goes to admin address (as configured in AMM Config)
+    const createPoolFee = new PublicKey('JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa');
     
     // Determine the correct token programs FIRST (before getting ATAs)
     const token0Info = await connection.getAccountInfo(token0);

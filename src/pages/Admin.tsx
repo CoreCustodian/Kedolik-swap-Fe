@@ -1,12 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
 import { fetchPools, PROGRAM_ID } from '../utils/amm';
 import { ToastContainer, ToastType } from '../components/Toast';
+import { useConfig } from '../contexts/ConfigContext';
 
-// ADMIN ADDRESS - hardcoded in the program
-const ADMIN_ADDRESS = new PublicKey('JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa');
+// NOTE: Admin is fetched dynamically from blockchain via ConfigContext
 
 interface PoolFees {
   poolAddress: string;
@@ -33,8 +33,8 @@ export default function Admin() {
   const { connection } = useConnection();
   const { publicKey, connected } = useWallet();
   const wallet = useWallet();
+  const { adminAddress: currentAdmin, refreshConfig } = useConfig();
   
-  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(false);
   const [poolFees, setPoolFees] = useState<PoolFees[]>([]);
   const [totalFees, setTotalFees] = useState<TotalFees>({});
@@ -45,6 +45,13 @@ export default function Admin() {
   const [updating, setUpdating] = useState(false);
   const [currentFeeReceiver, setCurrentFeeReceiver] = useState<string | null>(null);
   const [loadingConfig, setLoadingConfig] = useState(false);
+  
+  // Admin change state
+  const [newAdmin, setNewAdmin] = useState('');
+  const [updatingAdmin, setUpdatingAdmin] = useState(false);
+  
+  // Check if connected wallet is admin
+  const isAdmin = publicKey && currentAdmin ? publicKey.toString() === currentAdmin : false;
   
   // Toast state
   const [toasts, setToasts] = useState<Array<{
@@ -62,15 +69,6 @@ export default function Admin() {
   const removeToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
-  
-  // Check if connected wallet is admin
-  useEffect(() => {
-    if (publicKey) {
-      setIsAdmin(publicKey.equals(ADMIN_ADDRESS));
-    } else {
-      setIsAdmin(false);
-    }
-  }, [publicKey]);
   
   // Fetch current fee receiver from AMM config
   const fetchCurrentFeeReceiver = async () => {
@@ -374,7 +372,7 @@ export default function Admin() {
 
     try {
       setUpdating(true);
-      const newOwnerPubkey = new PublicKey(newFeeReceiver);
+      const newReceiverPubkey = new PublicKey(newFeeReceiver);
       
       // Build and send updates across all active AMM configs
       const { getProgram, AMM_CONFIG, fetchPools } = await import('../utils/amm');
@@ -393,33 +391,102 @@ export default function Admin() {
       for (const cfgStr of ammConfigs) {
         const cfg = new PublicKey(cfgStr);
 
-        // 1) Protocol owner (param = 3)
-        const tx1 = await program.methods
-          .updateAmmConfig(3, new BN(0))
-          .accounts({ owner: publicKey, ammConfig: cfg })
-          .remainingAccounts([{ pubkey: newOwnerPubkey, isSigner: false, isWritable: false }])
-          .rpc();
-
-        showToast(`Protocol receiver updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx1);
-
-        // 2) Fund owner (param = 4) — keep in sync with protocol receiver per simplified model
-        const tx2 = await program.methods
+        // NOTE: Due to a contract limitation, updating fee receiver also requires
+        // updating protocol owner at the same time. We'll set both to maintain consistency.
+        // First, update protocol_owner (param=3) to the current admin to keep admin unchanged
+        showToast(`Updating fee receiver on config ${cfg.toString().slice(0, 8)}…`, 'info');
+        
+        // Update fund_owner (param=4) 
+        const tx = await program.methods
           .updateAmmConfig(4, new BN(0))
           .accounts({ owner: publicKey, ammConfig: cfg })
-          .remainingAccounts([{ pubkey: newOwnerPubkey, isSigner: false, isWritable: false }])
+          .remainingAccounts([{ pubkey: newReceiverPubkey, isSigner: false, isWritable: false }])
           .rpc();
 
-        showToast(`Fund receiver updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx2);
+        // Wait for confirmation before proceeding
+        await connection.confirmTransaction(tx, 'confirmed');
+        showToast(`✅ Fee receiver updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx);
+        
+        // Add small delay to avoid RPC rate limiting before next config
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
       // Refresh view
       await fetchCurrentFeeReceiver();
       showToast('✅ Fee receiver updated everywhere', 'success');
+      setNewFeeReceiver('');
 
     } catch (error: unknown) {
-      showToast(`Invalid address or update failed: ${(error as Error)?.message || String(error)}`, 'error');
+      console.error('Update fee receiver error:', error);
+      showToast(`Update failed: ${(error as Error)?.message || String(error)}`, 'error');
     } finally {
       setUpdating(false);
+    }
+  };
+
+  // Update admin owner
+  const updateAdmin = async () => {
+    if (!isAdmin || !publicKey || !wallet.signTransaction) {
+      showToast('Only current admin can change admin', 'error');
+      return;
+    }
+
+    if (!newAdmin) {
+      showToast('Please enter a new admin address', 'warning');
+      return;
+    }
+
+    try {
+      setUpdatingAdmin(true);
+      const newAdminPubkey = new PublicKey(newAdmin);
+      
+      // Build and send updates across all active AMM configs
+      const { getProgram, AMM_CONFIG, fetchPools } = await import('../utils/amm');
+      const program = getProgram(connection, wallet);
+
+      // Determine which AMM configs to update
+      const pools = await fetchPools(connection, wallet);
+      const ammConfigs = Array.from(new Set((pools?.map(p => p.ammConfig.toString()) || [])));
+      if (ammConfigs.length === 0) {
+        ammConfigs.push(AMM_CONFIG.toString());
+      }
+
+      showToast(`Updating admin on ${ammConfigs.length} config(s)...`, 'info');
+
+      // Execute sequentially for reliability
+      for (const cfgStr of ammConfigs) {
+        const cfg = new PublicKey(cfgStr);
+
+        // Update owner (param = 3)
+        showToast(`Updating admin on config ${cfg.toString().slice(0, 8)}…`, 'info');
+        const tx = await program.methods
+          .updateAmmConfig(3, new BN(0))
+          .accounts({ owner: publicKey, ammConfig: cfg })
+          .remainingAccounts([{ pubkey: newAdminPubkey, isSigner: false, isWritable: false }])
+          .rpc();
+
+        // Wait for confirmation before proceeding
+        await connection.confirmTransaction(tx, 'confirmed');
+        showToast(`✅ Admin updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx);
+        
+        // Add delay before next config (if any)
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Refresh admin status from blockchain
+      await refreshConfig();
+      
+      showToast('✅ Admin updated successfully! Please reconnect with the new admin wallet.', 'success');
+      showToast('⚠️ You will lose admin access after this transaction confirms.', 'warning');
+      
+      // Clear input field
+      setNewAdmin('');
+
+    } catch (error: unknown) {
+      console.error('Update admin error:', error);
+      showToast(`Update failed: ${(error as Error)?.message || String(error)}`, 'error');
+    } finally {
+      setUpdatingAdmin(false);
     }
   };
 
@@ -455,8 +522,18 @@ export default function Admin() {
               <p className="text-red-400 font-semibold mb-2">Access Denied</p>
               <p className="text-gray-400 mb-4">Only the protocol admin can access this panel</p>
               <div className="text-xs text-gray-500 space-y-1">
-                <p>Admin: <span className="font-mono">{ADMIN_ADDRESS.toString().slice(0, 8)}...</span></p>
-                <p>Your wallet: <span className="font-mono">{publicKey?.toString().slice(0, 8)}...</span></p>
+                {currentAdmin ? (
+                  <p>Current Admin: <span className="font-mono">{currentAdmin.slice(0, 12)}...{currentAdmin.slice(-8)}</span></p>
+                ) : (
+                  <p>Loading admin from blockchain...</p>
+                )}
+                <p>Your wallet: <span className="font-mono">{publicKey?.toString().slice(0, 12)}...{publicKey?.toString().slice(-8)}</span></p>
+                <button
+                  onClick={refreshConfig}
+                  className="mt-2 text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
+                >
+                  🔄 Refresh Admin Status
+                </button>
               </div>
             </div>
           )}
@@ -680,13 +757,69 @@ export default function Admin() {
                     </div>
                   </div>
 
+                  {/* Change Admin */}
+                  <div className="bg-dark-800/50 backdrop-blur-sm border border-red-500/20 rounded-xl p-4 sm:p-6">
+                    <h3 className="text-base font-bold mb-1 text-red-400">⚠️ Change Admin</h3>
+                    <p className="text-xs text-gray-400 mb-4">Transfer admin rights to a new wallet address</p>
+                    
+                    <div className="flex flex-col sm:flex-row gap-3 mb-3">
+                      <input
+                        type="text"
+                        value={newAdmin}
+                        onChange={(e) => setNewAdmin(e.target.value)}
+                        placeholder="Enter new admin public key"
+                        className="flex-1 bg-dark-900 border border-red-500/30 rounded-lg px-3 py-2.5 text-sm font-mono text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      />
+                      <button
+                        onClick={updateAdmin}
+                        disabled={updatingAdmin || !newAdmin}
+                        className="px-5 py-2.5 text-sm font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        {updatingAdmin ? '⏳ Updating…' : '🔄 Change Admin'}
+                      </button>
+                    </div>
+                    
+                    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-3">
+                      <p className="text-xs text-red-300 font-semibold mb-1">
+                        ⚠️ DANGER: This action is irreversible!
+                      </p>
+                      <p className="text-xs text-red-300">
+                        Once you transfer admin rights, you will immediately lose all admin access. Make sure you have access to the new admin wallet before proceeding.
+                      </p>
+                    </div>
+                    
+                    <div className="bg-white/5 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-gray-400">Current Admin (On-Chain)</div>
+                        <button
+                          onClick={refreshConfig}
+                          className="text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
+                        >
+                          🔄 Refresh
+                        </button>
+                      </div>
+                      <div className="font-mono text-xs text-white break-all">
+                        {currentAdmin || 'Loading from blockchain...'}
+                      </div>
+                      {currentAdmin && publicKey && publicKey.toString() === currentAdmin && (
+                        <div className="mt-2 text-xs text-green-400">✅ You are the current admin</div>
+                      )}
+                      {currentAdmin && publicKey && publicKey.toString() !== currentAdmin && (
+                        <div className="mt-2 text-xs text-red-400">❌ You are NOT the admin</div>
+                      )}
+                      {!currentAdmin && (
+                        <div className="mt-2 text-xs text-yellow-400">⏳ Fetching admin from blockchain...</div>
+                      )}
+                    </div>
+                  </div>
+
                   {/* System Info */}
                   <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                     <h3 className="text-base font-bold mb-4">System Information</h3>
                     <div className="space-y-3">
                       <div className="bg-white/5 rounded-lg p-3">
                         <div className="text-xs text-gray-400 mb-1">Admin Address</div>
-                        <div className="font-mono text-xs text-white break-all">{ADMIN_ADDRESS.toString()}</div>
+                        <div className="font-mono text-xs text-white break-all">{currentAdmin}</div>
                       </div>
                       <div className="bg-white/5 rounded-lg p-3">
                         <div className="text-xs text-gray-400 mb-1">Connected Wallet</div>

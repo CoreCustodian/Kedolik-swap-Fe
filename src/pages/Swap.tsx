@@ -466,7 +466,7 @@ const Swap = () => {
           
           // Return aggregated fees for all hops
           const normalFeeUsd = totalProtocolFeeInInputToken * inputTokenPrice;
-          const discountedFeeUsd = normalFeeUsd * 0.8; // 20% discount
+          const discountedFeeUsd = normalFeeUsd * 0.75; // 25% discount
           
           setEstimatedKedologFee({
             kedologFee: totalKedologFee,
@@ -481,7 +481,7 @@ const Swap = () => {
         } else {
           // Single hop - use existing calculation
           const fee = await calculateKedologFee(connection, wallet, amount, inputTokenPrice);
-          console.log(`💰 KEDOLOG fee calculation: ${fee.kedologFee.toFixed(4)} KEDOLOG (threshold: 0.009)`);
+          console.log(`💰 KEDOLOG fee calculation: ${fee.kedologFee.toFixed(4)} KEDOLOG (threshold: 0.001)`);
           setEstimatedKedologFee(fee);
         }
       } catch (error) {
@@ -562,10 +562,22 @@ const Swap = () => {
     // KEDOLOG balance and minimum amount validation
     if (useKedologDiscount) {
       if (estimatedKedologFee) {
+        console.log('🔍 KEDOLOG fee validation:', {
+          kedologFee: estimatedKedologFee.kedologFee,
+          threshold: 0.001,
+          isTooSmall: estimatedKedologFee.kedologFee < 0.001,
+          amountIn,
+        });
+        
         // Check if KEDOLOG fee is too small (would round to 0 in contract)
-        // Use 0.009 threshold to account for rounding (contract needs >= 0.01)
-        if (estimatedKedologFee.kedologFee < 0.009) {
-          const minAmount = (amountIn * 0.01) / estimatedKedologFee.kedologFee;
+        // Use 0.001 KEDOLOG as minimum (with 9 decimals, this is 1,000,000 base units)
+        if (estimatedKedologFee.kedologFee < 0.001) {
+          const minAmount = (amountIn * 0.001) / estimatedKedologFee.kedologFee;
+          console.error('❌ KEDOLOG fee too small:', {
+            currentFee: estimatedKedologFee.kedologFee,
+            minRequired: 0.001,
+            calculatedMinAmount: minAmount,
+          });
           showToast(
             `Swap amount too small for KEDOLOG discount. Minimum ${minAmount.toFixed(4)} ${fromToken.symbol} required. Try without discount or increase amount.`,
             'warning'
@@ -975,13 +987,13 @@ const Swap = () => {
                   />
                   <div className="flex-1">
                 <label htmlFor="kedolog-discount" className={`text-sm font-semibold text-white ${isMultiHop ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} flex items-center gap-2`}>
-                  💰 Pay protocol fee with KEDOLOG (Save 20%!)
+                  💰 Pay protocol fee with KEDOLOG (Save 25%!)
                   {isMultiHop && <span className="text-[10px] text-yellow-400">(Direct swaps only)</span>}
                 </label>
                 <p className="text-xs text-gray-300 mt-1">
                   {isMultiHop 
                     ? 'Currently available for direct swaps only. Multi-hop support coming soon!'
-                    : 'Get 20% discount on protocol fees and receive more output tokens'
+                    : 'Get 25% discount on protocol fees and receive more output tokens'
                   }
                 </p>
                     
@@ -1013,10 +1025,10 @@ const Swap = () => {
                               </div>
                             </div>
                             
-                            {estimatedKedologFee.kedologFee < 0.009 && (() => {
+                            {estimatedKedologFee.kedologFee < 0.001 && (() => {
                               const currentAmount = parseFloat(fromAmount) || 0;
                               const minAmount = currentAmount > 0 && estimatedKedologFee.kedologFee > 0
-                                ? ((currentAmount * 0.01) / estimatedKedologFee.kedologFee).toFixed(4)
+                                ? ((currentAmount * 0.001) / estimatedKedologFee.kedologFee).toFixed(4)
                                 : '0';
                               return (
                                 <div className="mt-2 px-3 py-2 bg-yellow-500/20 border border-yellow-500/30 rounded-lg">
@@ -1027,7 +1039,7 @@ const Swap = () => {
                               );
                             })()}
                             
-                            {kedologBalance < estimatedKedologFee.kedologFee && estimatedKedologFee.kedologFee >= 0.009 && (
+                            {kedologBalance < estimatedKedologFee.kedologFee && estimatedKedologFee.kedologFee >= 0.001 && (
                               <div className="mt-2 px-3 py-2 bg-red-500/20 border border-red-500/30 rounded-lg">
                                 <p className="text-xs text-red-300">
                                   ⚠️ Insufficient KEDOLOG balance. You need {estimatedKedologFee.kedologFee.toFixed(2)} KEDOLOG.
@@ -1370,7 +1382,7 @@ const Swap = () => {
                 !toAmount || 
                 isLoadingQuote || 
                 isTransactionInProgress ||
-                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.009)
+                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001)
               }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >

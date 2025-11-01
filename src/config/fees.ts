@@ -118,12 +118,24 @@ export const formatFeeBps = (bps: number): string => {
 export const KEDOLOG_CONFIG = {
   // KEDOLOG token mint address
   MINT: new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx'),
-  // Default AMM Config - using the deployed program's config
-  AMM_CONFIG: new PublicKey('6cYBQxes3T5CRStVgKNV4GiURNu2nCcUwmHwEWCcP4Zt'),
+  // Default AMM Config - using the deployed program's config (index 0)
+  AMM_CONFIG: new PublicKey('FfWb58U4MuhSBMjpG6dMRyC3CGYyV2GFT7Kaa4nYnLQg'),
   // Protocol Token Config (for KEDOLOG discount feature)
-  PROTOCOL_TOKEN_CONFIG: new PublicKey('7ZRkzDLJQkhYvoyKKJXHjk1qy1ArKtX8iqbNF7F4sETv'),
-  // Discount percentage (20%)
-  DISCOUNT_RATE: 2000, // in basis points (2000 = 20%)
+  PROTOCOL_TOKEN_CONFIG: new PublicKey('uheCbdoykKfcQXJu9qm1WruK6vLgnsMyMCpzpD1FZ1G'),
+  // KEDOLOG/USDC pool for price oracle
+  PRICE_POOL: new PublicKey('HXfXjGqTsqhwLd4oc9ZwKpvdjGYmU8Tvbca6ftp8231w'),
+  // DEPRECATED: Use getDiscountRate() function instead
+  // This fallback is used only if blockchain fetch fails
+  DISCOUNT_RATE_FALLBACK: 2500, // in basis points (2500 = 25%)
+};
+
+/**
+ * Get the current discount rate from the context or fallback
+ * NOTE: This function should be used with the useConfig hook in components
+ */
+export const getDiscountRate = (discountRateFromBlockchain: number | null): number => {
+  // Use blockchain value if available, otherwise fallback
+  return discountRateFromBlockchain ?? KEDOLOG_CONFIG.DISCOUNT_RATE_FALLBACK;
 };
 
 /**
