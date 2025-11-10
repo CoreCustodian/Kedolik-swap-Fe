@@ -61,16 +61,7 @@ export const getFeeConfigByAddress = (address: PublicKey): FeeConfig | undefined
 // re-export if needed elsewhere
 export { getAmmConfigAddress } from '../config/fees';
 
-// Token Mints on Devnet
-export const TOKENS = {
-  KEDOLOG: new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx'),
-  USDC: new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32'),
-  SOL: new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv'),
-  ETH: new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3'),
-  BTC: new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa'),
-};
-
-// Wrapped SOL (WSOL) mint address - same as NATIVE_MINT  
+ // Wrapped SOL (WSOL) mint address - same as NATIVE_MINT  
 export const WSOL_MINT = NATIVE_MINT;
 
 // Helper functions for wrapping/unwrapping SOL
@@ -745,12 +736,13 @@ export const getTokenSymbol = (mint: PublicKey): string => {
     return tokenInfo.symbol;
   }
   
-  // Fallback to hardcoded values for backwards compatibility
-  const mintStr = mint.toString();
-  if (mintStr === TOKENS.KEDOLOG.toString()) return 'KEDOLOG';
-  if (mintStr === TOKENS.USDC.toString()) return 'USDC';
-  if (mintStr === TOKENS.ETH.toString()) return 'ETH';
-  if (mintStr === TOKENS.BTC.toString()) return 'BTC';
+  // Fallback using centralized addresses from config
+  if (mint.equals(ADDRESSES.KEDOLOG_MINT)) return 'KEDOLOG';
+  if (mint.equals(ADDRESSES.USDC_MINT)) return 'USDC';
+  if (mint.equals(ADDRESSES.ETH_MINT)) return 'ETH';
+  if (mint.equals(ADDRESSES.BTC_MINT)) return 'BTC';
+  if (mint.equals(ADDRESSES.SOL_MINT)) return 'SOL';
+  if (mint.equals(ADDRESSES.WSOL_MINT)) return 'WSOL';
   
   return 'UNKNOWN';
 };

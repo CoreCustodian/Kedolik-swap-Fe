@@ -16,6 +16,7 @@ import {
   WSOL_MINT,
 } from '../utils/amm';
 import { KEDOLOG_CONFIG } from '../config/fees';
+import { SOL_MINT, KEDOLOG_MINT } from '../config/addresses';
 import { 
   findBestRoute, 
   executeMultiHopSwap,
@@ -56,6 +57,7 @@ const Swap = () => {
   // KEDOLOG discount feature
   const [useKedologDiscount, setUseKedologDiscount] = useState(false);
   const [kedologBalance, setKedologBalance] = useState<number>(0);
+  const [isLoadingKedologFee, setIsLoadingKedologFee] = useState(false);
   const [estimatedKedologFee, setEstimatedKedologFee] = useState<{
     kedologFee: number;
     discountedFeeUsd: number;
@@ -377,16 +379,19 @@ const Swap = () => {
     const calculateFee = async () => {
       if (!fromAmount || !wallet || !useKedologDiscount) {
         setEstimatedKedologFee(null);
+        setIsLoadingKedologFee(false);
         return;
       }
       
       const amount = parseFloat(fromAmount);
       if (isNaN(amount) || amount <= 0) {
         setEstimatedKedologFee(null);
+        setIsLoadingKedologFee(false);
         return;
       }
       
       try {
+        setIsLoadingKedologFee(true);
         // Estimate USD value of the INPUT token
         // If input is a stablecoin (USDC/USDT), price is $1
         // Otherwise, try to estimate from the swap quote
@@ -396,20 +401,49 @@ const Swap = () => {
           // Input is a stablecoin - always $1
           inputTokenPrice = 1;
           console.log(`💰 ${fromToken.symbol} is a stablecoin: $1.00`);
-        } else if (quoteData && quoteData.amountOut > 0) {
-          // Input is NOT a stablecoin - try to estimate from quote
-          if (toToken.symbol === 'USDC' || toToken.symbol === 'USDT') {
-            // Swapping TO a stablecoin - we can calculate input price directly
-            inputTokenPrice = quoteData.amountOut / amount;
-            console.log(`💰 Estimated ${fromToken.symbol} price from quote: $${inputTokenPrice.toFixed(2)} (${amount} ${fromToken.symbol} → ${quoteData.amountOut.toFixed(2)} ${toToken.symbol})`);
-          } else {
-            // Both tokens are NOT stablecoins - use conservative estimate
-            // This avoids blocking swaps due to incorrect fee calculations
-            inputTokenPrice = Math.max(10, quoteData.amountOut / amount);
-            console.log(`💰 Using conservative ${fromToken.symbol} price estimate: $${inputTokenPrice.toFixed(2)}`);
+        } else if (fromToken.symbol === 'SOL' || fromToken.mint.equals(SOL_MINT)) {
+          // Input is SOL - get price from SOL/USDC pool
+          try {
+            const { getSolPrice } = await import('../utils/prices');
+            inputTokenPrice = await getSolPrice(connection);
+            console.log(`💰 SOL price from SOL/USDC pool: $${inputTokenPrice.toFixed(2)}`);
+          } catch (error) {
+            console.error('Error fetching SOL price:', error);
+            // Fallback: try to calculate from quote if output is USDC
+            if (quoteData && quoteData.amountOut > 0 && (toToken.symbol === 'USDC' || toToken.symbol === 'USDT')) {
+              inputTokenPrice = quoteData.amountOut / amount;
+              console.log(`💰 SOL price from quote fallback: $${inputTokenPrice.toFixed(2)}`);
+            } else {
+              inputTokenPrice = 150; // Conservative fallback
+              console.log(`⚠️ Using fallback SOL price: $150`);
+            }
           }
+        } else if (fromToken.symbol === 'KEDOLOG' || fromToken.mint.equals(KEDOLOG_MINT)) {
+          // Input is KEDOLOG - get price from KEDOLOG/USDC pool
+          try {
+            const { fetchKedologPrice } = await import('../utils/amm');
+            inputTokenPrice = await fetchKedologPrice(connection, wallet);
+            console.log(`💰 KEDOLOG price from KEDOLOG/USDC pool: $${inputTokenPrice.toFixed(6)}`);
+          } catch (error) {
+            console.error('Error fetching KEDOLOG price:', error);
+            // Fallback: try to calculate from quote if output is USDC
+            if (quoteData && quoteData.amountOut > 0 && (toToken.symbol === 'USDC' || toToken.symbol === 'USDT')) {
+              inputTokenPrice = quoteData.amountOut / amount;
+              console.log(`💰 KEDOLOG price from quote fallback: $${inputTokenPrice.toFixed(6)}`);
+            } else {
+              inputTokenPrice = 0.001; // Conservative fallback (~$0.001)
+              console.log(`⚠️ Using fallback KEDOLOG price: $0.001`);
+            }
+          }
+        } else if (quoteData && quoteData.amountOut > 0 && (toToken.symbol === 'USDC' || toToken.symbol === 'USDT')) {
+          // Input is NOT a stablecoin, swapping TO a stablecoin - calculate input price directly
+          inputTokenPrice = quoteData.amountOut / amount;
+          console.log(`💰 Estimated ${fromToken.symbol} price from quote: $${inputTokenPrice.toFixed(2)} (${amount} ${fromToken.symbol} → ${quoteData.amountOut.toFixed(2)} ${toToken.symbol})`);
         } else {
-          console.log(`⚠️ No quote data available, using default price: $1`);
+          // Both tokens are NOT stablecoins AND input is NOT SOL/KEDOLOG
+          // Use quote as USD estimate only if output is stablecoin
+          console.log(`⚠️ Cannot determine USD price for ${fromToken.symbol}, using default: $1`);
+          inputTokenPrice = 1;
         }
         
         if (isMultiHop && swapRoute) {
@@ -492,6 +526,8 @@ const Swap = () => {
       } catch (error) {
         console.error('Error calculating KEDOLOG fee:', error);
         setEstimatedKedologFee(null);
+      } finally {
+        setIsLoadingKedologFee(false);
       }
     };
     
@@ -1008,7 +1044,12 @@ const Swap = () => {
                           <span className="text-gray-400">Your KEDOLOG Balance:</span>
                           <span className="font-semibold text-purple-300">{kedologBalance.toFixed(2)} KEDOLOG</span>
                         </div>
-                        {estimatedKedologFee && (
+                        {isLoadingKedologFee ? (
+                          <div className="mt-2 p-3 bg-black/30 rounded-lg flex items-center justify-center gap-2">
+                            <div className="w-4 h-4 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span className="text-xs text-purple-300">Calculating KEDOLOG fee...</span>
+                          </div>
+                        ) : estimatedKedologFee ? (
                           <>
                             {/* Fee Breakdown */}
                             <div className="mt-2 p-2 bg-black/30 rounded-lg space-y-1.5">
@@ -1052,7 +1093,7 @@ const Swap = () => {
                               </div>
                             )}
                           </>
-                        )}
+                        ) : null}
                       </div>
                     )}
                   </div>
@@ -1386,8 +1427,10 @@ const Swap = () => {
                 !fromAmount || 
                 !toAmount || 
                 isLoadingQuote || 
+                isLoadingKedologFee ||
                 isTransactionInProgress ||
-                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001)
+                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001) ||
+                (useKedologDiscount && estimatedKedologFee === null && isLoadingKedologFee)
               }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
@@ -1406,7 +1449,12 @@ const Swap = () => {
               ) : isLoadingQuote ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Calculating...
+                  Calculating Quote...
+                </>
+              ) : isLoadingKedologFee ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Calculating KEDOLOG Fee...
                 </>
               ) : !poolReserves && !swapRoute ? (
                 <>

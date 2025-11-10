@@ -1,7 +1,8 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { getTokenAccounts, getSolBalance, getTransactionHistory } from '../utils/solana';
-import { getTokenPrices, getTokenMetadata, KNOWN_TOKENS } from '../utils/prices';
+import { getTokenPrices, getTokenMetadata } from '../utils/prices';
+import { SOL_MINT } from '../config/addresses';
 
 interface Transaction {
   id: string;
@@ -70,14 +71,14 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const tokenAccounts = await getTokenAccounts(publicKey);
       
       // 3. Get prices for all tokens (Jupiter API - free!)
-      const allMints = [KNOWN_TOKENS.SOL, ...tokenAccounts.map(t => t.mint)];
+      const allMints = [SOL_MINT.toString(), ...tokenAccounts.map(t => t.mint)];
       const prices = await getTokenPrices(allMints);
       
       // 4. Build assets list
       const assets: Asset[] = [];
       
       // Add SOL
-      const solPrice = prices.get(KNOWN_TOKENS.SOL) || 0;
+      const solPrice = prices.get(SOL_MINT.toString()) || 0;
       const solValue = solBalance * solPrice;
       assets.push({
         symbol: 'SOL',
@@ -85,7 +86,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         balance: solBalance.toFixed(4),
         valueUsd: solValue.toFixed(2),
         change24h: 0, // Can fetch from CoinGecko if needed
-        logo: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+        logo: `https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/${SOL_MINT.toString()}/logo.png`
       });
       
       // Add SPL tokens

@@ -1,5 +1,12 @@
 import { PublicKey } from '@solana/web3.js';
-import { NATIVE_MINT } from '@solana/spl-token';
+import { 
+  SOL_MINT,
+  KEDOLOG_MINT, 
+  USDC_MINT, 
+  WSOL_MINT,
+  ETH_MINT,
+  BTC_MINT 
+} from './addresses';
 
 export interface TokenInfo {
   mint: PublicKey;
@@ -10,40 +17,46 @@ export interface TokenInfo {
   coingeckoId?: string;
 }
 
-// Devnet Token List
+/**
+ * Devnet Token List
+ * 
+ * IMPORTANT: All mint addresses are imported from src/config/addresses.ts
+ * This ensures a single source of truth for all blockchain addresses.
+ * When deploying to mainnet, ONLY update addresses.ts!
+ */
 export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
   SOL: {
-    mint: NATIVE_MINT, // Native SOL (So1111111111111111111111111111111111111111112)
+    mint: SOL_MINT, // Native SOL - imported from addresses.ts
     symbol: 'SOL',
     name: 'Solana',
     decimals: 9,
   },
   KEDOLOG: {
-    mint: new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx'),
+    mint: KEDOLOG_MINT, // Imported from addresses.ts
     symbol: 'KEDOLOG',
     name: 'Kedolog Protocol Token',
     decimals: 9,
   },
   USDC: {
-    mint: new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32'),
+    mint: USDC_MINT, // Imported from addresses.ts
     symbol: 'USDC',
     name: 'USD Coin (Test)',
     decimals: 6,
   },
   WSOL: {
-    mint: new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv'),
+    mint: WSOL_MINT, // Imported from addresses.ts
     symbol: 'WSOL',
     name: 'Wrapped SOL (Test)',
     decimals: 9,
   },
   ETH: {
-    mint: new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3'),
+    mint: ETH_MINT, // Imported from addresses.ts
     symbol: 'ETH',
     name: 'Ethereum (Test)',
     decimals: 18,
   },
   BTC: {
-    mint: new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa'),
+    mint: BTC_MINT, // Imported from addresses.ts
     symbol: 'BTC',
     name: 'Bitcoin (Test)',
     decimals: 8,

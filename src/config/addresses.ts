@@ -39,17 +39,56 @@ export const AUTHORITY_SEED = Buffer.from('vault_and_lp_mint_auth_seed');
 // ============================================================================
 
 /**
+ * SOL token mint address (Native)
+ * This is the native SOL mint address on all Solana networks
+ * Same for both Devnet and Mainnet
+ */
+export const SOL_MINT = new PublicKey('So11111111111111111111111111111111111111112');
+
+/**
  * KEDOLOG token mint address
  * The protocol's native token used for fee discounts
+ * 
+ * Devnet: 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
+ * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
  */
 export const KEDOLOG_MINT = new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx');
 
 /**
- * USDC token mint address (Devnet)
+ * USDC token mint address
  * Used as the base pair for pool-based pricing oracles
+ * 
+ * Devnet: 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
  * Mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
  */
 export const USDC_MINT = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32');
+
+/**
+ * WSOL token mint address (Test Token)
+ * Wrapped SOL for testing purposes
+ * 
+ * Devnet: 6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv
+ * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
+ */
+export const WSOL_MINT = new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv');
+
+/**
+ * ETH token mint address (Test Token)
+ * Test Ethereum token on Devnet
+ * 
+ * Devnet: CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3
+ * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
+ */
+export const ETH_MINT = new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3');
+
+/**
+ * BTC token mint address (Test Token)
+ * Test Bitcoin token on Devnet
+ * 
+ * Devnet: ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa
+ * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
+ */
+export const BTC_MINT = new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa');
 
 /**
  * KEDOLOG/USDC liquidity pool

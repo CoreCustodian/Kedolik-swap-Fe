@@ -106,13 +106,49 @@ export const getTokenMetadata = async (mintAddress: string) => {
   }
 };
 
-// Well-known token addresses for quick reference
-export const KNOWN_TOKENS = {
-  SOL: 'So11111111111111111111111111111111111111112',
-  USDC: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
-  USDT: 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
-  RAY: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
-  BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
-  JUP: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+/**
+ * NOTE: All token addresses are centralized in src/config/addresses.ts
+ * Import from there instead of using hardcoded values!
+ * 
+ * This KNOWN_TOKENS object is kept for backward compatibility only.
+ * For new code, always import from src/config/addresses.ts
+ */
+
+/**
+ * Get SOL price from on-chain SOL/USDC pool
+ * Reads actual reserves from the pool vaults
+ */
+export const getSolPrice = async (connection: any): Promise<number> => {
+  try {
+    const { SOL_VAULT, USDC_VAULT_IN_SOL_POOL } = await import('../config/addresses');
+    
+    // Read vault balances
+    const solVaultInfo = await connection.getTokenAccountBalance(SOL_VAULT);
+    const usdcVaultInfo = await connection.getTokenAccountBalance(USDC_VAULT_IN_SOL_POOL);
+    
+    if (!solVaultInfo?.value?.amount || !usdcVaultInfo?.value?.amount) {
+      console.warn('⚠️ Could not read SOL/USDC pool vault balances');
+      return 150; // Fallback price
+    }
+    
+    // Parse reserves (SOL has 9 decimals, USDC has 6)
+    const solReserve = parseFloat(solVaultInfo.value.amount) / 1e9;
+    const usdcReserve = parseFloat(usdcVaultInfo.value.amount) / 1e6;
+    
+    if (solReserve === 0) {
+      console.warn('⚠️ SOL reserve is zero in pool');
+      return 150; // Fallback price
+    }
+    
+    // Calculate price: USDC / SOL
+    const solPrice = usdcReserve / solReserve;
+    
+    console.log(`💰 SOL price from pool: $${solPrice.toFixed(2)} (${solReserve.toFixed(2)} SOL, ${usdcReserve.toFixed(2)} USDC)`);
+    
+    return solPrice;
+  } catch (error) {
+    console.error('Error fetching SOL price from pool:', error);
+    return 150; // Conservative fallback
+  }
 };
 
