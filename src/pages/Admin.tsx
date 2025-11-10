@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
@@ -50,8 +50,15 @@ export default function Admin() {
   const [newAdmin, setNewAdmin] = useState('');
   const [updatingAdmin, setUpdatingAdmin] = useState(false);
   
-  // Check if connected wallet is admin
+  // Check if connected wallet is admin or fee receiver
   const isAdmin = publicKey && currentAdmin ? publicKey.toString() === currentAdmin : false;
+  const isFeeReceiver = publicKey && currentFeeReceiver ? publicKey.toString() === currentFeeReceiver : false;
+  
+  // In the new contract model:
+  // - Admin can ONLY change admin and fee receiver (cannot claim fees)
+  // - Fee receiver can ONLY claim fees (cannot change settings)
+  const canClaimFees = isFeeReceiver;
+  const canChangeSettings = isAdmin;
   
   // Toast state
   const [toasts, setToasts] = useState<Array<{
@@ -69,6 +76,14 @@ export default function Admin() {
   const removeToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
+
+  // Auto-fetch fee receiver on load
+  useEffect(() => {
+    if (connected && wallet) {
+      fetchCurrentFeeReceiver();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected]);
   
   // Fetch current fee receiver from AMM config
   const fetchCurrentFeeReceiver = async () => {
@@ -79,12 +94,16 @@ export default function Admin() {
       const { getProgram, AMM_CONFIG } = await import('../utils/amm');
       const program = getProgram(connection, wallet);
       
-      type AmmCfg = { protocolOwner: { toString(): string } };
+      type AmmCfg = { feeReceiver?: { toString(): string }; fundOwner?: { toString(): string } };
       type AmmProgramAcc = { ammConfig: { fetch: (p: unknown) => Promise<AmmCfg> } };
       const ammConfigData = await (program.account as unknown as AmmProgramAcc).ammConfig.fetch(AMM_CONFIG);
       
-      // Use protocol owner as the main fee receiver
-      setCurrentFeeReceiver(ammConfigData.protocolOwner.toString());
+      // NEW: Unified fee_receiver field (try new field first, fallback to old for compatibility)
+      const receiver = ammConfigData.feeReceiver?.toString() || ammConfigData.fundOwner?.toString();
+      if (receiver) {
+        setCurrentFeeReceiver(receiver);
+        console.log('✅ Unified fee receiver loaded:', receiver);
+      }
       
       showToast('Current fee receiver loaded', 'success');
     } catch (error) {
@@ -165,8 +184,8 @@ export default function Admin() {
   
   // Collect ALL fees from a pool (protocol + fund + creator)
   const collectAllFees = async (poolAddress: string, poolData: PoolFees) => {
-    if (!isAdmin || !publicKey || !wallet.signTransaction) {
-      showToast('Only admin can collect fees', 'error');
+    if (!canClaimFees || !publicKey || !wallet.signTransaction) {
+      showToast('Only the fee receiver can collect fees', 'error');
       return;
     }
 
@@ -254,10 +273,11 @@ export default function Admin() {
       });
       
       // Build collect_protocol_fee instruction
+      // NOTE: owner must be the fee receiver (fund_owner) in the new contract model
       const collectProtocolIx = await program.methods
         .collectProtocolFee(amount0Requested, amount1Requested)
         .accounts({
-          owner: publicKey,
+          owner: publicKey, // Must be the fee receiver wallet
           authority: authority,
           poolState: pool,
           ammConfig: ammConfig,
@@ -286,7 +306,7 @@ export default function Admin() {
         const collectFundIx = await program.methods
           .collectFundFee(fundAmount0, fundAmount1)
         .accounts({
-            owner: publicKey,
+            owner: publicKey, // Must be the fee receiver wallet
             authority: authority,
             poolState: pool,
             ammConfig: ammConfig,
@@ -385,27 +405,29 @@ export default function Admin() {
         ammConfigs.push(AMM_CONFIG.toString());
       }
 
-      showToast(`Updating fee receiver on ${ammConfigs.length} config(s)...`, 'info');
+      showToast(`Updating unified fee receiver on ${ammConfigs.length} config(s)...`, 'info');
 
       // Execute sequentially for reliability
       for (const cfgStr of ammConfigs) {
         const cfg = new PublicKey(cfgStr);
 
-        // NOTE: Due to a contract limitation, updating fee receiver also requires
-        // updating protocol owner at the same time. We'll set both to maintain consistency.
-        // First, update protocol_owner (param=3) to the current admin to keep admin unchanged
         showToast(`Updating fee receiver on config ${cfg.toString().slice(0, 8)}…`, 'info');
         
-        // Update fund_owner (param=4) 
+        // NEW: Update unified fee_receiver (param=4)
+        // This single update now controls ALL fee destinations:
+        // - Pool creation fees (1 SOL)
+        // - Protocol fees (from swaps)
+        // - Fund fees (from swaps)
+        // - KEDOLOG discount fees
         const tx = await program.methods
-          .updateAmmConfig(4, new BN(0))
+          .updateAmmConfig(4, new BN(0)) // param 4 = unified fee_receiver
           .accounts({ owner: publicKey, ammConfig: cfg })
           .remainingAccounts([{ pubkey: newReceiverPubkey, isSigner: false, isWritable: false }])
           .rpc();
 
         // Wait for confirmation before proceeding
         await connection.confirmTransaction(tx, 'confirmed');
-        showToast(`✅ Fee receiver updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx);
+        showToast(`✅ Unified fee receiver updated on ${cfg.toString().slice(0, 8)}…`, 'success', tx);
         
         // Add small delay to avoid RPC rate limiting before next config
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -413,7 +435,7 @@ export default function Admin() {
 
       // Refresh view
       await fetchCurrentFeeReceiver();
-      showToast('✅ Fee receiver updated everywhere', 'success');
+      showToast('✅ Unified fee receiver updated everywhere!', 'success');
       setNewFeeReceiver('');
 
     } catch (error: unknown) {
@@ -516,77 +538,128 @@ export default function Admin() {
             </div>
           )}
 
-          {connected && !isAdmin && (
+          {connected && !isAdmin && !isFeeReceiver && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
               <div className="text-4xl mb-3">🚫</div>
               <p className="text-red-400 font-semibold mb-2">Access Denied</p>
-              <p className="text-gray-400 mb-4">Only the protocol admin can access this panel</p>
+              <p className="text-gray-400 mb-4">Only the protocol admin or fee receiver can access this panel</p>
               <div className="text-xs text-gray-500 space-y-1">
                 {currentAdmin ? (
                   <p>Current Admin: <span className="font-mono">{currentAdmin.slice(0, 12)}...{currentAdmin.slice(-8)}</span></p>
                 ) : (
                   <p>Loading admin from blockchain...</p>
                 )}
+                {currentFeeReceiver && (
+                  <p>Current Fee Receiver: <span className="font-mono">{currentFeeReceiver.slice(0, 12)}...{currentFeeReceiver.slice(-8)}</span></p>
+                )}
                 <p>Your wallet: <span className="font-mono">{publicKey?.toString().slice(0, 12)}...{publicKey?.toString().slice(-8)}</span></p>
                 <button
-                  onClick={refreshConfig}
+                  onClick={() => {
+                    refreshConfig();
+                    fetchCurrentFeeReceiver();
+                  }}
                   className="mt-2 text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
                 >
-                  🔄 Refresh Admin Status
+                  🔄 Refresh Status
                 </button>
               </div>
             </div>
           )}
 
-          {connected && isAdmin && (
+          {connected && (isAdmin || isFeeReceiver) && (
             <>
+              {/* Role Badge */}
+              <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 mb-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-400 mb-1">Your Role</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {isAdmin && (
+                        <span className="px-3 py-1 bg-brand-purple/20 text-brand-purple rounded-full text-xs font-semibold border border-brand-purple/30">
+                          🔐 Admin (Can change settings)
+                        </span>
+                      )}
+                      {isFeeReceiver && (
+                        <span className="px-3 py-1 bg-brand-cyan/20 text-brand-cyan rounded-full text-xs font-semibold border border-brand-cyan/30">
+                          💰 Fee Receiver (Can claim fees)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      refreshConfig();
+                      fetchCurrentFeeReceiver();
+                    }}
+                    className="px-4 py-2 text-xs font-semibold bg-white/5 hover:bg-white/10 rounded-lg transition-all whitespace-nowrap"
+                  >
+                    🔄 Refresh Status
+                  </button>
+                </div>
+              </div>
+
               {/* Tabs */}
               <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-2 mb-6">
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setActiveTab('fees')}
-                    className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
-                      activeTab === 'fees'
-                        ? 'bg-gradient-brand text-white shadow-lg'
-                        : 'text-gray-400 hover:text-white hover:bg-white/5'
-                    }`}
-                  >
-                    <span className="mr-2">💰</span>
-                    Fee Collection
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('settings')}
-                    className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
-                      activeTab === 'settings'
-                        ? 'bg-gradient-brand text-white shadow-lg'
-                        : 'text-gray-400 hover:text-white hover:bg-white/5'
-                    }`}
-                  >
-                    <span className="mr-2">⚙️</span>
-                    Settings
-                  </button>
+                  {canClaimFees && (
+                    <button
+                      onClick={() => setActiveTab('fees')}
+                      className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                        activeTab === 'fees'
+                          ? 'bg-gradient-brand text-white shadow-lg'
+                          : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="mr-2">💰</span>
+                      Fee Collection
+                    </button>
+                  )}
+                  {canChangeSettings && (
+                    <button
+                      onClick={() => setActiveTab('settings')}
+                      className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                        activeTab === 'settings'
+                          ? 'bg-gradient-brand text-white shadow-lg'
+                          : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="mr-2">⚙️</span>
+                      Settings
+                    </button>
+                  )}
                 </div>
               </div>
 
               {/* Fee Collection Tab */}
               {activeTab === 'fees' && (
                 <>
-                  {/* Header Action */}
-                  <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6 mb-6">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                      <div>
-                        <h2 className="text-lg sm:text-xl font-bold mb-1">Protocol Fees Dashboard</h2>
-                        <p className="text-xs sm:text-sm text-gray-400">View and collect accumulated fees from all pools</p>
-                      </div>
-                      <button
-                        onClick={fetchPoolFees}
-                        disabled={loading}
-                        className="btn-primary whitespace-nowrap"
-                      >
-                        {loading ? '🔄 Loading...' : '🔄 Refresh'}
-                      </button>
+                  {!canClaimFees && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
+                      <div className="text-4xl mb-3">⚠️</div>
+                      <p className="text-yellow-400 font-semibold mb-2">Fee Collection Not Available</p>
+                      <p className="text-gray-400 mb-2">Only the fee receiver wallet can claim fees.</p>
+                      <p className="text-xs text-gray-500">You are the admin and can change the fee receiver in Settings.</p>
                     </div>
-                  </div>
+                  )}
+
+                  {canClaimFees && (
+                    <>
+                      {/* Header Action */}
+                      <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6 mb-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                          <div>
+                            <h2 className="text-lg sm:text-xl font-bold mb-1">Protocol Fees Dashboard</h2>
+                            <p className="text-xs sm:text-sm text-gray-400">View and collect accumulated fees from all pools</p>
+                          </div>
+                          <button
+                            onClick={fetchPoolFees}
+                            disabled={loading}
+                            className="btn-primary whitespace-nowrap"
+                          >
+                            {loading ? '🔄 Loading...' : '🔄 Refresh'}
+                          </button>
+                        </div>
+                      </div>
 
                   {/* Total Fees Summary */}
                   {Object.keys(totalFees).length > 0 && (
@@ -691,19 +764,32 @@ export default function Admin() {
                     </div>
                   )}
 
-                  {poolFees.length === 0 && !loading && (
-                    <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-8 text-center text-gray-400">
-                      <div className="text-4xl mb-3">📭</div>
-                      <p>No pool fees loaded yet.</p>
-                      <p className="text-sm mt-1">Click "Refresh" to fetch data</p>
-                    </div>
+                      {poolFees.length === 0 && !loading && (
+                        <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-8 text-center text-gray-400">
+                          <div className="text-4xl mb-3">📭</div>
+                          <p>No pool fees loaded yet.</p>
+                          <p className="text-sm mt-1">Click "Refresh" to fetch data</p>
+                        </div>
+                      )}
+                    </>
                   )}
                 </>
               )}
 
               {/* Settings Tab */}
               {activeTab === 'settings' && (
-                <div className="space-y-4">
+                <>
+                  {!canChangeSettings && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
+                      <div className="text-4xl mb-3">⚠️</div>
+                      <p className="text-yellow-400 font-semibold mb-2">Settings Not Available</p>
+                      <p className="text-gray-400 mb-2">Only the admin wallet can change settings.</p>
+                      <p className="text-xs text-gray-500">You are the fee receiver and can claim fees instead.</p>
+                    </div>
+                  )}
+
+                  {canChangeSettings && (
+                    <div className="space-y-4">
                   {/* Current Receiver */}
                   <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-4">
@@ -751,8 +837,20 @@ export default function Admin() {
                     </div>
                     
                     <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
-                      <p className="text-xs text-blue-300">
-                        ℹ️ Owner authority and fee receiver are unified. Updating this changes who can manage fees and protocol settings.
+                      <p className="text-xs text-blue-300 font-semibold mb-2">
+                        ✨ Unified Fee Receiver (One address for ALL fees)
+                      </p>
+                      <p className="text-xs text-blue-200">
+                        This single address receives:
+                      </p>
+                      <ul className="text-xs text-blue-200 mt-1 ml-4 space-y-0.5">
+                        <li>• Pool creation fees (1 SOL per pool)</li>
+                        <li>• Protocol swap fees (0.05% of each trade)</li>
+                        <li>• Fund fees (from swaps)</li>
+                        <li>• KEDOLOG discount fees (25% reduced fees)</li>
+                      </ul>
+                      <p className="text-xs text-blue-300 mt-2">
+                        ℹ️ Update once, applies to all fee types!
                       </p>
                     </div>
                   </div>
@@ -832,6 +930,8 @@ export default function Admin() {
                     </div>
                   </div>
                 </div>
+                  )}
+                </>
               )}
             </>
           )}

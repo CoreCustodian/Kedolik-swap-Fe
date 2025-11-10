@@ -387,19 +387,24 @@ const Swap = () => {
       }
       
       try {
-        // Estimate USD value from the swap quote
-        // If we're getting USDC/USDT out, use that as USD value
-        // Otherwise use a conservative estimate based on output token
+        // Estimate USD value of the INPUT token
+        // If input is a stablecoin (USDC/USDT), price is $1
+        // Otherwise, try to estimate from the swap quote
         let inputTokenPrice = 1;
-        if (quoteData && quoteData.amountOut > 0) {
-          // Use the swap rate to estimate value
-          // If output is a stablecoin, this gives us USD value directly
+        
+        if (fromToken.symbol === 'USDC' || fromToken.symbol === 'USDT') {
+          // Input is a stablecoin - always $1
+          inputTokenPrice = 1;
+          console.log(`💰 ${fromToken.symbol} is a stablecoin: $1.00`);
+        } else if (quoteData && quoteData.amountOut > 0) {
+          // Input is NOT a stablecoin - try to estimate from quote
           if (toToken.symbol === 'USDC' || toToken.symbol === 'USDT') {
+            // Swapping TO a stablecoin - we can calculate input price directly
             inputTokenPrice = quoteData.amountOut / amount;
             console.log(`💰 Estimated ${fromToken.symbol} price from quote: $${inputTokenPrice.toFixed(2)} (${amount} ${fromToken.symbol} → ${quoteData.amountOut.toFixed(2)} ${toToken.symbol})`);
           } else {
-            // For non-stablecoins, use a conservative multiplier
-            // to avoid false minimums (better to allow than block)
+            // Both tokens are NOT stablecoins - use conservative estimate
+            // This avoids blocking swaps due to incorrect fee calculations
             inputTokenPrice = Math.max(10, quoteData.amountOut / amount);
             console.log(`💰 Using conservative ${fromToken.symbol} price estimate: $${inputTokenPrice.toFixed(2)}`);
           }

@@ -418,23 +418,23 @@ export const executeMultiHopSwap = async (
       } else {
         // Build normal swap instruction
         swapInstruction = await program.methods
-          .swapBaseInput(amountInTokens, minimumAmountOutTokens)
-          .accounts({
-            payer: walletPublicKey,
-            authority: authority,
-            ammConfig: poolAmmConfig, // Use pool's specific AMM config
-            poolState: poolState,
-            inputTokenAccount: userInputAccount,
-            outputTokenAccount: userOutputAccount,
-            inputVault: inputVault,
-            outputVault: outputVault,
-            inputTokenProgram: TOKEN_PROGRAM_ID,
-            outputTokenProgram: TOKEN_PROGRAM_ID,
-            inputTokenMint: inputMint,
-            outputTokenMint: outputMint,
-            observationState: observationState,
-          })
-          .instruction();
+        .swapBaseInput(amountInTokens, minimumAmountOutTokens)
+        .accounts({
+          payer: walletPublicKey,
+          authority: authority,
+          ammConfig: poolAmmConfig, // Use pool's specific AMM config
+          poolState: poolState,
+          inputTokenAccount: userInputAccount,
+          outputTokenAccount: userOutputAccount,
+          inputVault: inputVault,
+          outputVault: outputVault,
+          inputTokenProgram: TOKEN_PROGRAM_ID,
+          outputTokenProgram: TOKEN_PROGRAM_ID,
+          inputTokenMint: inputMint,
+          outputTokenMint: outputMint,
+          observationState: observationState,
+        })
+        .instruction();
       }
       
       transaction.add(swapInstruction);

@@ -452,8 +452,8 @@ const PoolCard = ({
           }`}
         >
           {connected ? '- Remove' : 'Connect'}
-        </button>
-      </div>
+              </button>
+            </div>
     </div>
   );
 };

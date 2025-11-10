@@ -1,17 +1,50 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useConfig } from '../contexts/ConfigContext';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
-  const { publicKey } = useWallet();
+  const { publicKey, connected } = useWallet();
+  const { connection } = useConnection();
+  const wallet = useWallet();
   const { adminAddress } = useConfig();
+  const [feeReceiverAddress, setFeeReceiverAddress] = useState<string | null>(null);
 
   const isActive = (path: string) => location.pathname === path;
   const isAdmin = publicKey && adminAddress ? publicKey.toString() === adminAddress : false;
+  const isFeeReceiver = publicKey && feeReceiverAddress ? publicKey.toString() === feeReceiverAddress : false;
+  const canAccessAdmin = isAdmin || isFeeReceiver;
+
+  // Fetch fee receiver address when wallet connects
+  useEffect(() => {
+    const fetchFeeReceiver = async () => {
+      if (!connected || !wallet) {
+        setFeeReceiverAddress(null);
+        return;
+      }
+
+      try {
+        const { getProgram, AMM_CONFIG } = await import('../utils/amm');
+        const program = getProgram(connection, wallet);
+        
+        type AmmCfg = { feeReceiver?: { toString(): string }; fundOwner?: { toString(): string } };
+        type AmmProgramAcc = { ammConfig: { fetch: (p: unknown) => Promise<AmmCfg> } };
+        const ammConfigData = await (program.account as unknown as AmmProgramAcc).ammConfig.fetch(AMM_CONFIG);
+        
+        const feeReceiver = ammConfigData.feeReceiver || ammConfigData.fundOwner;
+        if (feeReceiver) {
+          setFeeReceiverAddress(feeReceiver.toString());
+        }
+      } catch (error) {
+        console.error('Error fetching fee receiver:', error);
+      }
+    };
+
+    fetchFeeReceiver();
+  }, [connected, wallet, connection]);
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-[60] bg-dark-900/70 backdrop-blur-xl border-b border-white/10">
@@ -72,7 +105,7 @@ const Navbar = () => {
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-brand scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
             </Link>
 
-            {isAdmin && (
+            {canAccessAdmin && (
               <Link 
                 to="/admin"
                 className={`relative px-4 py-2 rounded-lg font-medium transition-all duration-300 group ${
@@ -81,7 +114,7 @@ const Navbar = () => {
                     : 'text-yellow-400 hover:text-yellow-300 border border-yellow-400/20 hover:border-yellow-400/40'
                 }`}
               >
-                👑 Admin
+                {isAdmin ? '👑 Admin' : '💰 Fees'}
                 {isActive('/admin') && (
                   <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-400"></div>
                 )}
@@ -197,7 +230,7 @@ const Navbar = () => {
               Profile
             </Link>
             
-            {isAdmin && (
+            {canAccessAdmin && (
               <Link 
                 to="/admin"
                 className={`flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all duration-300 ${
@@ -207,8 +240,8 @@ const Navbar = () => {
                 }`}
                 onClick={() => setIsOpen(false)}
               >
-                <span className="text-xl">👑</span>
-                Admin Panel
+                <span className="text-xl">{isAdmin ? '👑' : '💰'}</span>
+                {isAdmin ? 'Admin Panel' : 'Fee Management'}
               </Link>
             )}
             

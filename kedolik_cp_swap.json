@@ -1,5 +1,5 @@
 {
-  "address": "HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq",
+  "address": "4LyaQt2uNYX7zJABAVa56th8U68brWHWLioAYZSbCeEf",
   "metadata": {
     "name": "kedolik_cp_swap",
     "version": "0.2.0",
@@ -358,7 +358,7 @@
         {
           "name": "owner",
           "docs": [
-            "Only admin or fund_owner can collect fee now"
+            "Only fee_receiver can collect fund fees"
           ],
           "signer": true
         },
@@ -404,14 +404,14 @@
         {
           "name": "pool_state",
           "docs": [
-            "Pool state stores accumulated protocol fee amount"
+            "Pool state stores accumulated fund fee amount"
           ],
           "writable": true
         },
         {
           "name": "amm_config",
           "docs": [
-            "Amm config account stores fund_owner"
+            "Amm config account stores fee_receiver"
           ]
         },
         {
@@ -506,7 +506,7 @@
         {
           "name": "owner",
           "docs": [
-            "Only admin or owner can collect fee now"
+            "Only the fee_receiver can collect protocol fees"
           ],
           "signer": true
         },
@@ -720,7 +720,7 @@
           "type": "u64"
         },
         {
-          "name": "create_pool_fee_receiver",
+          "name": "fee_receiver",
           "type": "pubkey"
         }
       ]
@@ -803,7 +803,7 @@
         "",
         "* `ctx`- The context of accounts",
         "* `protocol_token_mint` - The mint address of the protocol token (e.g., KEDOLOG)",
-        "* `discount_rate` - The discount rate when paying with protocol token (e.g., 2500 = 25% discount)",
+        "* `discount_rate` - The discount rate when paying with protocol token (e.g., 2000 = 20% discount)",
         "* `authority` - The authority that can update this config later",
         "* `treasury` - The treasury account to receive protocol token fees",
         "* `protocol_token_per_usd` - Price ratio: how many protocol tokens per 1 USD (scaled by 10^6)",
@@ -888,8 +888,20 @@
           "type": "pubkey"
         },
         {
-          "name": "protocol_token_per_usd",
-          "type": "u64"
+          "name": "kedolog_usdc_pool",
+          "type": "pubkey"
+        },
+        {
+          "name": "sol_usdc_pool",
+          "type": "pubkey"
+        },
+        {
+          "name": "kedolog_sol_pool",
+          "type": "pubkey"
+        },
+        {
+          "name": "usdc_mint",
+          "type": "pubkey"
         }
       ]
     },
@@ -1362,7 +1374,7 @@
         {
           "name": "create_pool_fee",
           "docs": [
-            "create pool fee account - uses the fee receiver from AMM config"
+            "create pool fee account - uses the unified fee receiver from AMM config"
           ],
           "writable": true
         },
@@ -2182,7 +2194,9 @@
         {
           "name": "protocol_token_treasury",
           "docs": [
-            "The treasury account to receive protocol token fees"
+            "The fee receiver account to receive protocol token (KEDOLOG) discount fees",
+            "This uses the unified fee_receiver from AmmConfig",
+            "CRITICAL: Must be owned by the fee_receiver wallet from amm_config"
           ],
           "writable": true
         },
@@ -2242,21 +2256,6 @@
             "The program account for the most recent oracle observation"
           ],
           "writable": true
-        },
-        {
-          "name": "input_token_oracle",
-          "docs": [
-            "REQUIRED: Price oracle for input token (e.g., Pyth SOL/USD feed)",
-            "This ensures accurate pricing for the swap token"
-          ]
-        },
-        {
-          "name": "protocol_token_oracle",
-          "docs": [
-            "OPTIONAL: Price oracle for protocol token (e.g., Pyth KEDOLOG/USD feed)",
-            "If not provided (SystemProgram), uses manual price from protocol_token_config",
-            "This allows launching before KEDOLOG is listed on Pyth"
-          ]
         }
       ],
       "args": [
@@ -2609,9 +2608,21 @@
           }
         },
         {
-          "name": "protocol_token_per_usd",
+          "name": "kedolog_usdc_pool",
           "type": {
-            "option": "u64"
+            "option": "pubkey"
+          }
+        },
+        {
+          "name": "sol_usdc_pool",
+          "type": {
+            "option": "pubkey"
+          }
+        },
+        {
+          "name": "kedolog_sol_pool",
+          "type": {
+            "option": "pubkey"
           }
         },
         {
@@ -3039,14 +3050,14 @@
           {
             "name": "protocol_owner",
             "docs": [
-              "Address of the protocol fee owner"
+              "Address of the protocol fee owner (admin - can update config)"
             ],
             "type": "pubkey"
           },
           {
-            "name": "fund_owner",
+            "name": "fee_receiver",
             "docs": [
-              "Address of the fund fee owner"
+              "UNIFIED FEE RECEIVER - receives ALL fees (pool creation, protocol, fund, KEDOLOG discount)"
             ],
             "type": "pubkey"
           },
@@ -3058,13 +3069,6 @@
             "type": "u64"
           },
           {
-            "name": "create_pool_fee_receiver",
-            "docs": [
-              "Address to receive pool creation fees"
-            ],
-            "type": "pubkey"
-          },
-          {
             "name": "padding",
             "docs": [
               "padding"
@@ -3072,7 +3076,7 @@
             "type": {
               "array": [
                 "u64",
-                11
+                12
               ]
             }
           }
@@ -3502,7 +3506,7 @@
           {
             "name": "discount_rate",
             "docs": [
-              "Discount rate when paying fees with protocol token (e.g., 2500 = 25% discount)"
+              "Discount rate when paying fees with protocol token (e.g., 2000 = 20% discount, 2500 = 25% discount)"
             ],
             "type": "u64"
           },
@@ -3521,19 +3525,32 @@
             "type": "pubkey"
           },
           {
-            "name": "price_oracle",
+            "name": "kedolog_usdc_pool",
             "docs": [
-              "Price oracle account (optional - if zero address, uses simple pool-based pricing)"
+              "KEDOLOG/USDC pool - primary price reference for KEDOLOG"
             ],
             "type": "pubkey"
           },
           {
-            "name": "protocol_token_per_usd",
+            "name": "sol_usdc_pool",
             "docs": [
-              "Manual price ratio: protocol_token_per_usd (scaled by 10^6)",
-              "Example: if 1 USD = 10 KEDOLOG, this would be 10_000_000"
+              "SOL/USDC pool - price reference for SOL"
             ],
-            "type": "u64"
+            "type": "pubkey"
+          },
+          {
+            "name": "kedolog_sol_pool",
+            "docs": [
+              "KEDOLOG/SOL pool - alternative price path for KEDOLOG"
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "usdc_mint",
+            "docs": [
+              "USDC mint address (for validation)"
+            ],
+            "type": "pubkey"
           },
           {
             "name": "padding",
@@ -3543,7 +3560,7 @@
             "type": {
               "array": [
                 "u64",
-                5
+                3
               ]
             }
           }

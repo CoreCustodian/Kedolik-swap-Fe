@@ -571,7 +571,7 @@ export const fetchPools = async (
   try {
     console.log('🔄 Fetching pools from RPC...');
     console.log('📍 PROGRAM_ID being used:', PROGRAM_ID.toString());
-    console.log('📍 Expected NEW program:', 'HmrfmeAq6w52AESpFhxMP1dwYDn8DHawmGmtYMhbrkcq');
+    console.log('📍 Expected program (unified fee receiver):', '2LVtzKZ7DwoowxeKnwmia6JGKdZy9cjAzH62RrburWtq');
     const program = getProgram(connection, wallet);
     console.log('📍 Program address from program object:', program.programId.toString());
     
@@ -644,6 +644,8 @@ export const fetchPools = async (
       console.log(`   Tokens: ${token0Symbol}/${token1Symbol}`);
       console.log(`   Token0: ${data.token0Mint.toString()}`);
       console.log(`   Token1: ${data.token1Mint.toString()}`);
+      console.log(`   🏦 Token0 Vault: ${data.token0Vault.toString()}`);
+      console.log(`   🏦 Token1 Vault: ${data.token1Vault.toString()}`);
       
       poolInfos.push({
         address: pool.publicKey,
@@ -678,6 +680,36 @@ export const fetchPools = async (
     };
     
     console.log('✅ Pools cached:', poolInfos.length, 'pools');
+    
+    // Find and display KEDOLOG/USDC pool vault addresses
+    const kedologPool = poolInfos.find(p => 
+      (p.token0Symbol === 'KEDOLOG' && p.token1Symbol === 'USDC') ||
+      (p.token0Symbol === 'USDC' && p.token1Symbol === 'KEDOLOG')
+    );
+    
+    if (kedologPool) {
+      console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('📝 KEDOLOG/USDC POOL - COPY THESE ADDRESSES:');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+      console.log('Pool Address (for price oracle):');
+      console.log(kedologPool.address.toString());
+      console.log('');
+      const kedologVault = kedologPool.token0Symbol === 'KEDOLOG' ? kedologPool.token0Vault : kedologPool.token1Vault;
+      const usdcVault = kedologPool.token0Symbol === 'USDC' ? kedologPool.token0Vault : kedologPool.token1Vault;
+      console.log('KEDOLOG Vault:');
+      console.log(kedologVault.toString());
+      console.log('');
+      console.log('USDC Vault:');
+      console.log(usdcVault.toString());
+      console.log('');
+      console.log('📝 Update src/config/addresses.ts lines 47, 54, 61:');
+      console.log('');
+      console.log(`export const KEDOLOG_USDC_POOL = new PublicKey('${kedologPool.address.toString()}');`);
+      console.log(`export const KEDOLOG_VAULT = new PublicKey('${kedologVault.toString()}');`);
+      console.log(`export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('${usdcVault.toString()}');`);
+      console.log('');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    }
     
     return poolInfos;
   } catch (error) {
@@ -1194,13 +1226,45 @@ export const swapWithKedologDiscount = async (
       throw new Error('You need a KEDOLOG token account. Please acquire some KEDOLOG tokens first.');
     }
     
-    // Get treasury KEDOLOG account
+    // Get treasury KEDOLOG account from AMM config fee_receiver (NEW!)
+    // The contract now validates that treasury.owner == amm_config.fee_receiver
+    console.log('💰 Fetching fee receiver from AMM config...');
+    const ammConfigData = await (program.account as any).ammConfig.fetch(AMM_CONFIG);
+    const feeReceiver = ammConfigData.feeReceiver || ammConfigData.fundOwner;
+    
+    if (!feeReceiver) {
+      throw new Error('Could not find fee receiver in AMM config');
+    }
+    
+    console.log('✅ Fee receiver from AMM config:', feeReceiver.toString());
+    
+    // Get the fee receiver's KEDOLOG token account (this is the correct treasury)
     const treasuryKedologAccount = await getAssociatedTokenAddress(
       config.protocolTokenMint,
-      config.treasury,
+      feeReceiver,
       false,
       protocolTokenProgram
     );
+    
+    console.log('💰 Treasury KEDOLOG account:', treasuryKedologAccount.toString());
+    
+    // Check if treasury KEDOLOG account exists, create if needed
+    const treasuryAccountInfo = await connection.getAccountInfo(treasuryKedologAccount);
+    if (!treasuryAccountInfo) {
+      console.log('⚠️ Treasury KEDOLOG account does not exist, creating it...');
+      transaction.add(
+        createAssociatedTokenAccountInstruction(
+          walletPublicKey,
+          treasuryKedologAccount,
+          feeReceiver,
+          config.protocolTokenMint,
+          protocolTokenProgram
+        )
+      );
+      console.log('✅ Treasury account creation instruction added');
+    } else {
+      console.log('✅ Treasury KEDOLOG account exists');
+    }
     
       // Step 2: Build the swap instruction with KEDOLOG discount
       console.log('🚀 Building KEDOLOG discount swap instruction...');
@@ -1212,13 +1276,68 @@ export const swapWithKedologDiscount = async (
       
       // Fetch the pool data to get vault addresses
       const kedologPoolData = await (program.account as any).poolState.fetch(kedologPricePool);
-      const kedologVault = kedologPoolData.token0Vault; // KEDOLOG vault
-      const usdcVault = kedologPoolData.token1Vault; // USDC vault
       
-      console.log('📦 Pool vaults:', {
+      // Get token mints to detect vault order
+      const token0Mint = kedologPoolData.token0Mint || kedologPoolData.mint0;
+      
+      // Detect which vault is KEDOLOG and which is USDC by checking mint addresses
+      const isToken0Kedolog = token0Mint?.equals(KEDOLOG_CONFIG.MINT);
+      
+      let kedologVault: PublicKey;
+      let usdcVault: PublicKey;
+      
+      if (isToken0Kedolog) {
+        // KEDOLOG is token0, USDC is token1
+        kedologVault = kedologPoolData.token0Vault;
+        usdcVault = kedologPoolData.token1Vault;
+        console.log('📦 Pool vaults: KEDOLOG is token0, USDC is token1');
+      } else {
+        // USDC is token0, KEDOLOG is token1
+        kedologVault = kedologPoolData.token1Vault;
+        usdcVault = kedologPoolData.token0Vault;
+        console.log('📦 Pool vaults: USDC is token0, KEDOLOG is token1');
+      }
+      
+      console.log('📦 Vault addresses:', {
         kedologVault: kedologVault.toString(),
         usdcVault: usdcVault.toString(),
       });
+      
+      // IMPORTANT: Contract expects vaults in POOL ORDER (token_0, token_1), not semantic order!
+      // The contract's get_pool_price function has parameters: token_0_vault, token_1_vault
+      // So we must pass them in the same order as the pool, then the contract detects which is which
+      const token0Vault = kedologPoolData.token0Vault;
+      const token1Vault = kedologPoolData.token1Vault;
+      
+      console.log('📦 KEDOLOG/USDC pool vaults (will pass in remainingAccounts):', {
+        token0Vault: token0Vault.toString(),
+        token1Vault: token1Vault.toString(),
+      });
+      
+      // DEBUG: Show EXACTLY what will be passed
+      console.log('');
+      console.log('🔍 DEBUG - remainingAccounts ORDER:');
+      console.log('  [0] KEDOLOG/USDC POOL:', kedologPricePool.toString());
+      console.log('  [1] KEDOLOG/USDC Vault0:', token0Vault.toString());
+      console.log('  [2] KEDOLOG/USDC Vault1:', token1Vault.toString());
+      console.log('  [3] SOL/USDC POOL:', ADDRESSES.SOL_USDC_POOL.toString());
+      console.log('  [4] SOL/USDC Vault0:', ADDRESSES.SOL_VAULT.toString());
+      console.log('  [5] SOL/USDC Vault1:', ADDRESSES.USDC_VAULT_IN_SOL_POOL.toString());
+      console.log('');
+      
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // 🆕 UNIVERSAL PRICING SYSTEM
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // The new contract NO LONGER uses oracle accounts (inputTokenOracle, protocolTokenOracle).
+      // Instead, it uses reference liquidity pools passed via remainingAccounts.
+      // The contract automatically:
+      //   - Reads pool reserves to calculate token prices
+      //   - Detects token ordering (token_0 vs token_1)
+      //   - Supports multi-hop pricing (Token → SOL → USDC)
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      
+      console.log('🆕 Using universal pool-based pricing system (no oracle accounts!)');
+      console.log('📊 Contract will read reference pool reserves directly');
       
       const swapInstruction = await program.methods
         .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
@@ -1241,17 +1360,30 @@ export const swapWithKedologDiscount = async (
           outputTokenMint: outputMint,
           protocolTokenMint: config.protocolTokenMint,
           observationState,
-          // No oracle for input token (uses 1:1 USD parity)
-          inputTokenOracle: SystemProgram.programId,
-          // Pass pool as protocol token oracle for pool-based pricing
-          protocolTokenOracle: kedologPricePool,
+          // ⚠️ NOTE: inputTokenOracle and protocolTokenOracle REMOVED in new contract!
+          // Contract now uses reference pools passed via remainingAccounts
         })
         .remainingAccounts([
-          // Pass pool vaults so contract can read reserves
-          { pubkey: kedologVault, isSigner: false, isWritable: false },
-          { pubkey: usdcVault, isSigner: false, isWritable: false },
+          // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          // 📦 REFERENCE POOLS - Contract reads these to calculate token prices
+          // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          
+          // 1. KEDOLOG/USDC pool (always required for KEDOLOG fee calculation)
+          { pubkey: kedologPricePool, isSigner: false, isWritable: false },
+          { pubkey: token0Vault, isSigner: false, isWritable: false },
+          { pubkey: token1Vault, isSigner: false, isWritable: false },
+          
+          // 2. SOL/USDC pool (required for SOL swaps to get accurate SOL price)
+          { pubkey: ADDRESSES.SOL_USDC_POOL, isSigner: false, isWritable: false },
+          { pubkey: ADDRESSES.SOL_VAULT, isSigner: false, isWritable: false },
+          { pubkey: ADDRESSES.USDC_VAULT_IN_SOL_POOL, isSigner: false, isWritable: false },
         ])
         .instruction();
+      
+      console.log('✅ Swap instruction built with BOTH reference pools:', {
+        kedologUsdcPool: kedologPricePool.toString(),
+        solUsdcPool: ADDRESSES.SOL_USDC_POOL.toString(),
+      });
       
       transaction.add(swapInstruction);
     
@@ -1261,6 +1393,47 @@ export const swapWithKedologDiscount = async (
       const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
       transaction.add(unwrapInstruction);
     }
+    
+    // CRITICAL DEBUG: Inspect the actual transaction object
+    console.log('');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('🚨 CRITICAL CHECK - INSPECTING ACTUAL TRANSACTION');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('Transaction has', transaction.instructions.length, 'instructions');
+    
+    // Find the swap instruction (might be last or second-to-last if unwrap is added)
+    let swapInstrIndex = transaction.instructions.length - 1;
+    let actualSwapInstr = transaction.instructions[swapInstrIndex];
+    
+    // If last instruction is unwrap, swap is second-to-last
+    if (actualSwapInstr.programId.toString() === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') {
+      swapInstrIndex = transaction.instructions.length - 2;
+      actualSwapInstr = transaction.instructions[swapInstrIndex];
+      console.log('Swap instruction is at index', swapInstrIndex, '(unwrap is last)');
+    }
+    
+    console.log('Swap instruction programId:', actualSwapInstr.programId.toString());
+    console.log('Swap instruction has', actualSwapInstr.keys.length, 'account keys');
+    
+    // The swap instruction should have all the accounts
+    // Log the last 6 keys (which should be the remainingAccounts)
+    const totalKeys = actualSwapInstr.keys.length;
+    console.log('');
+    console.log('🔍 Last 6 account keys (should be remainingAccounts):');
+    for (let i = Math.max(0, totalKeys - 6); i < totalKeys; i++) {
+      const key = actualSwapInstr.keys[i];
+      console.log(`  [${i}] ${key.pubkey.toString()} (isSigner: ${key.isSigner}, isWritable: ${key.isWritable})`);
+    }
+    console.log('');
+    console.log('📋 Expected remainingAccounts order:');
+    console.log('  [...] KEDOLOG/USDC Pool: BE1AdLaWKGPV61cmdV2W6aw7GY5fBRc59noUascPBje');
+    console.log('  [...] KEDOLOG Vault0: Gg2roHP4aRbNvjbQRj7cxB1XvLKdBw45UkrNn9eeC8DJ');
+    console.log('  [...] USDC Vault1: 2yVnJLxM9Dw8YHxrEQQgvPJ12RXYXcqdYyLXftYzbJCt');
+    console.log('  [...] SOL/USDC Pool: 4pS9NNCmuSxCeE2KStwnVLujouoAPRuFJnmKd12fjs1U');
+    console.log('  [...] SOL Vault0: E2TxGdGJyk1yWG3oYMcRtcw8hcQiLGugjwCxWYTFE3S8');
+    console.log('  [...] USDC Vault1: J2219iKwxifoweHJW5beAmT7KYWzUpqjscQviMKew4Qa');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('');
     
     // Get fresh blockhash - use 'processed' for freshest possible blockhash
     console.log('📡 Getting fresh blockhash...');
@@ -1358,9 +1531,19 @@ export const fetchKedologPrice = async (
     const token0VaultAddress = poolData.token0Vault || poolData.token_0_vault;
     const token1VaultAddress = poolData.token1Vault || poolData.token_1_vault;
     
-    // Get decimals
-    const token0Decimals = poolData.mint0Decimals || poolData.mint_0_decimals || 9;
-    const token1Decimals = poolData.mint1Decimals || poolData.mint_1_decimals || 6;
+    // Get decimals from mint accounts (DON'T use fallbacks - fetch actual decimals!)
+    const { getMint } = await import('@solana/spl-token');
+    const token0MintInfo = await getMint(connection, token0Mint);
+    const token1MintInfo = await getMint(connection, token1Mint);
+    const token0Decimals = token0MintInfo.decimals;
+    const token1Decimals = token1MintInfo.decimals;
+    
+    console.log('💰 Actual decimals from mints:', {
+      token0Decimals,
+      token1Decimals,
+      token0Mint: token0Mint.toString(),
+      token1Mint: token1Mint.toString(),
+    });
     
     if (!token0VaultAddress || !token1VaultAddress) {
       console.error('💰 Could not find vault addresses in pool data');
@@ -2280,9 +2463,18 @@ export const createPool = async (
     const token0Vault = getTokenVault(poolState, token0);
     const token1Vault = getTokenVault(poolState, token1);
     const observationState = getObservationState(poolState);
-    // Direct SOL transfer to fee receiver wallet (no WSOL wrapping needed!)
-    // Pool creation fee goes to configured receiver address
-    const createPoolFee = ADDRESSES.CREATE_POOL_FEE_RECEIVER;
+    
+    // Fetch the fee receiver from AMM config (dynamically, not hardcoded!)
+    console.log('🔍 Fetching fee receiver from AMM config...');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ammConfigData = await (program.account as any).ammConfig.fetch(selectedAmmConfig);
+    // Try new unified fee_receiver field first, fallback to old fields
+    const feeReceiverPubkey = ammConfigData.feeReceiver || ammConfigData.fundOwner || ammConfigData.createPoolFeeReceiver;
+    if (!feeReceiverPubkey) {
+      throw new Error('Could not find fee receiver in AMM config');
+    }
+    const createPoolFee = feeReceiverPubkey;
+    console.log('✅ Fee receiver from config:', createPoolFee.toString());
     
     // Determine the correct token programs FIRST (before getting ATAs)
     const token0Info = await connection.getAccountInfo(token0);
