@@ -2,11 +2,13 @@ import { PublicKey } from '@solana/web3.js';
 import { 
   SOL_MINT,
   KEDOLOG_MINT, 
-  USDC_MINT, 
-  WSOL_MINT,
-  ETH_MINT,
-  BTC_MINT 
+  USDC_MINT
 } from './addresses';
+
+// For test tokens, define mints locally (not in addresses.ts since they're dynamic)
+const WSOL_MINT_TEST = new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv');
+const ETH_MINT_TEST = new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3');
+const BTC_MINT_TEST = new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa');
 
 export interface TokenInfo {
   mint: PublicKey;
@@ -44,19 +46,19 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     decimals: 6,
   },
   WSOL: {
-    mint: WSOL_MINT, // Imported from addresses.ts
+    mint: WSOL_MINT_TEST, // Test token (dynamic pool discovery)
     symbol: 'WSOL',
     name: 'Wrapped SOL (Test)',
     decimals: 9,
   },
   ETH: {
-    mint: ETH_MINT, // Imported from addresses.ts
+    mint: ETH_MINT_TEST, // Test token (dynamic pool discovery)
     symbol: 'ETH',
     name: 'Ethereum (Test)',
     decimals: 18,
   },
   BTC: {
-    mint: BTC_MINT, // Imported from addresses.ts
+    mint: BTC_MINT_TEST, // Test token (dynamic pool discovery)
     symbol: 'BTC',
     name: 'Bitcoin (Test)',
     decimals: 8,

@@ -16,13 +16,14 @@ import {
   WSOL_MINT,
 } from '../utils/amm';
 import { KEDOLOG_CONFIG } from '../config/fees';
-import { SOL_MINT, KEDOLOG_MINT } from '../config/addresses';
+import { SOL_MINT, KEDOLOG_MINT, USDC_MINT } from '../config/addresses';
 import { 
   findBestRoute, 
   executeMultiHopSwap,
   SwapRoute, 
   calculateRouteOutput 
 } from '../utils/routing';
+import { isKedologDiscountAvailable, KedologAvailability } from '../utils/swapRestrictions';
 
 const Swap = () => {
   const { connected, publicKey } = useWallet();
@@ -58,6 +59,8 @@ const Swap = () => {
   const [useKedologDiscount, setUseKedologDiscount] = useState(false);
   const [kedologBalance, setKedologBalance] = useState<number>(0);
   const [isLoadingKedologFee, setIsLoadingKedologFee] = useState(false);
+  const [kedologAvailability, setKedologAvailability] = useState<KedologAvailability>({ available: true });
+  const [poolAddress, setPoolAddress] = useState<string | null>(null);
   const [estimatedKedologFee, setEstimatedKedologFee] = useState<{
     kedologFee: number;
     discountedFeeUsd: number;
@@ -195,6 +198,7 @@ const Swap = () => {
             reserve1: pool.token1Reserve,
             tradeFeeRate: pool.tradeFeeRate,
           });
+          setPoolAddress(pool.address.toString());
           setIsMultiHop(false);
           setSwapRoute(null);
         } else {
@@ -245,6 +249,30 @@ const Swap = () => {
     const interval = setInterval(fetchPoolData, 15000);
     return () => clearInterval(interval);
   }, [fromToken, toToken, connection, wallet, poolRefreshTrigger]);
+  
+  // Check KEDOLOG discount availability when tokens change
+  useEffect(() => {
+    try {
+      const { PublicKey } = require('@solana/web3.js');
+      const poolPubkey = poolAddress ? new PublicKey(poolAddress) : undefined;
+      
+      const availability = isKedologDiscountAvailable(
+        fromToken.mint,
+        toToken.mint,
+        poolPubkey
+      );
+      
+      setKedologAvailability(availability);
+      
+      // Auto-disable if not available (but don't show toast to avoid spam)
+      if (!availability.available && useKedologDiscount) {
+        setUseKedologDiscount(false);
+      }
+    } catch (error) {
+      console.error('Error checking KEDOLOG availability:', error);
+      setKedologAvailability({ available: true }); // Default to available on error
+    }
+  }, [fromToken, toToken, poolAddress, useKedologDiscount]);
   
   // Calculate quote when amount changes (handles both direct and multi-hop)
   useEffect(() => {
@@ -440,10 +468,92 @@ const Swap = () => {
           inputTokenPrice = quoteData.amountOut / amount;
           console.log(`💰 Estimated ${fromToken.symbol} price from quote: $${inputTokenPrice.toFixed(2)} (${amount} ${fromToken.symbol} → ${quoteData.amountOut.toFixed(2)} ${toToken.symbol})`);
         } else {
-          // Both tokens are NOT stablecoins AND input is NOT SOL/KEDOLOG
-          // Use quote as USD estimate only if output is stablecoin
-          console.log(`⚠️ Cannot determine USD price for ${fromToken.symbol}, using default: $1`);
-          inputTokenPrice = 1;
+          // Try to calculate token price via intermediate pools (TOKEN → SOL → USDC)
+          try {
+            console.log(`🔍 Calculating ${fromToken.symbol} price via pool discovery...`);
+            
+            // Get SOL price first
+            const { getSolPrice } = await import('../utils/prices');
+            const solPrice = await getSolPrice(connection);
+            console.log(`💰 SOL price: $${solPrice.toFixed(2)}`);
+            
+            // Try to find TOKEN/SOL pool
+            const { fetchPools } = await import('../utils/amm');
+            const allPools = await fetchPools(connection, wallet);
+            
+            const tokenSolPool = allPools.find((pool: any) => 
+              (pool.token0Mint.equals(fromToken.mint) && pool.token1Mint.equals(SOL_MINT)) ||
+              (pool.token1Mint.equals(fromToken.mint) && pool.token0Mint.equals(SOL_MINT))
+            );
+            
+            if (tokenSolPool) {
+              // Calculate TOKEN price in SOL
+              const { getAccount } = await import('@solana/spl-token');
+              
+              const isToken0Input = tokenSolPool.token0Mint.equals(fromToken.mint);
+              const tokenVault = isToken0Input ? tokenSolPool.token0Vault : tokenSolPool.token1Vault;
+              const solVault = isToken0Input ? tokenSolPool.token1Vault : tokenSolPool.token0Vault;
+              
+              const tokenVaultAccount = await getAccount(connection, tokenVault);
+              const solVaultAccount = await getAccount(connection, solVault);
+              
+              const tokenDecimals = fromToken.decimals || 9;
+              const solDecimals = 9;
+              
+              const tokenReserve = Number(tokenVaultAccount.amount) / Math.pow(10, tokenDecimals);
+              const solReserve = Number(solVaultAccount.amount) / Math.pow(10, solDecimals);
+              
+              // Price = SOL reserve / TOKEN reserve * SOL price
+              const tokenPriceInSol = solReserve / tokenReserve;
+              inputTokenPrice = tokenPriceInSol * solPrice;
+              
+              console.log(`💰 ${fromToken.symbol} price calculated:`, {
+                tokenReserve: tokenReserve.toFixed(4),
+                solReserve: solReserve.toFixed(4),
+                priceInSol: tokenPriceInSol.toFixed(6),
+                priceInUsd: inputTokenPrice.toFixed(2),
+              });
+            } else {
+              // Try TOKEN/USDC pool as fallback
+              const tokenUsdcPool = allPools.find((pool: any) => 
+                (pool.token0Mint.equals(fromToken.mint) && pool.token1Mint.equals(USDC_MINT)) ||
+                (pool.token1Mint.equals(fromToken.mint) && pool.token0Mint.equals(USDC_MINT))
+              );
+              
+              if (tokenUsdcPool) {
+                const { getAccount } = await import('@solana/spl-token');
+                
+                const isToken0Input = tokenUsdcPool.token0Mint.equals(fromToken.mint);
+                const tokenVault = isToken0Input ? tokenUsdcPool.token0Vault : tokenUsdcPool.token1Vault;
+                const usdcVault = isToken0Input ? tokenUsdcPool.token1Vault : tokenUsdcPool.token0Vault;
+                
+                const tokenVaultAccount = await getAccount(connection, tokenVault);
+                const usdcVaultAccount = await getAccount(connection, usdcVault);
+                
+                const tokenDecimals = fromToken.decimals || 9;
+                const usdcDecimals = 6;
+                
+                const tokenReserve = Number(tokenVaultAccount.amount) / Math.pow(10, tokenDecimals);
+                const usdcReserve = Number(usdcVaultAccount.amount) / Math.pow(10, usdcDecimals);
+                
+                // Price = USDC reserve / TOKEN reserve
+                inputTokenPrice = usdcReserve / tokenReserve;
+                
+                console.log(`💰 ${fromToken.symbol} price from USDC pool:`, {
+                  tokenReserve: tokenReserve.toFixed(4),
+                  usdcReserve: usdcReserve.toFixed(2),
+                  priceInUsd: inputTokenPrice.toFixed(2),
+                });
+              } else {
+                console.warn(`⚠️ No pool found for ${fromToken.symbol}, using default: $1`);
+                inputTokenPrice = 1;
+              }
+            }
+          } catch (error) {
+            console.error(`Error calculating ${fromToken.symbol} price:`, error);
+            console.log(`⚠️ Using fallback price: $1`);
+            inputTokenPrice = 1;
+          }
         }
         
         if (isMultiHop && swapRoute) {
@@ -1021,21 +1131,33 @@ const Swap = () => {
                         showToast('KEDOLOG discount is currently only available for direct swaps', 'warning');
                         return;
                       }
+                      if (!kedologAvailability.available) {
+                        showToast(kedologAvailability.reason || 'KEDOLOG discount not available for this pair', 'warning');
+                        return;
+                      }
                       setUseKedologDiscount(e.target.checked);
                     }}
-                    disabled={isMultiHop}
-                    className={`mt-0.5 w-5 h-5 rounded border-purple-500/50 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 ${isMultiHop ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                    disabled={isMultiHop || !kedologAvailability.available}
+                    className={`mt-0.5 w-5 h-5 rounded border-purple-500/50 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 ${(isMultiHop || !kedologAvailability.available) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
                   />
                   <div className="flex-1">
-                <label htmlFor="kedolog-discount" className={`text-sm font-semibold text-white ${isMultiHop ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} flex items-center gap-2`}>
+                <label htmlFor="kedolog-discount" className={`text-sm font-semibold text-white ${(isMultiHop || !kedologAvailability.available) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} flex items-center gap-2`}>
                   💰 Pay protocol fee with KEDOLOG (Save 25%!)
                   {isMultiHop && <span className="text-[10px] text-yellow-400">(Direct swaps only)</span>}
+                  {!kedologAvailability.available && !isMultiHop && <span className="text-[10px] text-orange-400">(Unavailable for this pair)</span>}
                 </label>
                 <p className="text-xs text-gray-300 mt-1">
-                  {isMultiHop 
-                    ? 'Currently available for direct swaps only. Multi-hop support coming soon!'
-                    : 'Get 25% discount on protocol fees and receive more output tokens'
+                  {!kedologAvailability.available && !isMultiHop
+                    ? (kedologAvailability.reason || 'Not available for this pair')
+                    : isMultiHop 
+                      ? 'Currently available for direct swaps only. Multi-hop support coming soon!'
+                      : 'Get 25% discount on protocol fees and receive more output tokens'
                   }
+                  {!kedologAvailability.available && kedologAvailability.suggestion && (
+                    <span className="block mt-1 text-xs text-purple-300">
+                      💡 {kedologAvailability.suggestion}
+                    </span>
+                  )}
                 </p>
                     
                     {useKedologDiscount && (

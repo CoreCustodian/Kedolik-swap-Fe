@@ -63,32 +63,11 @@ export const KEDOLOG_MINT = new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1
  */
 export const USDC_MINT = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32');
 
-/**
- * WSOL token mint address (Test Token)
- * Wrapped SOL for testing purposes
- * 
- * Devnet: 6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv
- * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
- */
-export const WSOL_MINT = new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv');
-
-/**
- * ETH token mint address (Test Token)
- * Test Ethereum token on Devnet
- * 
- * Devnet: CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3
- * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
- */
-export const ETH_MINT = new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3');
-
-/**
- * BTC token mint address (Test Token)
- * Test Bitcoin token on Devnet
- * 
- * Devnet: ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa
- * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
- */
-export const BTC_MINT = new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa');
+// ============================================================================
+// NOTE: No need to hardcode other token mints!
+// The system dynamically discovers pools for any token at runtime.
+// Just add the token to your frontend token list and it will work automatically.
+// ============================================================================
 
 /**
  * KEDOLOG/USDC liquidity pool
@@ -131,6 +110,12 @@ export const SOL_VAULT = new PublicKey('E2TxGdGJyk1yWG3oYMcRtcw8hcQiLGugjwCxWYTF
  * UPDATED: Nov 10, 2025
  */
 export const USDC_VAULT_IN_SOL_POOL = new PublicKey('J2219iKwxifoweHJW5beAmT7KYWzUpqjscQviMKew4Qa');
+
+// ============================================================================
+// DYNAMIC POOL DISCOVERY
+// ============================================================================
+// All intermediate pools (BTC/SOL, ETH/SOL, etc.) are discovered at RUNTIME
+// No need to hardcode pool addresses - the system finds them automatically!
 
 // ============================================================================
 // AMM CONFIGURATION

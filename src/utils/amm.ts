@@ -61,8 +61,98 @@ export const getFeeConfigByAddress = (address: PublicKey): FeeConfig | undefined
 // re-export if needed elsewhere
 export { getAmmConfigAddress } from '../config/fees';
 
- // Wrapped SOL (WSOL) mint address - same as NATIVE_MINT  
+// Wrapped SOL (WSOL) mint address - same as NATIVE_MINT  
 export const WSOL_MINT = NATIVE_MINT;
+
+/**
+ * Dynamically finds intermediate pool for 1-hop pricing at RUNTIME
+ * 
+ * @param inputMint - The input token mint
+ * @param connection - Solana connection
+ * @param program - Anchor program instance
+ * @returns Object with intermediate pool info, or null if direct pricing is possible
+ */
+interface IntermediatePoolInfo {
+  poolAddress: PublicKey;
+  tokenVault: PublicKey;  // The vault for the input token (e.g., BTC vault in BTC/SOL pool)
+  solVault: PublicKey;    // The SOL vault in the intermediate pool
+}
+
+// Cache for discovered intermediate pools to avoid repeated searches
+const intermediatePoolCache = new Map<string, IntermediatePoolInfo | null>();
+
+async function findIntermediatePool(
+  inputMint: PublicKey,
+  connection: any,
+  program: any
+): Promise<IntermediatePoolInfo | null> {
+  // Direct USDC swaps don't need intermediate pools
+  if (inputMint.equals(ADDRESSES.USDC_MINT)) {
+    return null;
+  }
+  
+  // Direct SOL swaps don't need intermediate pools (SOL/USDC pool is already passed)
+  if (inputMint.equals(ADDRESSES.SOL_MINT)) {
+    return null;
+  }
+  
+  // KEDOLOG doesn't need intermediate pools (KEDOLOG/USDC pool is already passed)
+  if (inputMint.equals(ADDRESSES.KEDOLOG_MINT)) {
+    return null;
+  }
+  
+  // Check cache first
+  const cacheKey = inputMint.toString();
+  if (intermediatePoolCache.has(cacheKey)) {
+    return intermediatePoolCache.get(cacheKey) || null;
+  }
+  
+  console.log(`🔍 Searching for intermediate pool: ${getTokenSymbol(inputMint)}/SOL...`);
+  
+  try {
+    // Get all pools from cache or fetch
+    const pools = await fetchPools(connection, program);
+    
+    // Find a pool that has (inputToken, SOL) or (SOL, inputToken)
+    const intermediatePool = pools.find(pool => {
+      const hasInputToken = pool.token0Mint.equals(inputMint) || pool.token1Mint.equals(inputMint);
+      const hasSol = pool.token0Mint.equals(ADDRESSES.SOL_MINT) || pool.token1Mint.equals(ADDRESSES.SOL_MINT);
+      return hasInputToken && hasSol;
+    });
+    
+    if (!intermediatePool) {
+      console.warn(`⚠️ No ${getTokenSymbol(inputMint)}/SOL pool found for 1-hop pricing`);
+      intermediatePoolCache.set(cacheKey, null);
+      return null;
+    }
+    
+    // Determine vault order based on token positions
+    const isToken0Input = intermediatePool.token0Mint.equals(inputMint);
+    const tokenVault = isToken0Input ? intermediatePool.token0Vault : intermediatePool.token1Vault;
+    const solVault = isToken0Input ? intermediatePool.token1Vault : intermediatePool.token0Vault;
+    
+    const result: IntermediatePoolInfo = {
+      poolAddress: intermediatePool.address,
+      tokenVault,
+      solVault,
+    };
+    
+    console.log(`✅ Found intermediate pool:`, {
+      pool: result.poolAddress.toString(),
+      tokenVault: result.tokenVault.toString(),
+      solVault: result.solVault.toString(),
+    });
+    
+    // Cache the result
+    intermediatePoolCache.set(cacheKey, result);
+    
+    return result;
+  } catch (error) {
+    console.error(`❌ Error finding intermediate pool:`, error);
+    intermediatePoolCache.set(cacheKey, null);
+    return null;
+  }
+}
 
 // Helper functions for wrapping/unwrapping SOL
 export const isNativeSOL = (mint: PublicKey): boolean => {
@@ -739,12 +829,10 @@ export const getTokenSymbol = (mint: PublicKey): string => {
   // Fallback using centralized addresses from config
   if (mint.equals(ADDRESSES.KEDOLOG_MINT)) return 'KEDOLOG';
   if (mint.equals(ADDRESSES.USDC_MINT)) return 'USDC';
-  if (mint.equals(ADDRESSES.ETH_MINT)) return 'ETH';
-  if (mint.equals(ADDRESSES.BTC_MINT)) return 'BTC';
   if (mint.equals(ADDRESSES.SOL_MINT)) return 'SOL';
-  if (mint.equals(ADDRESSES.WSOL_MINT)) return 'WSOL';
   
-  return 'UNKNOWN';
+  // For unknown tokens, return shortened address
+  return mint.toString().substring(0, 8) + '...';
 };
 
 // Calculate swap output
@@ -879,8 +967,12 @@ export const swapBaseInput = async (
       isInputToken0,
     });
     
-    const amountInBN = new BN(amountIn * Math.pow(10, inputDecimals));
-    const minAmountOutBN = new BN(minimumAmountOut * Math.pow(10, outputDecimals));
+    // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
+    const amountInScaled = Math.floor(amountIn * Math.pow(10, inputDecimals));
+    const minAmountOutScaled = Math.floor(minimumAmountOut * Math.pow(10, outputDecimals));
+    // Use toFixed(0) to prevent scientific notation for large numbers
+    const amountInBN = new BN(amountInScaled.toFixed(0));
+    const minAmountOutBN = new BN(minAmountOutScaled.toFixed(0));
     
     console.log('📤 Preparing swap transaction:', {
       amountInBN: amountInBN.toString(),
@@ -1089,8 +1181,12 @@ export const swapWithKedologDiscount = async (
     const inputDecimals = inputTokenData?.decimals || 9;
     const outputDecimals = outputTokenData?.decimals || 9;
     
-    const amountInBN = new BN(amountIn * Math.pow(10, inputDecimals));
-    const minAmountOutBN = new BN(minimumAmountOut * Math.pow(10, outputDecimals));
+    // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
+    const amountInScaled = Math.floor(amountIn * Math.pow(10, inputDecimals));
+    const minAmountOutScaled = Math.floor(minimumAmountOut * Math.pow(10, outputDecimals));
+    // Use toFixed(0) to prevent scientific notation for large numbers
+    const amountInBN = new BN(amountInScaled.toFixed(0));
+    const minAmountOutBN = new BN(minAmountOutScaled.toFixed(0));
     
     // Calculate expected protocol fee for debugging
     const protocolFeeRate = 500; // 0.05% in basis points
@@ -1306,17 +1402,6 @@ export const swapWithKedologDiscount = async (
         token1Vault: token1Vault.toString(),
       });
       
-      // DEBUG: Show EXACTLY what will be passed
-      console.log('');
-      console.log('🔍 DEBUG - remainingAccounts ORDER:');
-      console.log('  [0] KEDOLOG/USDC POOL:', kedologPricePool.toString());
-      console.log('  [1] KEDOLOG/USDC Vault0:', token0Vault.toString());
-      console.log('  [2] KEDOLOG/USDC Vault1:', token1Vault.toString());
-      console.log('  [3] SOL/USDC POOL:', ADDRESSES.SOL_USDC_POOL.toString());
-      console.log('  [4] SOL/USDC Vault0:', ADDRESSES.SOL_VAULT.toString());
-      console.log('  [5] SOL/USDC Vault1:', ADDRESSES.USDC_VAULT_IN_SOL_POOL.toString());
-      console.log('');
-      
       // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       // 🆕 UNIVERSAL PRICING SYSTEM
       // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1330,6 +1415,72 @@ export const swapWithKedologDiscount = async (
       
       console.log('🆕 Using universal pool-based pricing system (no oracle accounts!)');
       console.log('📊 Contract will read reference pool reserves directly');
+      
+      // Build remainingAccounts dynamically based on input token
+      const remainingAccounts = [
+        // 1. KEDOLOG/USDC pool (always required for KEDOLOG fee calculation)
+        { pubkey: kedologPricePool, isSigner: false, isWritable: false },
+        { pubkey: token0Vault, isSigner: false, isWritable: false },
+        { pubkey: token1Vault, isSigner: false, isWritable: false },
+      ];
+      
+      // 2. Dynamically find intermediate pool for 1-hop pricing (e.g., BTC → SOL → USDC)
+      console.log(`🔍 Checking if ${getTokenSymbol(inputMint)} needs intermediate pool...`);
+      const intermediatePool = await findIntermediatePool(inputMint, connection, program);
+      let isIntermediatePoolSameAsSwapPool = false;
+      
+      if (intermediatePool) {
+        isIntermediatePoolSameAsSwapPool = intermediatePool.poolAddress.equals(poolState);
+        
+        console.log('🔀 1-hop pricing required! Adding intermediate pool VAULTS:', {
+          token: getTokenSymbol(inputMint),
+          poolAddress: intermediatePool.poolAddress.toString(),
+          isSameAsSwapPool: isIntermediatePoolSameAsSwapPool,
+        });
+        
+        // IMPORTANT: Contract expects ONLY VAULTS, not pool addresses!
+        // Format: [0] KEDOLOG/USDC pool, [1-2] KEDOLOG vaults, [3-4] intermediate vaults, [5-6] SOL/USDC vaults
+        remainingAccounts.push(
+          { pubkey: intermediatePool.tokenVault, isSigner: false, isWritable: false },
+          { pubkey: intermediatePool.solVault, isSigner: false, isWritable: false },
+        );
+        
+        if (isIntermediatePoolSameAsSwapPool) {
+          console.log('  ⚠️ Note: This pool is ALSO the swap pool (will appear twice in transaction)');
+        }
+      } else {
+        console.log(`✅ ${getTokenSymbol(inputMint)} uses direct pricing (no intermediate pool needed)`);
+      }
+      
+      // 3. Add SOL/USDC pool + vaults for final USD conversion
+      // Check if intermediate pool already provides SOL → USDC path
+      const intermediatePoolProvidesSolPrice = intermediatePool && 
+        (intermediatePool.poolAddress.equals(ADDRESSES.SOL_USDC_POOL) ||
+         intermediatePool.solVault.equals(ADDRESSES.SOL_VAULT));
+      
+      const isSolUsdcPoolSameAsSwapPool = ADDRESSES.SOL_USDC_POOL.equals(poolState);
+      
+      if (!isSolUsdcPoolSameAsSwapPool && !intermediatePoolProvidesSolPrice) {
+        // IMPORTANT: Contract expects ONLY VAULTS, not pool address!
+        remainingAccounts.push(
+          { pubkey: ADDRESSES.SOL_VAULT, isSigner: false, isWritable: false },
+          { pubkey: ADDRESSES.USDC_VAULT_IN_SOL_POOL, isSigner: false, isWritable: false },
+        );
+        console.log('✅ Added SOL/USDC VAULTS for SOL → USD pricing');
+      } else if (isSolUsdcPoolSameAsSwapPool) {
+        console.log('✅ SOL/USDC pool is the SWAP POOL - skipping to avoid duplicate');
+      } else if (intermediatePoolProvidesSolPrice) {
+        console.log('✅ Intermediate pool already provides SOL pricing path');
+      }
+      
+      // DEBUG: Show EXACTLY what will be passed
+      console.log('');
+      console.log('🔍 DEBUG - remainingAccounts being passed:');
+      remainingAccounts.forEach((acc, index) => {
+        console.log(`  [${index}] ${acc.pubkey.toString()}`);
+      });
+      console.log(`  Total: ${remainingAccounts.length} accounts`);
+      console.log('');
       
       const swapInstruction = await program.methods
         .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
@@ -1355,26 +1506,14 @@ export const swapWithKedologDiscount = async (
           // ⚠️ NOTE: inputTokenOracle and protocolTokenOracle REMOVED in new contract!
           // Contract now uses reference pools passed via remainingAccounts
         })
-        .remainingAccounts([
-          // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          // 📦 REFERENCE POOLS - Contract reads these to calculate token prices
-          // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-          
-          // 1. KEDOLOG/USDC pool (always required for KEDOLOG fee calculation)
-          { pubkey: kedologPricePool, isSigner: false, isWritable: false },
-          { pubkey: token0Vault, isSigner: false, isWritable: false },
-          { pubkey: token1Vault, isSigner: false, isWritable: false },
-          
-          // 2. SOL/USDC pool (required for SOL swaps to get accurate SOL price)
-          { pubkey: ADDRESSES.SOL_USDC_POOL, isSigner: false, isWritable: false },
-          { pubkey: ADDRESSES.SOL_VAULT, isSigner: false, isWritable: false },
-          { pubkey: ADDRESSES.USDC_VAULT_IN_SOL_POOL, isSigner: false, isWritable: false },
-        ])
+        .remainingAccounts(remainingAccounts)
         .instruction();
       
-      console.log('✅ Swap instruction built with BOTH reference pools:', {
-        kedologUsdcPool: kedologPricePool.toString(),
-        solUsdcPool: ADDRESSES.SOL_USDC_POOL.toString(),
+      console.log('✅ Swap instruction built successfully:', {
+        swap: `${getTokenSymbol(inputMint)} → ${getTokenSymbol(outputMint)}`,
+        remainingAccountsCount: remainingAccounts.length,
+        hasIntermediatePool: intermediatePool && !isIntermediatePoolSameAsSwapPool,
+        hasSolUsdcPool: !isSolUsdcPoolSameAsSwapPool,
       });
       
       transaction.add(swapInstruction);
@@ -1417,13 +1556,12 @@ export const swapWithKedologDiscount = async (
       console.log(`  [${i}] ${key.pubkey.toString()} (isSigner: ${key.isSigner}, isWritable: ${key.isWritable})`);
     }
     console.log('');
-    console.log('📋 Expected remainingAccounts order:');
-    console.log('  [...] KEDOLOG/USDC Pool: BE1AdLaWKGPV61cmdV2W6aw7GY5fBRc59noUascPBje');
-    console.log('  [...] KEDOLOG Vault0: Gg2roHP4aRbNvjbQRj7cxB1XvLKdBw45UkrNn9eeC8DJ');
-    console.log('  [...] USDC Vault1: 2yVnJLxM9Dw8YHxrEQQgvPJ12RXYXcqdYyLXftYzbJCt');
-    console.log('  [...] SOL/USDC Pool: 4pS9NNCmuSxCeE2KStwnVLujouoAPRuFJnmKd12fjs1U');
-    console.log('  [...] SOL Vault0: E2TxGdGJyk1yWG3oYMcRtcw8hcQiLGugjwCxWYTFE3S8');
-    console.log('  [...] USDC Vault1: J2219iKwxifoweHJW5beAmT7KYWzUpqjscQviMKew4Qa');
+    console.log('📋 Expected remainingAccounts order (VAULTS ONLY after index 0):');
+    console.log('  [0] KEDOLOG/USDC Pool: BE1AdLaWKGPV61cmdV2W6aw7GY5fBRc59noUascPBje');
+    console.log('  [1] KEDOLOG Vault: Gg2roHP4aRbNvjbQRj7cxB1XvLKdBw45UkrNn9eeC8DJ');
+    console.log('  [2] USDC Vault: 2yVnJLxM9Dw8YHxrEQQgvPJ12RXYXcqdYyLXftYzbJCt');
+    console.log('  [3-4] Intermediate vaults (if needed for BTC → SOL)');
+    console.log('  [5-6] SOL/USDC vaults (SOL vault + USDC vault, NO POOL ADDRESS)');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
     
@@ -1918,7 +2056,9 @@ export const addLiquidity = async (
     
     if (isTrulyEmpty) {
       // True initial deposit - use geometric mean
-      lpAmount = new BN(Math.sqrt(finalAmount0 * finalAmount1) * Math.pow(10, 9));
+      const lpScaled = Math.floor(Math.sqrt(finalAmount0 * finalAmount1) * Math.pow(10, 9));
+      // Use toFixed(0) to prevent scientific notation for large numbers
+      lpAmount = new BN(lpScaled.toFixed(0));
       console.log('📊 Initial deposit (empty pool) - using geometric mean for LP:', lpAmount.toString());
     } else {
       // Subsequent deposit (including dust pools with 0 LP supply)
@@ -1926,7 +2066,9 @@ export const addLiquidity = async (
       if (lpTotalSupply === 0) {
         // Pool has reserves but no LP tokens (dust paradox)
         // Use geometric mean to create initial LP supply
-        lpAmount = new BN(Math.sqrt(finalAmount0 * finalAmount1) * Math.pow(10, 9));
+        const lpScaled = Math.floor(Math.sqrt(finalAmount0 * finalAmount1) * Math.pow(10, 9));
+        // Use toFixed(0) to prevent scientific notation for large numbers
+        lpAmount = new BN(lpScaled.toFixed(0));
         console.log('📊 Dust pool with 0 LP supply - creating initial LP tokens:', lpAmount.toString());
       } else {
         // Normal subsequent deposit - maintain ratio
@@ -1934,7 +2076,9 @@ export const addLiquidity = async (
         const ratio0 = finalAmount0 / token0Reserve;
         const ratio1 = finalAmount1 / token1Reserve;
         const minRatio = Math.min(ratio0, ratio1);
-        lpAmount = new BN(minRatio * lpTotalSupply * Math.pow(10, 9));
+        const lpScaled = Math.floor(minRatio * lpTotalSupply * Math.pow(10, 9));
+        // Use toFixed(0) to prevent scientific notation for large numbers
+        lpAmount = new BN(lpScaled.toFixed(0));
         console.log('📊 Subsequent deposit - LP based on ratio:', {
           ratio0,
           ratio1,
@@ -1974,8 +2118,12 @@ export const addLiquidity = async (
     
     console.log(`📊 Total slippage buffer: ${slippageBuffer}% (hasDust: ${hasDust}, lpSupply: ${lpTotalSupply})`);
     
-    const maxAmount0BN = new BN(Math.ceil(finalAmount0 * (1 + slippageBuffer / 100) * Math.pow(10, token0Decimals)));
-    const maxAmount1BN = new BN(Math.ceil(finalAmount1 * (1 + slippageBuffer / 100) * Math.pow(10, token1Decimals)));
+    // Use Math.ceil and toFixed(0) to avoid BN assertion errors and scientific notation
+    const maxAmount0Scaled = Math.ceil(finalAmount0 * (1 + slippageBuffer / 100) * Math.pow(10, token0Decimals));
+    const maxAmount1Scaled = Math.ceil(finalAmount1 * (1 + slippageBuffer / 100) * Math.pow(10, token1Decimals));
+    // Use toFixed(0) to prevent scientific notation for large numbers
+    const maxAmount0BN = new BN(maxAmount0Scaled.toFixed(0));
+    const maxAmount1BN = new BN(maxAmount1Scaled.toFixed(0));
     
     console.log('📤 Deposit parameters:', {
       lpAmount: lpAmount.toString(),
@@ -2198,9 +2346,14 @@ export const removeLiquidity = async (
       minAmount1 = minAmount1 * adjustmentRatio;
     }
     
-    const lpAmountBN = new BN(adjustedLpAmount * Math.pow(10, 9));
-    const minAmount0BN = new BN(minAmount0 * Math.pow(10, token0Decimals));
-    const minAmount1BN = new BN(minAmount1 * Math.pow(10, token1Decimals));
+    // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
+    const lpAmountScaled = Math.floor(adjustedLpAmount * Math.pow(10, 9));
+    const minAmount0Scaled = Math.floor(minAmount0 * Math.pow(10, token0Decimals));
+    const minAmount1Scaled = Math.floor(minAmount1 * Math.pow(10, token1Decimals));
+    // Use toFixed(0) to prevent scientific notation for large numbers
+    const lpAmountBN = new BN(lpAmountScaled.toFixed(0));
+    const minAmount0BN = new BN(minAmount0Scaled.toFixed(0));
+    const minAmount1BN = new BN(minAmount1Scaled.toFixed(0));
     
     console.log('🔥 Removing liquidity:', {
       lpAmount,
@@ -2485,8 +2638,22 @@ export const createPool = async (
     const userLpAccount = await getAssociatedTokenAddress(lpMint, walletPublicKey);
     
     // Convert amounts to BN with correct decimals
-    const initAmount0BN = new BN(finalAmount0 * Math.pow(10, finalDecimals0));
-    const initAmount1BN = new BN(finalAmount1 * Math.pow(10, finalDecimals1));
+    // Use string-based construction to avoid floating point precision errors
+    const amount0Scaled = Math.floor(finalAmount0 * Math.pow(10, finalDecimals0));
+    const amount1Scaled = Math.floor(finalAmount1 * Math.pow(10, finalDecimals1));
+    
+    console.log('💰 Scaled amounts:', {
+      finalAmount0,
+      finalDecimals0,
+      amount0Scaled,
+      finalAmount1,
+      finalDecimals1,
+      amount1Scaled,
+    });
+    
+    // Convert to BN using toFixed(0) to prevent scientific notation for large numbers
+    const initAmount0BN = new BN(amount0Scaled.toFixed(0));
+    const initAmount1BN = new BN(amount1Scaled.toFixed(0));
     const openTime = new BN(Math.floor(Date.now() / 1000)); // Open immediately
     
     // Check if we need to handle native SOL
