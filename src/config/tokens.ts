@@ -9,6 +9,8 @@ import {
 const WSOL_MINT_TEST = new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv');
 const ETH_MINT_TEST = new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3');
 const BTC_MINT_TEST = new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa');
+const TEST1_MINT = new PublicKey('HWb5ost8dtu1gMzvbBPcA1UaCRqyGnuDNwktrrkMnqcQ');
+const TEST2_MINT = new PublicKey('6aP9X54pSCjsfT78Xf1MQyLwVJ9pBusKVRbt8MQDLytg');
 
 export interface TokenInfo {
   mint: PublicKey;
@@ -62,6 +64,18 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     symbol: 'BTC',
     name: 'Bitcoin (Test)',
     decimals: 8,
+  },
+  TEST1: {
+    mint: TEST1_MINT, // Test token (dynamic pool discovery)
+    symbol: 'TEST1',
+    name: 'Test Token 1',
+    decimals: 9,
+  },
+  TEST2: {
+    mint: TEST2_MINT, // Test token (dynamic pool discovery)
+    symbol: 'TEST2',
+    name: 'Test Token 2',
+    decimals: 9,
   },
 };
 
