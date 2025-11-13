@@ -114,11 +114,22 @@ export const getTokenMetadata = async (mintAddress: string) => {
  * For new code, always import from src/config/addresses.ts
  */
 
+// Cache SOL price to avoid repeated RPC calls
+let solPriceCache: { price: number; timestamp: number } | null = null;
+const SOL_PRICE_CACHE_TTL = 30000; // 30 seconds cache
+
 /**
  * Get SOL price from on-chain SOL/USDC pool
  * Reads actual reserves from the pool vaults
+ * Cached for 30 seconds to improve performance
  */
-export const getSolPrice = async (connection: any): Promise<number> => {
+export const getSolPrice = async (connection: any, forceRefresh: boolean = false): Promise<number> => {
+  // Return cached price if still valid
+  const now = Date.now();
+  if (!forceRefresh && solPriceCache && (now - solPriceCache.timestamp) < SOL_PRICE_CACHE_TTL) {
+    return solPriceCache.price;
+  }
+
   try {
     const { SOL_VAULT, USDC_VAULT_IN_SOL_POOL } = await import('../config/addresses');
     
@@ -128,7 +139,9 @@ export const getSolPrice = async (connection: any): Promise<number> => {
     
     if (!solVaultInfo?.value?.amount || !usdcVaultInfo?.value?.amount) {
       console.warn('⚠️ Could not read SOL/USDC pool vault balances');
-      return 150; // Fallback price
+      const fallbackPrice = 150;
+      solPriceCache = { price: fallbackPrice, timestamp: now };
+      return fallbackPrice;
     }
     
     // Parse reserves (SOL has 9 decimals, USDC has 6)
@@ -137,18 +150,152 @@ export const getSolPrice = async (connection: any): Promise<number> => {
     
     if (solReserve === 0) {
       console.warn('⚠️ SOL reserve is zero in pool');
-      return 150; // Fallback price
+      const fallbackPrice = 150;
+      solPriceCache = { price: fallbackPrice, timestamp: now };
+      return fallbackPrice;
     }
     
     // Calculate price: USDC / SOL
     const solPrice = usdcReserve / solReserve;
+    
+    // Cache the price
+    solPriceCache = { price: solPrice, timestamp: now };
     
     console.log(`💰 SOL price from pool: $${solPrice.toFixed(2)} (${solReserve.toFixed(2)} SOL, ${usdcReserve.toFixed(2)} USDC)`);
     
     return solPrice;
   } catch (error) {
     console.error('Error fetching SOL price from pool:', error);
-    return 150; // Conservative fallback
+    const fallbackPrice = 150;
+    solPriceCache = { price: fallbackPrice, timestamp: now };
+    return fallbackPrice;
+  }
+};
+
+/**
+ * Get USD price of any token using SOL/USDC as reference
+ * For tokens paired with SOL, calculates: tokenPriceInUSD = tokenPriceInSOL * solPriceInUSD
+ * For USDC, returns 1
+ * For SOL, returns SOL/USDC price
+ */
+export const getTokenUsdPrice = async (
+  connection: any,
+  tokenMint: string,
+  tokenSymbol?: string
+): Promise<number> => {
+  try {
+    const { SOL_MINT, USDC_MINT } = await import('../config/addresses');
+    
+    // USDC is always $1
+    if (tokenMint === USDC_MINT.toString()) {
+      return 1;
+    }
+    
+    // SOL price from SOL/USDC pool
+    if (tokenMint === SOL_MINT.toString()) {
+      return await getSolPrice(connection);
+    }
+    
+    // For other tokens, find their pool with SOL or USDC
+    const { fetchPools } = await import('./amm');
+    const { PublicKey } = await import('@solana/web3.js');
+    
+    // Convert tokenMint string to PublicKey for comparison
+    const tokenMintPubkey = new PublicKey(tokenMint);
+    const solMintPubkey = SOL_MINT;
+    const usdcMintPubkey = USDC_MINT;
+    
+    const pools = await fetchPools(connection, null, false);
+    
+    console.log(`🔍 Looking for USD price for ${tokenSymbol || tokenMint}`);
+    console.log(`📊 Checking ${pools.length} pools...`);
+    
+    // Try to find TOKEN/SOL pool first
+    const tokenSolPool = pools.find((pool: any) => {
+      const poolToken0 = pool.token0Mint.toString();
+      const poolToken1 = pool.token1Mint.toString();
+      const tokenMintStr = tokenMintPubkey.toString();
+      const solMintStr = solMintPubkey.toString();
+      
+      const matches = (poolToken0 === tokenMintStr && poolToken1 === solMintStr) ||
+                     (poolToken1 === tokenMintStr && poolToken0 === solMintStr);
+      
+      if (matches) {
+        console.log(`✅ Found TOKEN/SOL pool: ${pool.token0Symbol}/${pool.token1Symbol}`, {
+          token0Reserve: pool.token0Reserve,
+          token1Reserve: pool.token1Reserve,
+        });
+      }
+      
+      return matches;
+    });
+    
+    if (tokenSolPool) {
+      const solPrice = await getSolPrice(connection);
+      console.log(`💰 SOL price: $${solPrice.toFixed(2)}`);
+      
+      // Calculate token price in SOL
+      let tokenPriceInSol: number;
+      const tokenMintStr = tokenMintPubkey.toString();
+      if (tokenSolPool.token0Mint.toString() === tokenMintStr) {
+        // token0 is our token, token1 is SOL
+        tokenPriceInSol = tokenSolPool.token1Reserve / tokenSolPool.token0Reserve;
+        console.log(`💰 Token price calculation: ${tokenSolPool.token1Reserve} SOL / ${tokenSolPool.token0Reserve} ${tokenSymbol} = ${tokenPriceInSol} SOL per ${tokenSymbol}`);
+      } else {
+        // token1 is our token, token0 is SOL
+        tokenPriceInSol = tokenSolPool.token0Reserve / tokenSolPool.token1Reserve;
+        console.log(`💰 Token price calculation: ${tokenSolPool.token0Reserve} SOL / ${tokenSolPool.token1Reserve} ${tokenSymbol} = ${tokenPriceInSol} SOL per ${tokenSymbol}`);
+      }
+      
+      // Convert to USD
+      const tokenPriceInUsd = tokenPriceInSol * solPrice;
+      console.log(`💰 Final USD price: ${tokenPriceInSol} SOL × $${solPrice.toFixed(2)} = $${tokenPriceInUsd.toFixed(2)}`);
+      return tokenPriceInUsd;
+    }
+    
+    // Try to find TOKEN/USDC pool
+    const tokenUsdcPool = pools.find((pool: any) => {
+      const poolToken0 = pool.token0Mint.toString();
+      const poolToken1 = pool.token1Mint.toString();
+      const tokenMintStr = tokenMintPubkey.toString();
+      const usdcMintStr = usdcMintPubkey.toString();
+      
+      const matches = (poolToken0 === tokenMintStr && poolToken1 === usdcMintStr) ||
+                     (poolToken1 === tokenMintStr && poolToken0 === usdcMintStr);
+      
+      if (matches) {
+        console.log(`✅ Found TOKEN/USDC pool: ${pool.token0Symbol}/${pool.token1Symbol}`, {
+          token0Reserve: pool.token0Reserve,
+          token1Reserve: pool.token1Reserve,
+        });
+      }
+      
+      return matches;
+    });
+    
+    if (tokenUsdcPool) {
+      // Calculate token price in USDC directly
+      const tokenMintStr = tokenMintPubkey.toString();
+      let tokenPriceInUsd: number;
+      if (tokenUsdcPool.token0Mint.toString() === tokenMintStr) {
+        // token0 is our token, token1 is USDC
+        tokenPriceInUsd = tokenUsdcPool.token1Reserve / tokenUsdcPool.token0Reserve;
+        console.log(`💰 Token price calculation: ${tokenUsdcPool.token1Reserve} USDC / ${tokenUsdcPool.token0Reserve} ${tokenSymbol} = $${tokenPriceInUsd.toFixed(2)}`);
+      } else {
+        // token1 is our token, token0 is USDC
+        tokenPriceInUsd = tokenUsdcPool.token0Reserve / tokenUsdcPool.token1Reserve;
+        console.log(`💰 Token price calculation: ${tokenUsdcPool.token0Reserve} USDC / ${tokenUsdcPool.token1Reserve} ${tokenSymbol} = $${tokenPriceInUsd.toFixed(2)}`);
+      }
+      return tokenPriceInUsd;
+    }
+    
+    // No pool found - return 0 (will be handled by UI)
+    console.warn(`⚠️ No pool found for ${tokenSymbol || tokenMint} to calculate USD price`);
+    console.log(`📋 Available pools:`, pools.map((p: any) => `${p.token0Symbol}/${p.token1Symbol}`));
+    return 0;
+  } catch (error) {
+    console.error('Error calculating token USD price:', error);
+    return 0;
   }
 };
 

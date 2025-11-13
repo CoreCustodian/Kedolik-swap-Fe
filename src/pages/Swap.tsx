@@ -45,6 +45,10 @@ const Swap = () => {
   const [fromBalance, setFromBalance] = useState<number>(0);
   const [toBalance, setToBalance] = useState<number>(0);
   
+  // USD prices for display
+  const [fromTokenUsdPrice, setFromTokenUsdPrice] = useState<number>(0);
+  const [toTokenUsdPrice, setToTokenUsdPrice] = useState<number>(0);
+  
   // Pool data
   const [poolReserves, setPoolReserves] = useState<{ reserve0: number; reserve1: number; tradeFeeRate: number } | null>(null);
   const [quoteData, setQuoteData] = useState<{ amountOut: number; priceImpact: number; fee: number; bonusAmount?: number } | null>(null);
@@ -273,6 +277,29 @@ const Swap = () => {
       setKedologAvailability({ available: true }); // Default to available on error
     }
   }, [fromToken, toToken, poolAddress, useKedologDiscount]);
+  
+  // Fetch USD prices for tokens
+  useEffect(() => {
+    const fetchUsdPrices = async () => {
+      if (!connection) return;
+      
+      try {
+        const { getTokenUsdPrice } = await import('../utils/prices');
+        const [fromPrice, toPrice] = await Promise.all([
+          getTokenUsdPrice(connection, fromToken.mint.toString(), fromToken.symbol),
+          getTokenUsdPrice(connection, toToken.mint.toString(), toToken.symbol),
+        ]);
+        setFromTokenUsdPrice(fromPrice);
+        setToTokenUsdPrice(toPrice);
+      } catch (error) {
+        console.error('Error fetching USD prices:', error);
+        setFromTokenUsdPrice(0);
+        setToTokenUsdPrice(0);
+      }
+    };
+    
+    fetchUsdPrices();
+  }, [connection, fromToken, toToken]);
   
   // Calculate quote when amount changes (handles both direct and multi-hop)
   useEffect(() => {
@@ -1248,6 +1275,11 @@ const Swap = () => {
                         onWheel={(e) => e.currentTarget.blur()} // Prevent scroll from changing value
                         className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
+                      {fromAmount && parseFloat(fromAmount) > 0 && fromTokenUsdPrice > 0 && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          ≈ ${(parseFloat(fromAmount) * fromTokenUsdPrice).toFixed(2)} USD
+                        </div>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <div className="relative" ref={fromTokenDropdownRef}>
@@ -1345,8 +1377,10 @@ const Swap = () => {
                 <div className="flex justify-between mb-2">
                   <label className="text-sm text-gray-400 font-medium">
                     You Receive
-                    {useKedologDiscount && estimatedKedologFee && quoteData && quoteData.bonusAmount && quoteData.bonusAmount > 0 && (
-                      <span className="ml-2 text-xs text-green-400 font-semibold">↑ +{quoteData.bonusAmount.toFixed(6)}</span>
+                    {useKedologDiscount && estimatedKedologFee && quoteData && quoteData.bonusAmount && quoteData.bonusAmount > 0 && toTokenUsdPrice > 0 && (
+                      <span className="ml-2 text-xs text-green-400 font-semibold">
+                        ↑ +{quoteData.bonusAmount.toFixed(6)} (+${(quoteData.bonusAmount * toTokenUsdPrice).toFixed(2)})
+                      </span>
                     )}
                   </label>
                   <span className="text-xs text-gray-500">
@@ -1369,6 +1403,18 @@ const Swap = () => {
                         onWheel={(e) => e.currentTarget.blur()} // Prevent scroll from changing value
                         className="bg-transparent text-2xl sm:text-3xl font-bold outline-none w-full placeholder:text-gray-600 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
+                      {toAmount && parseFloat(toAmount) > 0 && toTokenUsdPrice > 0 && (
+                        <div className="text-xs mt-1">
+                          <div className="text-gray-500">
+                            ≈ ${(parseFloat(toAmount) * toTokenUsdPrice).toFixed(2)} USD
+                          </div>
+                          {useKedologDiscount && quoteData && quoteData.bonusAmount && quoteData.bonusAmount > 0 && (
+                            <div className="text-green-400 font-semibold mt-0.5">
+                              +${(quoteData.bonusAmount * toTokenUsdPrice).toFixed(2)} USD bonus
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="relative" ref={toTokenDropdownRef}>
                       <button 

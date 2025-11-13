@@ -246,8 +246,17 @@ const Pools = () => {
       {showCreatePool && (
         <CreatePoolModal
           onClose={() => setShowCreatePool(false)}
-          onSuccess={() => {
+          onSuccess={async () => {
             setShowCreatePool(false);
+            // Clear pool cache and refresh pools list
+            const { clearPoolCache } = await import('../utils/amm');
+            clearPoolCache();
+            try {
+              const fetchedPools = await fetchPools(connection, wallet, true); // Force refresh
+              setPools(fetchedPools);
+            } catch (error) {
+              console.error('Error refreshing pools:', error);
+            }
             showToast('Pool created successfully!', 'success');
           }}
           showToast={showToast}
@@ -488,6 +497,8 @@ const CreatePoolModal = ({
   const [token0Balance, setToken0Balance] = useState<number>(0);
   const [token1Balance, setToken1Balance] = useState<number>(0);
   const [poolCreationFee, setPoolCreationFee] = useState<number>(0.15); // Default 0.15 SOL, will be fetched from contract
+  const [token0UsdPrice, setToken0UsdPrice] = useState<number>(0);
+  const [token1UsdPrice, setToken1UsdPrice] = useState<number>(0);
   // Fee tier selector removed; default AMM config will be used
   
   const tokenList = getTokenList();
@@ -545,6 +556,29 @@ const CreatePoolModal = ({
     
     fetchBalance();
   }, [token1, publicKey, connection]);
+  
+  // Fetch USD prices for tokens
+  useEffect(() => {
+    const fetchUsdPrices = async () => {
+      if (!connection) return;
+      
+      try {
+        const { getTokenUsdPrice } = await import('../utils/prices');
+        const [price0, price1] = await Promise.all([
+          getTokenUsdPrice(connection, token0.mint.toString(), token0.symbol),
+          getTokenUsdPrice(connection, token1.mint.toString(), token1.symbol),
+        ]);
+        setToken0UsdPrice(price0);
+        setToken1UsdPrice(price1);
+      } catch (error) {
+        console.error('Error fetching USD prices:', error);
+        setToken0UsdPrice(0);
+        setToken1UsdPrice(0);
+      }
+    };
+    
+    fetchUsdPrices();
+  }, [connection, token0, token1]);
   
   const handleCreate = async () => {
     if (!amount0 || !amount1) {
@@ -618,6 +652,11 @@ const CreatePoolModal = ({
       });
       
       showToast('Pool created successfully!', 'success', result.tx);
+      
+      // Clear pool cache - onSuccess callback will refresh pools
+      const { clearPoolCache } = await import('../utils/amm');
+      clearPoolCache();
+      
       onSuccess();
     } catch (error: unknown) {
       const err = error as { message?: string };
@@ -699,13 +738,20 @@ const CreatePoolModal = ({
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">Amount</label>
           <div className="flex gap-2">
-            <input
-              type="number"
-              value={amount0}
-              onChange={(e) => setAmount0(e.target.value)}
-              placeholder="0.0"
-              className="flex-1 bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
-            />
+            <div className="flex-1">
+              <input
+                type="number"
+                value={amount0}
+                onChange={(e) => setAmount0(e.target.value)}
+                placeholder="0.0"
+                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+              />
+              {amount0 && parseFloat(amount0) > 0 && token0UsdPrice > 0 && (
+                <div className="text-xs text-gray-500 mt-1 px-4">
+                  ≈ ${(parseFloat(amount0) * token0UsdPrice).toFixed(2)} USD
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setAmount0(token0Balance.toString())}
               className="px-4 py-2 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold"
@@ -733,13 +779,20 @@ const CreatePoolModal = ({
         <div className="mb-6">
           <label className="block text-sm text-gray-400 mb-2">Amount</label>
           <div className="flex gap-2">
-            <input
-              type="number"
-              value={amount1}
-              onChange={(e) => setAmount1(e.target.value)}
-              placeholder="0.0"
-              className="flex-1 bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
-            />
+            <div className="flex-1">
+              <input
+                type="number"
+                value={amount1}
+                onChange={(e) => setAmount1(e.target.value)}
+                placeholder="0.0"
+                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+              />
+              {amount1 && parseFloat(amount1) > 0 && token1UsdPrice > 0 && (
+                <div className="text-xs text-gray-500 mt-1 px-4">
+                  ≈ ${(parseFloat(amount1) * token1UsdPrice).toFixed(2)} USD
+                </div>
+              )}
+            </div>
             <button
               onClick={() => setAmount1(token1Balance.toString())}
               className="px-4 py-2 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold"
@@ -805,6 +858,8 @@ const AddLiquidityModal = ({
   const [amount1, setAmount1] = useState('');
   const [balance0, setBalance0] = useState<number>(0);
   const [balance1, setBalance1] = useState<number>(0);
+  const [token0UsdPrice, setToken0UsdPrice] = useState<number>(0);
+  const [token1UsdPrice, setToken1UsdPrice] = useState<number>(0);
   
   // Fetch balances
   useEffect(() => {
@@ -821,6 +876,29 @@ const AddLiquidityModal = ({
     
     fetchBalances();
   }, [pool, publicKey, connection]);
+  
+  // Fetch USD prices for tokens
+  useEffect(() => {
+    const fetchUsdPrices = async () => {
+      if (!connection) return;
+      
+      try {
+        const { getTokenUsdPrice } = await import('../utils/prices');
+        const [price0, price1] = await Promise.all([
+          getTokenUsdPrice(connection, pool.token0Mint.toString(), pool.token0Symbol),
+          getTokenUsdPrice(connection, pool.token1Mint.toString(), pool.token1Symbol),
+        ]);
+        setToken0UsdPrice(price0);
+        setToken1UsdPrice(price1);
+      } catch (error) {
+        console.error('Error fetching USD prices:', error);
+        setToken0UsdPrice(0);
+        setToken1UsdPrice(0);
+      }
+    };
+    
+    fetchUsdPrices();
+  }, [connection, pool]);
   
   // Auto-calculate amount1 based on pool ratio
   const handleAmount0Change = (value: string) => {
@@ -937,13 +1015,20 @@ const AddLiquidityModal = ({
             <span className="text-xs text-gray-500">Balance: {balance0.toLocaleString()}</span>
                   </div>
           <div className="flex gap-2">
-            <input
-              type="number"
-              value={amount0}
-              onChange={(e) => handleAmount0Change(e.target.value)}
-              placeholder="0.0"
-              className="flex-1 bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
-            />
+            <div className="flex-1">
+              <input
+                type="number"
+                value={amount0}
+                onChange={(e) => handleAmount0Change(e.target.value)}
+                placeholder="0.0"
+                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+              />
+              {amount0 && parseFloat(amount0) > 0 && token0UsdPrice > 0 && (
+                <div className="text-xs text-gray-500 mt-1 px-4">
+                  ≈ ${(parseFloat(amount0) * token0UsdPrice).toFixed(2)} USD
+                </div>
+              )}
+            </div>
             <div className="grid grid-cols-4 gap-1">
               {[25,50,75,100].map(pct => (
                 <button
@@ -970,6 +1055,11 @@ const AddLiquidityModal = ({
             placeholder="0.0"
             className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none opacity-60"
           />
+          {amount1 && parseFloat(amount1) > 0 && token1UsdPrice > 0 && (
+            <div className="text-xs text-gray-500 mt-1">
+              ≈ ${(parseFloat(amount1) * token1UsdPrice).toFixed(2)} USD
+            </div>
+          )}
           <p className="text-xs text-gray-500 mt-1">Amount calculated based on pool ratio</p>
                 </div>
               </div>
