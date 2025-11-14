@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
 import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
+import { TokenSelectModal } from '../components/TokenSelectModal';
 import { 
   fetchPools, 
   calculateSwapOutput, 
@@ -38,8 +40,8 @@ const Swap = () => {
   // Token selection
   const [fromToken, setFromToken] = useState<TokenInfo>(DEVNET_TOKENS.SOL);
   const [toToken, setToToken] = useState<TokenInfo>(DEVNET_TOKENS.KEDOLOG);
-  const [showFromTokenList, setShowFromTokenList] = useState(false);
-  const [showToTokenList, setShowToTokenList] = useState(false);
+  const [showFromTokenModal, setShowFromTokenModal] = useState(false);
+  const [showToTokenModal, setShowToTokenModal] = useState(false);
   
   // Balances
   const [fromBalance, setFromBalance] = useState<number>(0);
@@ -84,10 +86,6 @@ const Swap = () => {
     txSignature?: string;
   }>>([]);
   
-  // Refs for click-outside handling
-  const fromTokenDropdownRef = useRef<HTMLDivElement>(null);
-  const toTokenDropdownRef = useRef<HTMLDivElement>(null);
-  
   // Transaction modal state
   const [txModal, setTxModal] = useState<{
     isOpen: boolean;
@@ -115,20 +113,6 @@ const Swap = () => {
   };
   
   // Fetch token balances
-  // Handle click outside to close dropdowns
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (fromTokenDropdownRef.current && !fromTokenDropdownRef.current.contains(event.target as Node)) {
-        setShowFromTokenList(false);
-      }
-      if (toTokenDropdownRef.current && !toTokenDropdownRef.current.contains(event.target as Node)) {
-        setShowToTokenList(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   useEffect(() => {
     const fetchBalances = async () => {
@@ -257,7 +241,6 @@ const Swap = () => {
   // Check KEDOLOG discount availability when tokens change
   useEffect(() => {
     try {
-      const { PublicKey } = require('@solana/web3.js');
       const poolPubkey = poolAddress ? new PublicKey(poolAddress) : undefined;
       
       const availability = isKedologDiscountAvailable(
@@ -508,7 +491,7 @@ const Swap = () => {
             const { fetchPools } = await import('../utils/amm');
             const allPools = await fetchPools(connection, wallet);
             
-            const tokenSolPool = allPools.find((pool: any) => 
+            const tokenSolPool = allPools.find((pool) => 
               (pool.token0Mint.equals(fromToken.mint) && pool.token1Mint.equals(SOL_MINT)) ||
               (pool.token1Mint.equals(fromToken.mint) && pool.token0Mint.equals(SOL_MINT))
             );
@@ -542,7 +525,7 @@ const Swap = () => {
               });
             } else {
               // Try TOKEN/USDC pool as fallback
-              const tokenUsdcPool = allPools.find((pool: any) => 
+              const tokenUsdcPool = allPools.find((pool) => 
                 (pool.token0Mint.equals(fromToken.mint) && pool.token1Mint.equals(USDC_MINT)) ||
                 (pool.token1Mint.equals(fromToken.mint) && pool.token0Mint.equals(USDC_MINT))
               );
@@ -1036,7 +1019,6 @@ const Swap = () => {
   
   // Percentage quick-fill handled inline with buttons
   
-  const tokenList = getTokenList();
 
   return (
     <>
@@ -1282,9 +1264,9 @@ const Swap = () => {
                       )}
                     </div>
                     <div className="flex flex-col items-end gap-2">
-                      <div className="relative" ref={fromTokenDropdownRef}>
+                      <div className="relative">
                         <button 
-                          onClick={() => setShowFromTokenList(!showFromTokenList)}
+                          onClick={() => setShowFromTokenModal(true)}
                           className="flex items-center gap-2 bg-gradient-brand px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm"
                         >
                           <div className="w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900">
@@ -1309,30 +1291,6 @@ const Swap = () => {
                             </svg>
                             <span className="font-medium">Copy CA</span>
                         </button>
-                        )}
-                        
-                        {/* Token Dropdown */}
-                        {showFromTokenList && (
-                          <div className="absolute top-full mt-2 right-0 bg-dark-900 rounded-xl border border-white/30 shadow-2xl z-[100] min-w-[220px] max-h-[300px] overflow-y-auto custom-scrollbar">
-                            {tokenList.filter(t => t.symbol !== toToken.symbol).map((token) => (
-                              <button
-                                key={token.symbol}
-                                onClick={() => {
-                                  setFromToken(token);
-                                  setShowFromTokenList(false);
-                                }}
-                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
-                              >
-                                <div className="w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-sm font-bold">
-                                  {token.symbol[0]}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="font-semibold">{token.symbol}</div>
-                                  <div className="text-xs text-gray-500 truncate">{token.name}</div>
-                                </div>
-                              </button>
-                            ))}
-                          </div>
                         )}
                       </div>
                       <div className="grid grid-cols-4 gap-1">
@@ -1416,9 +1374,9 @@ const Swap = () => {
                         </div>
                       )}
                     </div>
-                    <div className="relative" ref={toTokenDropdownRef}>
+                    <div className="relative">
                       <button 
-                        onClick={() => setShowToTokenList(!showToTokenList)}
+                        onClick={() => setShowToTokenModal(true)}
                         className="flex items-center gap-2 bg-gradient-brand px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm"
                       >
                         <div className="w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900">
@@ -1443,30 +1401,6 @@ const Swap = () => {
                           </svg>
                           <span className="font-medium">Copy CA</span>
                       </button>
-                      )}
-                      
-                      {/* Token Dropdown */}
-                      {showToTokenList && (
-                        <div className="absolute top-full mt-2 right-0 bg-dark-900 rounded-xl border border-white/30 shadow-2xl z-[100] min-w-[220px] max-h-[300px] overflow-y-auto custom-scrollbar">
-                          {tokenList.filter(t => t.symbol !== fromToken.symbol).map((token) => (
-                            <button
-                              key={token.symbol}
-                              onClick={() => {
-                                setToToken(token);
-                                setShowToTokenList(false);
-                              }}
-                              className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/5 transition-colors text-left"
-                            >
-                              <div className="w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-sm font-bold">
-                                {token.symbol[0]}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="font-semibold">{token.symbol}</div>
-                                <div className="text-xs text-gray-500 truncate">{token.name}</div>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
                       )}
                     </div>
                   </div>
@@ -1667,6 +1601,29 @@ const Swap = () => {
           message: '',
           txSignature: undefined 
         })}
+      />
+      
+      {/* Token Selection Modals */}
+      <TokenSelectModal
+        isOpen={showFromTokenModal}
+        onClose={() => setShowFromTokenModal(false)}
+        onSelect={(token) => {
+          setFromToken(token);
+          setShowFromTokenModal(false);
+        }}
+        excludeToken={toToken}
+        connection={connection}
+      />
+      
+      <TokenSelectModal
+        isOpen={showToTokenModal}
+        onClose={() => setShowToTokenModal(false)}
+        onSelect={(token) => {
+          setToToken(token);
+          setShowToTokenModal(false);
+        }}
+        excludeToken={fromToken}
+        connection={connection}
       />
     </>
   );

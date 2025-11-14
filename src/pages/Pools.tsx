@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance, getPoolCreationFee } from '../utils/amm';
-import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
+import { DEVNET_TOKENS, TokenInfo } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
+import { TokenSelectModal } from '../components/TokenSelectModal';
 
 const Pools = () => {
   const { connected, publicKey } = useWallet();
@@ -499,9 +500,9 @@ const CreatePoolModal = ({
   const [poolCreationFee, setPoolCreationFee] = useState<number>(0.15); // Default 0.15 SOL, will be fetched from contract
   const [token0UsdPrice, setToken0UsdPrice] = useState<number>(0);
   const [token1UsdPrice, setToken1UsdPrice] = useState<number>(0);
+  const [showToken0Modal, setShowToken0Modal] = useState(false);
+  const [showToken1Modal, setShowToken1Modal] = useState(false);
   // Fee tier selector removed; default AMM config will be used
-  
-  const tokenList = getTokenList();
   
   // Calculate pool prices
   const token0Price = amount0 && amount1 && parseFloat(amount0) > 0 && parseFloat(amount1) > 0
@@ -723,15 +724,21 @@ const CreatePoolModal = ({
         {/* Token 0 */}
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">First Token</label>
-          <select
-            value={token0.symbol}
-            onChange={(e) => setToken0(tokenList.find(t => t.symbol === e.target.value) || DEVNET_TOKENS.SOL)}
-            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+          <button
+            onClick={() => setShowToken0Modal(true)}
+            className="w-full bg-dark-900/50 border border-white/10 hover:border-brand-cyan/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan transition-all text-left flex items-center gap-3"
           >
-            {tokenList.map(token => (
-              <option key={token.symbol} value={token.symbol}>{token.name} ({token.symbol})</option>
-            ))}
-          </select>
+            <div className="w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+              {token0.symbol[0]}
+            </div>
+            <div className="flex-1">
+              <div className="font-semibold">{token0.symbol}</div>
+              <div className="text-xs text-gray-400">{token0.name}</div>
+            </div>
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
           <p className="text-xs text-gray-500 mt-1">Balance: {token0Balance.toLocaleString()} {token0.symbol}</p>
         </div>
         
@@ -764,15 +771,21 @@ const CreatePoolModal = ({
         {/* Token 1 */}
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">Second Token</label>
-          <select
-            value={token1.symbol}
-            onChange={(e) => setToken1(tokenList.find(t => t.symbol === e.target.value) || DEVNET_TOKENS.USDC)}
-            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+          <button
+            onClick={() => setShowToken1Modal(true)}
+            className="w-full bg-dark-900/50 border border-white/10 hover:border-brand-cyan/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan transition-all text-left flex items-center gap-3"
           >
-            {tokenList.map(token => (
-              <option key={token.symbol} value={token.symbol}>{token.name} ({token.symbol})</option>
-            ))}
-          </select>
+            <div className="w-8 h-8 bg-gradient-to-r from-brand-pink to-purple-600 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+              {token1.symbol[0]}
+            </div>
+            <div className="flex-1">
+              <div className="font-semibold">{token1.symbol}</div>
+              <div className="text-xs text-gray-400">{token1.name}</div>
+            </div>
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
           <p className="text-xs text-gray-500 mt-1">Balance: {token1Balance.toLocaleString()} {token1.symbol}</p>
         </div>
         
@@ -827,6 +840,29 @@ const CreatePoolModal = ({
           </button>
         </div>
       </div>
+      
+      {/* Token Select Modals */}
+      <TokenSelectModal
+        isOpen={showToken0Modal}
+        onClose={() => setShowToken0Modal(false)}
+        onSelect={(token) => {
+          setToken0(token);
+          setShowToken0Modal(false);
+        }}
+        excludeToken={token1}
+        connection={connection}
+      />
+      
+      <TokenSelectModal
+        isOpen={showToken1Modal}
+        onClose={() => setShowToken1Modal(false)}
+        onSelect={(token) => {
+          setToken1(token);
+          setShowToken1Modal(false);
+        }}
+        excludeToken={token0}
+        connection={connection}
+      />
     </div>
   );
 };
