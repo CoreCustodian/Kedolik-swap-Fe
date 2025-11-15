@@ -17,7 +17,7 @@ import { PublicKey } from '@solana/web3.js';
  * Main AMM program ID
  * This is the deployed Kedolik CP Swap program
  * 
- * DEPLOYMENT: November 10, 2025 (Universal Pool-Based Pricing System)
+ * DEPLOYMENT: Mainnet (November 15, 2025)
  * - NO MORE ORACLE ACCOUNTS NEEDED! 🎉
  * - Uses reference liquidity pools for automatic price discovery
  * - Supports multi-hop pricing paths (Token → SOL → USDC)
@@ -26,8 +26,10 @@ import { PublicKey } from '@solana/web3.js';
  * - Admin can ONLY change admin and fee receiver
  * - UNIFIED fee_receiver gets ALL fees (pool creation, protocol, fund, KEDOLOG discount)
  * - Only fee receiver can claim pool fees
+ * - Pool Creation Fee: 0.15 SOL
+ * - KEDOLOG Discount: 25%
  */
-export const PROGRAM_ID = new PublicKey('4LyaQt2uNYX7zJABAVa56th8U68brWHWLioAYZSbCeEf');
+export const PROGRAM_ID = new PublicKey('EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL');
 
 /**
  * Authority seed for deriving PDAs
@@ -49,19 +51,17 @@ export const SOL_MINT = new PublicKey('So111111111111111111111111111111111111111
  * KEDOLOG token mint address
  * The protocol's native token used for fee discounts
  * 
- * Devnet: 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
- * Mainnet: [UPDATE WHEN DEPLOYING TO MAINNET]
+ * MAINNET: FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN
  */
-export const KEDOLOG_MINT = new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx');
+export const KEDOLOG_MINT = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN');
 
 /**
  * USDC token mint address
  * Used as the base pair for pool-based pricing oracles
  * 
- * Devnet: 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
  * Mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
  */
-export const USDC_MINT = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32');
+export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
 // ============================================================================
 // NOTE: No need to hardcode other token mints!
@@ -70,46 +70,30 @@ export const USDC_MINT = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg
 // ============================================================================
 
 /**
- * KEDOLOG/USDC liquidity pool
- * Used as reference pool for dynamic KEDOLOG pricing
- * UPDATED: Nov 10, 2025 - New pool for universal pricing deployment
+ * MAINNET REFERENCE POOLS
+ * These pools will be created on mainnet and used for dynamic pricing
+ * The contract reads these pools to calculate KEDOLOG discount fees
+ * 
+ * NOTE: Create these pools first on mainnet, then update addresses here:
+ * 1. KEDOLOG/USDC pool - for KEDOLOG pricing
+ * 2. SOL/USDC pool - for SOL pricing (if not already exists)
+ * 
+ * After creating pools, get the vault addresses using:
+ * - Pool state account contains vault references
+ * - Or use: anchor account pool_state <POOL_ADDRESS>
+ * 
+ * TODO: UPDATE THESE WITH ACTUAL MAINNET POOL ADDRESSES
  */
-export const KEDOLOG_USDC_POOL = new PublicKey('BE1AdLaWKGPV61cmdV2W6aw7GY5fBRc59noUascPBje');
 
-/**
- * KEDOLOG vault in the KEDOLOG/USDC pool
- * Contract reads this to get KEDOLOG reserves
- * UPDATED: Nov 10, 2025
- */
-export const KEDOLOG_VAULT = new PublicKey('Gg2roHP4aRbNvjbQRj7cxB1XvLKdBw45UkrNn9eeC8DJ');
+// KEDOLOG/USDC Pool (TODO: Create on mainnet and update)
+export const KEDOLOG_USDC_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+export const KEDOLOG_VAULT = new PublicKey('11111111111111111111111111111111'); // Placeholder
+export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
 
-/**
- * USDC vault in the KEDOLOG/USDC pool
- * Contract reads this to get USDC reserves
- * UPDATED: Nov 10, 2025
- */
-export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('2yVnJLxM9Dw8YHxrEQQgvPJ12RXYXcqdYyLXftYzbJCt');
-
-/**
- * SOL/USDC liquidity pool
- * Used as reference pool for SOL pricing in KEDOLOG fee calculations
- * UPDATED: Nov 10, 2025 - Pool created with NEW program
- */
-export const SOL_USDC_POOL = new PublicKey('4pS9NNCmuSxCeE2KStwnVLujouoAPRuFJnmKd12fjs1U');
-
-/**
- * SOL vault in the SOL/USDC pool
- * Contract reads this to get SOL reserves
- * UPDATED: Nov 10, 2025
- */
-export const SOL_VAULT = new PublicKey('E2TxGdGJyk1yWG3oYMcRtcw8hcQiLGugjwCxWYTFE3S8');
-
-/**
- * USDC vault in the SOL/USDC pool
- * Contract reads this to get USDC reserves for SOL pricing
- * UPDATED: Nov 10, 2025
- */
-export const USDC_VAULT_IN_SOL_POOL = new PublicKey('J2219iKwxifoweHJW5beAmT7KYWzUpqjscQviMKew4Qa');
+// SOL/USDC Pool (TODO: Create on mainnet and update, or use existing Jupiter/Raydium pool)
+export const SOL_USDC_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+export const SOL_VAULT = new PublicKey('11111111111111111111111111111111'); // Placeholder
+export const USDC_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
 
 // ============================================================================
 // DYNAMIC POOL DISCOVERY
@@ -125,17 +109,18 @@ export const USDC_VAULT_IN_SOL_POOL = new PublicKey('J2219iKwxifoweHJW5beAmT7KYW
  * Default AMM Config (index 0)
  * Used for KEDOLOG discount feature
  * Contains unified fee_receiver for all fee types
- * UPDATED: Nov 10, 2025 - Universal pricing system deployment
+ * MAINNET DEPLOYMENT: Nov 15, 2025
+ * Pool Creation Fee: 0.15 SOL
  */
-export const DEFAULT_AMM_CONFIG = new PublicKey('BvNxXvJbJLgEhSCuoVyHwsTWZeFMLfwdzqP1ynuimVRW');
+export const DEFAULT_AMM_CONFIG = new PublicKey('ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ');
 
 /**
- * Protocol Token Config
- * Stores KEDOLOG discount configuration (discount rate, treasury, etc.)
+ * Protocol Token Config (KEDOLOG Config)
+ * Stores KEDOLOG discount configuration (discount rate: 25%, treasury, etc.)
  * NOW ALSO STORES: Reference pool addresses (KEDOLOG/USDC, SOL/USDC, KEDOLOG/SOL)
- * UPDATED: Nov 10, 2025 - Universal pricing system deployment
+ * MAINNET DEPLOYMENT: Nov 15, 2025
  */
-export const PROTOCOL_TOKEN_CONFIG = new PublicKey('3TLoGQXLQyyExNUekdtjinSig9uBnrwLZXHbJ4ECBrq3');
+export const PROTOCOL_TOKEN_CONFIG = new PublicKey('pVRUHo1ecQA5QjyoCJzBSdPTi4hSgjW2ErK8huNYB51');
 
 // ============================================================================
 // POOL CREATION
@@ -144,7 +129,7 @@ export const PROTOCOL_TOKEN_CONFIG = new PublicKey('3TLoGQXLQyyExNUekdtjinSig9uB
 /**
  * Unified fee receiver (Fallback - prefer fetching from AMM config dynamically)
  * This address receives ALL fees:
- * - Pool creation fees (1 SOL per pool)
+ * - Pool creation fees (0.15 SOL per pool)
  * - Protocol swap fees (0.05%)
  * - Fund fees (variable)
  * - KEDOLOG discount fees (0.0375% with 25% discount)
@@ -152,8 +137,10 @@ export const PROTOCOL_TOKEN_CONFIG = new PublicKey('3TLoGQXLQyyExNUekdtjinSig9uB
  * NOTE: Pool creation now fetches this DYNAMICALLY from AMM config
  * to avoid address constraint mismatches. This constant is kept
  * for backward compatibility only.
+ * 
+ * MAINNET: EGX4XLHooJ8vtMeyu6JRzudPMv39Cy91bJV49oaHqHom
  */
-export const CREATE_POOL_FEE_RECEIVER = new PublicKey('67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa');
+export const CREATE_POOL_FEE_RECEIVER = new PublicKey('EGX4XLHooJ8vtMeyu6JRzudPMv39Cy91bJV49oaHqHom');
 
 // ============================================================================
 // NETWORK CONFIGURATION
@@ -162,12 +149,14 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('67D6TM8PTsuv8nU5PnUP3dV6j
 /**
  * Current network environment
  */
-export const NETWORK = 'devnet' as const;
+export const NETWORK = 'mainnet-beta' as const;
 
 /**
  * RPC endpoint
+ * For production, consider using a private RPC provider (Helius, Quicknode, etc.)
+ * Set VITE_RPC_ENDPOINT in .env file to override this default
  */
-export const RPC_ENDPOINT = 'https://api.devnet.solana.com';
+export const RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
 
 // ============================================================================
 // HELPER FUNCTIONS

@@ -14,11 +14,12 @@ interface WalletProviderProps {
 
 export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
   // The network can be set to 'devnet', 'testnet', or 'mainnet-beta'
-  const network = WalletAdapterNetwork.Devnet;
+  const network = WalletAdapterNetwork.Mainnet;
 
-  // Custom RPC endpoint - supports environment variable or defaults to public devnet
+  // Custom RPC endpoint - supports environment variable or defaults to public mainnet
   // To use a custom RPC, set VITE_RPC_ENDPOINT in .env file
-  // Example: VITE_RPC_ENDPOINT=https://devnet.helius-rpc.com/?api-key=YOUR_KEY
+  // Example: VITE_RPC_ENDPOINT=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
+  // For production, STRONGLY RECOMMENDED to use a private RPC provider
   const endpoint = useMemo(() => {
     // Check for custom RPC in environment variable
     const customEndpoint = import.meta.env.VITE_RPC_ENDPOINT;
@@ -28,9 +29,10 @@ export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
       return customEndpoint;
     }
     
-    // Fallback to default public devnet RPC
-    console.log('🌐 Using default public devnet RPC (rate limited)');
-    console.log('💡 Tip: Set VITE_RPC_ENDPOINT in .env for better performance');
+    // Fallback to default public mainnet RPC
+    console.log('⚠️ Using default public mainnet RPC (rate limited)');
+    console.log('💡 IMPORTANT: Set VITE_RPC_ENDPOINT in .env for better performance');
+    console.log('💡 Recommended: Helius, Quicknode, or Alchemy RPC');
     return clusterApiUrl(network);
   }, [network]);
 

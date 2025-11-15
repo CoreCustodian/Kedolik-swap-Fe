@@ -5,13 +5,6 @@ import {
   USDC_MINT
 } from './addresses';
 
-// For test tokens, define mints locally (not in addresses.ts since they're dynamic)
-const WSOL_MINT_TEST = new PublicKey('6xuEzd4YE3XRXWdSRKZ6V2LELkR6tocvPcnu18E8rwjv');
-const ETH_MINT_TEST = new PublicKey('CTHA8taNT2LgyQyj2xVD38nmnxTsCbAJ22Vsee4RvHF3');
-const BTC_MINT_TEST = new PublicKey('ErGy4n8vBRw2mscMgbZg5rf3SdyDdk11LsaXKG8JJsoa');
-const TEST1_MINT = new PublicKey('HWb5ost8dtu1gMzvbBPcA1UaCRqyGnuDNwktrrkMnqcQ');
-const TEST2_MINT = new PublicKey('6aP9X54pSCjsfT78Xf1MQyLwVJ9pBusKVRbt8MQDLytg');
-
 export interface TokenInfo {
   mint: PublicKey;
   symbol: string;
@@ -22,60 +15,35 @@ export interface TokenInfo {
 }
 
 /**
- * Devnet Token List
+ * Mainnet Token List
  * 
- * IMPORTANT: All mint addresses are imported from src/config/addresses.ts
- * This ensures a single source of truth for all blockchain addresses.
- * When deploying to mainnet, ONLY update addresses.ts!
+ * Core tokens supported by Kedolik DEX:
+ * - SOL (Native Solana)
+ * - KEDOLOG (Protocol Token)
+ * - USDC (Stablecoin)
+ * 
+ * Users can import additional tokens using the custom token import feature.
  */
 export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
   SOL: {
-    mint: SOL_MINT, // Native SOL - imported from addresses.ts
+    mint: SOL_MINT,
     symbol: 'SOL',
     name: 'Solana',
     decimals: 9,
+    coingeckoId: 'solana',
   },
   KEDOLOG: {
-    mint: KEDOLOG_MINT, // Imported from addresses.ts
-    symbol: 'KEDOLOG',
-    name: 'Kedolog Protocol Token',
+    mint: KEDOLOG_MINT,
+    symbol: 'KEDOL',
+    name: 'Kedol Protocol Token',
     decimals: 9,
   },
   USDC: {
-    mint: USDC_MINT, // Imported from addresses.ts
+    mint: USDC_MINT,
     symbol: 'USDC',
-    name: 'USD Coin (Test)',
+    name: 'USD Coin',
     decimals: 6,
-  },
-  WSOL: {
-    mint: WSOL_MINT_TEST, // Test token (dynamic pool discovery)
-    symbol: 'WSOL',
-    name: 'Wrapped SOL (Test)',
-    decimals: 9,
-  },
-  ETH: {
-    mint: ETH_MINT_TEST, // Test token (dynamic pool discovery)
-    symbol: 'ETH',
-    name: 'Ethereum (Test)',
-    decimals: 18,
-  },
-  BTC: {
-    mint: BTC_MINT_TEST, // Test token (dynamic pool discovery)
-    symbol: 'BTC',
-    name: 'Bitcoin (Test)',
-    decimals: 8,
-  },
-  TEST1: {
-    mint: TEST1_MINT, // Test token (dynamic pool discovery)
-    symbol: 'TEST1',
-    name: 'Test Token 1',
-    decimals: 9,
-  },
-  TEST2: {
-    mint: TEST2_MINT, // Test token (dynamic pool discovery)
-    symbol: 'TEST2',
-    name: 'Test Token 2',
-    decimals: 9,
+    coingeckoId: 'usd-coin',
   },
 };
 
@@ -99,8 +67,6 @@ export const DEFAULT_TOKEN_PAIRS = [
   { from: 'KEDOLOG', to: 'USDC' },
   { from: 'SOL', to: 'USDC' },
   { from: 'KEDOLOG', to: 'SOL' },
-  { from: 'ETH', to: 'USDC' },
-  { from: 'BTC', to: 'USDC' },
 ];
 
 
