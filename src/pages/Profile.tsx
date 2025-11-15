@@ -209,7 +209,7 @@ const Profile = () => {
               </div>
               <div className="flex gap-3">
                 <a
-                  href={`https://solscan.io/account/${publicKey.toString()}?cluster=devnet`}
+                  href={`https://solscan.io/account/${publicKey.toString()}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-semibold border border-white/10 transition-all"
@@ -262,8 +262,8 @@ const Profile = () => {
               </div>
               <div className="text-sm text-gray-400">Network</div>
             </div>
-            <div className="text-3xl font-bold text-brand-cyan">Devnet</div>
-            <div className="text-xs text-gray-500 mt-1">Test Network</div>
+            <div className="text-3xl font-bold text-brand-cyan">Mainnet</div>
+            <div className="text-xs text-gray-500 mt-1">Production Network</div>
           </div>
         </div>
         
@@ -415,7 +415,7 @@ const Profile = () => {
                 {txHistory.map((tx, index) => (
                   <a
                     key={index}
-                    href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
+                    href={`https://solscan.io/tx/${tx.signature}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block p-4 bg-dark-900/50 rounded-xl border border-white/10 hover:border-brand-cyan/30 transition-all group"
@@ -454,13 +454,15 @@ const Profile = () => {
               <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">🏊</div>
               <div className="font-semibold">Liquidity Pools</div>
             </a>
-            <button
-              onClick={() => window.open(`https://faucet.solana.com`, '_blank')}
+            <a
+              href={`https://solscan.io/account/${publicKey.toString()}`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="p-6 bg-dark-900/50 rounded-xl border border-white/10 hover:border-brand-cyan/30 transition-all text-center group"
             >
-              <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">🚰</div>
-              <div className="font-semibold">Get Devnet SOL</div>
-            </button>
+              <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">🔍</div>
+              <div className="font-semibold">View Explorer</div>
+            </a>
             <button
               onClick={() => navigator.clipboard.writeText(publicKey.toString())}
               className="p-6 bg-dark-900/50 rounded-xl border border-white/10 hover:border-brand-cyan/30 transition-all text-center group"
