@@ -1269,7 +1269,23 @@ const Swap = () => {
                           onClick={() => setShowFromTokenModal(true)}
                           className="flex items-center gap-2 bg-gradient-brand px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm"
                         >
-                          <div className="w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900">
+                          {fromToken.logoURI ? (
+                            <img 
+                              src={fromToken.logoURI} 
+                              alt={fromToken.symbol}
+                              className="w-5 h-5 rounded-full"
+                              onError={(e) => {
+                                const target = e.target as HTMLImageElement;
+                                target.style.display = 'none';
+                                if (target.nextElementSibling) {
+                                  (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                                }
+                              }}
+                            />
+                          ) : null}
+                          <div 
+                            className={`w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900 ${fromToken.logoURI ? 'hidden' : ''}`}
+                          >
                             {fromToken.symbol[0]}
                           </div>
                           <span className="hidden sm:inline">{fromToken.symbol}</span>
@@ -1379,7 +1395,23 @@ const Swap = () => {
                         onClick={() => setShowToTokenModal(true)}
                         className="flex items-center gap-2 bg-gradient-brand px-3 sm:px-4 py-2 sm:py-3 rounded-xl font-semibold hover:brightness-110 transition-all duration-300 shadow-glow-brand text-sm"
                       >
-                        <div className="w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900">
+                        {toToken.logoURI ? (
+                          <img 
+                            src={toToken.logoURI} 
+                            alt={toToken.symbol}
+                            className="w-5 h-5 rounded-full"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                              if (target.nextElementSibling) {
+                                (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                              }
+                            }}
+                          />
+                        ) : null}
+                        <div 
+                          className={`w-5 h-5 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900 ${toToken.logoURI ? 'hidden' : ''}`}
+                        >
                           {toToken.symbol[0]}
                         </div>
                         <span className="hidden sm:inline">{toToken.symbol}</span>
@@ -1576,13 +1608,6 @@ const Swap = () => {
             </button>
           </div>
 
-          {/* Network Info */}
-          <div className="mt-6 p-4 bg-dark-900/30 border border-white/5 rounded-xl text-center">
-            <div className="flex items-center justify-center gap-2 text-sm text-gray-400">
-              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-              <span>Connected to <span className="text-brand-cyan font-semibold">Devnet</span></span>
-            </div>
-          </div>
         </div>
       </div>
       

@@ -63,6 +63,14 @@ export const KEDOLOG_MINT = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS
  */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
+/**
+ * USDT token mint address
+ * Tether USD stablecoin
+ * 
+ * Mainnet: Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB
+ */
+export const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB');
+
 // ============================================================================
 // NOTE: No need to hardcode other token mints!
 // The system dynamically discovers pools for any token at runtime.

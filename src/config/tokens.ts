@@ -2,7 +2,8 @@ import { PublicKey } from '@solana/web3.js';
 import { 
   SOL_MINT,
   KEDOLOG_MINT, 
-  USDC_MINT
+  USDC_MINT,
+  USDT_MINT
 } from './addresses';
 
 export interface TokenInfo {
@@ -31,12 +32,14 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     name: 'Solana',
     decimals: 9,
     coingeckoId: 'solana',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
   },
   KEDOLOG: {
     mint: KEDOLOG_MINT,
     symbol: 'KEDOL',
     name: 'Kedol Protocol Token',
     decimals: 9,
+    logoURI: undefined, // Add logo URI if available
   },
   USDC: {
     mint: USDC_MINT,
@@ -44,6 +47,15 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     name: 'USD Coin',
     decimals: 6,
     coingeckoId: 'usd-coin',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+  },
+  USDT: {
+    mint: USDT_MINT,
+    symbol: 'USDT',
+    name: 'Tether USD',
+    decimals: 6,
+    coingeckoId: 'tether',
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png',
   },
 };
 

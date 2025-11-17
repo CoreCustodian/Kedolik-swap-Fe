@@ -213,7 +213,21 @@ export const TokenSelectModal = ({
                         onClick={() => handleSelect(token)}
                         className="flex-1 flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2.5 sm:py-3 text-left"
                       >
-                        <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-brand rounded-full flex items-center justify-center text-xs sm:text-sm font-bold flex-shrink-0">
+                        {token.logoURI ? (
+                          <img 
+                            src={token.logoURI} 
+                            alt={token.symbol}
+                            className="w-8 h-8 sm:w-10 sm:h-10 rounded-full flex-shrink-0"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                              if (target.nextElementSibling) {
+                                (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                              }
+                            }}
+                          />
+                        ) : null}
+                        <div className={`w-8 h-8 sm:w-10 sm:h-10 bg-gradient-brand rounded-full flex items-center justify-center text-xs sm:text-sm font-bold flex-shrink-0 ${token.logoURI ? 'hidden' : ''}`}>
                           {token.symbol[0]}
                         </div>
                         <div className="flex-1 min-w-0">

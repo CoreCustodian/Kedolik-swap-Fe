@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance, getPoolCreationFee } from '../utils/amm';
-import { DEVNET_TOKENS, TokenInfo } from '../config/tokens';
+import { DEVNET_TOKENS, TokenInfo, getTokenByMint } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
@@ -347,14 +347,46 @@ const PoolCard = ({
   // Calculate user's share of the pool
   const userPoolShare = pool.lpSupply > 0 ? (userLpBalance / (pool.lpSupply / 1e9)) * 100 : 0;
   
+  // Get token info for logos
+  const token0Info = getTokenByMint(pool.token0Mint);
+  const token1Info = getTokenByMint(pool.token1Mint);
+  
   return (
     <div className="card p-4 sm:p-6 hover:scale-105 transition-transform">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 sm:gap-3">
-          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-brand rounded-full flex items-center justify-center text-white font-bold text-sm sm:text-base">
+          {token0Info?.logoURI ? (
+            <img 
+              src={token0Info.logoURI} 
+              alt={pool.token0Symbol}
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-full"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                if (target.nextElementSibling) {
+                  (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                }
+              }}
+            />
+          ) : null}
+          <div className={`w-8 h-8 sm:w-10 sm:h-10 bg-gradient-brand rounded-full flex items-center justify-center text-white font-bold text-sm sm:text-base ${token0Info?.logoURI ? 'hidden' : ''}`}>
             {pool.token0Symbol[0]}
           </div>
-          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-r from-brand-pink to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-sm sm:text-base -ml-3">
+          {token1Info?.logoURI ? (
+            <img 
+              src={token1Info.logoURI} 
+              alt={pool.token1Symbol}
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-full -ml-3"
+              onError={(e) => {
+                const target = e.target as HTMLImageElement;
+                target.style.display = 'none';
+                if (target.nextElementSibling) {
+                  (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                }
+              }}
+            />
+          ) : null}
+          <div className={`w-8 h-8 sm:w-10 sm:h-10 bg-gradient-to-r from-brand-pink to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-sm sm:text-base -ml-3 ${token1Info?.logoURI ? 'hidden' : ''}`}>
             {pool.token1Symbol[0]}
           </div>
           <div>
@@ -728,7 +760,21 @@ const CreatePoolModal = ({
             onClick={() => setShowToken0Modal(true)}
             className="w-full bg-dark-900/50 border border-white/10 hover:border-brand-cyan/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan transition-all text-left flex items-center gap-3"
           >
-            <div className="w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+            {token0.logoURI ? (
+              <img 
+                src={token0.logoURI} 
+                alt={token0.symbol}
+                className="w-8 h-8 rounded-full flex-shrink-0"
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  if (target.nextElementSibling) {
+                    (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                  }
+                }}
+              />
+            ) : null}
+            <div className={`w-8 h-8 bg-gradient-brand rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${token0.logoURI ? 'hidden' : ''}`}>
               {token0.symbol[0]}
             </div>
             <div className="flex-1">
@@ -775,7 +821,21 @@ const CreatePoolModal = ({
             onClick={() => setShowToken1Modal(true)}
             className="w-full bg-dark-900/50 border border-white/10 hover:border-brand-cyan/50 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan transition-all text-left flex items-center gap-3"
           >
-            <div className="w-8 h-8 bg-gradient-to-r from-brand-pink to-purple-600 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0">
+            {token1.logoURI ? (
+              <img 
+                src={token1.logoURI} 
+                alt={token1.symbol}
+                className="w-8 h-8 rounded-full flex-shrink-0"
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  target.style.display = 'none';
+                  if (target.nextElementSibling) {
+                    (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                  }
+                }}
+              />
+            ) : null}
+            <div className={`w-8 h-8 bg-gradient-to-r from-brand-pink to-purple-600 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${token1.logoURI ? 'hidden' : ''}`}>
               {token1.symbol[0]}
             </div>
             <div className="flex-1">
@@ -1260,12 +1320,48 @@ const RemoveLiquidityModal = ({
         <div className="overflow-y-auto px-6 py-4 custom-scrollbar">
         <div className="mb-6 p-4 bg-brand-cyan/10 border border-brand-cyan/30 rounded-lg">
           <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold">
-              {pool.token0Symbol[0]}
-            </div>
-            <div className="w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold -ml-3">
-              {pool.token1Symbol[0]}
-            </div>
+            {(() => {
+              const token0Info = getTokenByMint(pool.token0Mint);
+              const token1Info = getTokenByMint(pool.token1Mint);
+              return (
+                <>
+                  {token0Info?.logoURI ? (
+                    <img 
+                      src={token0Info.logoURI} 
+                      alt={pool.token0Symbol}
+                      className="w-10 h-10 rounded-full"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        if (target.nextElementSibling) {
+                          (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                        }
+                      }}
+                    />
+                  ) : null}
+                  <div className={`w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold ${token0Info?.logoURI ? 'hidden' : ''}`}>
+                    {pool.token0Symbol[0]}
+                  </div>
+                  {token1Info?.logoURI ? (
+                    <img 
+                      src={token1Info.logoURI} 
+                      alt={pool.token1Symbol}
+                      className="w-10 h-10 rounded-full -ml-3"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.style.display = 'none';
+                        if (target.nextElementSibling) {
+                          (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                        }
+                      }}
+                    />
+                  ) : null}
+                  <div className={`w-10 h-10 rounded-full bg-gradient-brand flex items-center justify-center text-sm font-bold -ml-3 ${token1Info?.logoURI ? 'hidden' : ''}`}>
+                    {pool.token1Symbol[0]}
+                  </div>
+                </>
+              );
+            })()}
             <span className="text-lg font-bold">{pool.token0Symbol}/{pool.token1Symbol}</span>
           </div>
           <p className="text-xs text-gray-400">Your LP Balance: <span className="text-brand-cyan font-semibold">{lpBalance.toFixed(6)}</span></p>
