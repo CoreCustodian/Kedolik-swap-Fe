@@ -16,6 +16,14 @@ export interface TokenInfo {
 }
 
 /**
+ * Get local logo path for a token mint address
+ * Logos are stored in public/tokens/{mint}.png
+ */
+export const getLocalTokenLogo = (mint: PublicKey): string => {
+  return `/tokens/${mint.toString()}.png`;
+};
+
+/**
  * Mainnet Token List
  * 
  * Core tokens supported by Kedolik DEX:
@@ -32,14 +40,14 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     name: 'Solana',
     decimals: 9,
     coingeckoId: 'solana',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+    logoURI: getLocalTokenLogo(SOL_MINT),
   },
   KEDOLOG: {
     mint: KEDOLOG_MINT,
     symbol: 'KEDOL',
     name: 'Kedol Protocol Token',
     decimals: 9,
-    logoURI: undefined, // Add logo URI if available
+    logoURI: getLocalTokenLogo(KEDOLOG_MINT),
   },
   USDC: {
     mint: USDC_MINT,
@@ -47,7 +55,7 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     name: 'USD Coin',
     decimals: 6,
     coingeckoId: 'usd-coin',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+    logoURI: getLocalTokenLogo(USDC_MINT),
   },
   USDT: {
     mint: USDT_MINT,
@@ -55,7 +63,7 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     name: 'Tether USD',
     decimals: 6,
     coingeckoId: 'tether',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.png',
+    logoURI: getLocalTokenLogo(USDT_MINT),
   },
 };
 
