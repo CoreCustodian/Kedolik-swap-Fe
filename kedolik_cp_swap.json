@@ -1,5 +1,5 @@
 {
-  "address": "4LyaQt2uNYX7zJABAVa56th8U68brWHWLioAYZSbCeEf",
+  "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL",
   "metadata": {
     "name": "kedolik_cp_swap",
     "version": "0.2.0",
@@ -71,7 +71,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": []
@@ -320,14 +320,14 @@
           "docs": [
             "Program to create an ATA for receiving position NFT"
           ],
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "system_program",
           "docs": [
             "To create a new program account"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": []
@@ -459,14 +459,14 @@
           "docs": [
             "The SPL program to perform token transfers"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "The SPL program 2022 to perform token transfers"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [
@@ -607,14 +607,14 @@
           "docs": [
             "The SPL program to perform token transfers"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "The SPL program 2022 to perform token transfers"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [
@@ -691,7 +691,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [
@@ -789,7 +789,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": []
@@ -867,7 +867,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [
@@ -1019,14 +1019,14 @@
           "docs": [
             "token Program"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "Token program 2022"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "vault_0_mint",
@@ -1414,7 +1414,7 @@
           "docs": [
             "Program to create mint account and mint tokens"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "token_0_program",
@@ -1433,21 +1433,21 @@
           "docs": [
             "Program to create an ATA for receiving position NFT"
           ],
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "system_program",
           "docs": [
             "To create a new program account"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "rent",
           "docs": [
             "Sysvar for program account"
           ],
-          "address": "SysvarRent111111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [
@@ -1783,7 +1783,7 @@
             "create pool fee account"
           ],
           "writable": true,
-          "address": "67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "observation_state",
@@ -1847,7 +1847,7 @@
           "docs": [
             "Program to create mint account and mint tokens"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "token_0_program",
@@ -1866,14 +1866,14 @@
           "docs": [
             "Program to create an ATA for receiving position NFT"
           ],
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "system_program",
           "docs": [
             "To create a new program account"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [
@@ -2750,14 +2750,14 @@
           "docs": [
             "token Program"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "Token program 2022"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         },
         {
           "name": "vault_0_mint",
@@ -2783,7 +2783,7 @@
           "docs": [
             "memo program"
           ],
-          "address": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+          "address": "EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL"
         }
       ],
       "args": [

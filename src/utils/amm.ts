@@ -333,19 +333,24 @@ export const getPoolCreationFee = async (
     const ammConfig = await (program.account as any).ammConfig.fetch(configAddress);
     
     // Pool creation fee is stored in lamports
-    const feeLamports = ammConfig.createPoolFee?.toNumber() || 0;
+    // Try both camelCase (Anchor conversion) and snake_case (raw IDL)
+    const feeLamports = ammConfig.createPoolFee?.toNumber() 
+                     || ammConfig.create_pool_fee?.toNumber() 
+                     || 0;
     const feeSOL = feeLamports / 1e9; // Convert lamports to SOL
     
-    console.log('💰 Pool creation fee from contract:', {
-      lamports: feeLamports,
-      SOL: feeSOL
-    });
+    // If fee is 0, it might mean the field doesn't exist or wasn't set
+    // Return 0.15 SOL as default (150_000_000 lamports)
+    if (feeSOL === 0) {
+      console.warn('⚠️ Pool creation fee is 0 or not found, using default 0.15 SOL');
+      return 0.15;
+    }
     
     return feeSOL;
   } catch (error) {
     console.error('Error fetching pool creation fee:', error);
-    // Fallback to default value if fetch fails
-    return 1;
+    // Fallback to 0.15 SOL (as documented) if fetch fails
+    return 0.15;
   }
 };
 
