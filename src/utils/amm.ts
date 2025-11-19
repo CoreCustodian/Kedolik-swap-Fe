@@ -49,6 +49,58 @@ export interface FeeConfig extends BaseFeeConfig {
 // Get all available fee tiers with computed addresses
 export const FEE_TIERS: FeeConfig[] = getFeeTiersWithAddresses(PROGRAM_ID);
 
+// Jito tip accounts (mainnet) - these are the official Jito tip accounts
+const JITO_TIP_ACCOUNTS = [
+  '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
+  'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
+  'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
+  'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',
+  'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
+  'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
+  'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
+  '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
+];
+
+/**
+ * Check if the RPC endpoint is a Jito endpoint
+ */
+function isJitoEndpoint(rpcUrl: string): boolean {
+  const url = rpcUrl.toLowerCase();
+  return url.includes('jito') || url.includes('mainnet.block-engine.jito.wtf');
+}
+
+/**
+ * Get a random Jito tip account
+ */
+function getJitoTipAccount(): PublicKey {
+  const randomIndex = Math.floor(Math.random() * JITO_TIP_ACCOUNTS.length);
+  return new PublicKey(JITO_TIP_ACCOUNTS[randomIndex]);
+}
+
+/**
+ * Add Jito tip instruction to transaction (must be LAST instruction)
+ * @param transaction - The transaction to add tip to
+ * @param feePayer - The account that will pay the tip
+ * @param tipLamports - Amount of lamports to tip (default: 10,000 = 0.00001 SOL)
+ */
+function addJitoTipInstruction(
+  transaction: Transaction,
+  feePayer: PublicKey,
+  tipLamports: number = 10_000
+): void {
+  const tipAccount = getJitoTipAccount();
+  console.log(`💰 Adding Jito tip: ${tipLamports} lamports to ${tipAccount.toString()}`);
+  
+  const tipInstruction = SystemProgram.transfer({
+    fromPubkey: feePayer,
+    toPubkey: tipAccount,
+    lamports: tipLamports,
+  });
+  
+  // CRITICAL: Tip instruction must be LAST
+  transaction.add(tipInstruction);
+}
+
 // Default AMM config: use updated KEDOLOG config
 export const AMM_CONFIG = KEDOLOG_CONFIG.AMM_CONFIG;
 
@@ -2933,6 +2985,28 @@ export const createPool = async (
     }
     
     transaction.add(initializeInstruction);
+    
+    // Check if using Jito endpoint and add tip instruction if needed
+    // CRITICAL: Tip instruction must be LAST in the transaction
+    try {
+      // Try to get RPC URL from connection or environment
+      let rpcUrl = '';
+      try {
+        rpcUrl = (connection as any)._rpcEndpoint || (connection as any).rpcEndpoint || '';
+      } catch {
+        // Fallback to environment variable
+        rpcUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_RPC_ENDPOINT || '';
+      }
+      
+      if (rpcUrl && isJitoEndpoint(rpcUrl)) {
+        console.log('🔍 Detected Jito endpoint - adding tip instruction...');
+        addJitoTipInstruction(transaction, walletPublicKey, 10_000); // 0.00001 SOL tip
+      } else {
+        console.log('ℹ️ Using standard RPC endpoint (no Jito tip required)');
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not detect RPC endpoint type, skipping Jito tip check');
+    }
     
     // Get latest blockhash right before sending
     console.log('📡 Getting fresh blockhash...');
