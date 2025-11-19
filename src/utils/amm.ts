@@ -62,14 +62,6 @@ const JITO_TIP_ACCOUNTS = [
 ];
 
 /**
- * Check if the RPC endpoint is a Jito endpoint
- */
-function isJitoEndpoint(rpcUrl: string): boolean {
-  const url = rpcUrl.toLowerCase();
-  return url.includes('jito') || url.includes('mainnet.block-engine.jito.wtf');
-}
-
-/**
  * Get a random Jito tip account
  */
 function getJitoTipAccount(): PublicKey {
