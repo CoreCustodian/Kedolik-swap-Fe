@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { fetchAllBalances, TokenBalance } from '../utils/balances';
 import { fetchPools, getLpMint } from '../utils/amm';
 import { getTokenList, getTokenByMint, getLocalTokenLogo } from '../config/tokens';
+import { getExplorerUrl, getExplorerAccountUrl } from '../config/addresses';
 import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
 import { PublicKey } from '@solana/web3.js';
 
@@ -295,7 +296,7 @@ const Profile = () => {
               </div>
               <div className="flex gap-3">
                 <a
-                  href={`https://solscan.io/account/${publicKey.toString()}`}
+                  href={getExplorerAccountUrl(publicKey.toString())}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-6 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-semibold border border-white/10 transition-all"
@@ -623,7 +624,7 @@ const Profile = () => {
                 {txHistory.map((tx, index) => (
                   <a
                     key={index}
-                    href={`https://solscan.io/tx/${tx.signature}`}
+                    href={getExplorerUrl(tx.signature)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="block p-4 bg-dark-900/50 rounded-xl border border-white/10 hover:border-brand-cyan/30 transition-all group"
@@ -663,7 +664,7 @@ const Profile = () => {
               <div className="font-semibold">Liquidity Pools</div>
             </a>
             <a
-              href={`https://solscan.io/account/${publicKey.toString()}`}
+              href={getExplorerAccountUrl(publicKey.toString())}
               target="_blank"
               rel="noopener noreferrer"
               className="p-6 bg-dark-900/50 rounded-xl border border-white/10 hover:border-brand-cyan/30 transition-all text-center group"

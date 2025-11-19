@@ -1,4 +1,5 @@
 import React from 'react';
+import { getExplorerUrl } from '../config/addresses';
 
 interface TransactionModalProps {
   isOpen: boolean;
@@ -64,7 +65,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             <p className="text-xs text-gray-400 mb-2">Transaction Signature:</p>
             <p className="text-xs font-mono text-brand-cyan break-all mb-3">{txSignature}</p>
             <a
-              href={`https://solscan.io/tx/${txSignature}?cluster=devnet`}
+              href={getExplorerUrl(txSignature)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center space-x-2 text-sm text-brand-pink hover:text-brand-cyan transition-colors"

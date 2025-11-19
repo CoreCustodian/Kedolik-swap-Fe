@@ -3207,7 +3207,8 @@ export const createPool = async (
 
       console.log('✅ Pool created successfully:', signature);
       console.log('📍 Pool State PDA:', poolState.toString());
-      console.log('🔗 View on Explorer:', `https://solscan.io/tx/${signature}?cluster=devnet`);
+      const { getExplorerUrl } = await import('../config/addresses');
+      console.log('🔗 View on Explorer:', getExplorerUrl(signature));
 
       return { tx: signature, poolState: poolState };
 

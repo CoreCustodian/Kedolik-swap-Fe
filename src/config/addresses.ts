@@ -174,6 +174,36 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('EGX4XLHooJ8vtMeyu6JRzudPM
 export const NETWORK = 'mainnet-beta' as const;
 
 /**
+ * Get Solscan explorer URL for a transaction signature
+ * @param signature Transaction signature
+ * @returns Solscan URL with correct cluster parameter
+ */
+export const getExplorerUrl = (signature: string): string => {
+  // For mainnet, no cluster parameter needed (defaults to mainnet)
+  // For devnet, add cluster parameter
+  const network = NETWORK as string;
+  if (network === 'devnet') {
+    return `https://solscan.io/tx/${signature}?cluster=devnet`;
+  }
+  return `https://solscan.io/tx/${signature}`;
+};
+
+/**
+ * Get Solscan explorer URL for an account address
+ * @param address Account address
+ * @returns Solscan URL with correct cluster parameter
+ */
+export const getExplorerAccountUrl = (address: string): string => {
+  // For mainnet, no cluster parameter needed (defaults to mainnet)
+  // For devnet, add cluster parameter
+  const network = NETWORK as string;
+  if (network === 'devnet') {
+    return `https://solscan.io/account/${address}?cluster=devnet`;
+  }
+  return `https://solscan.io/account/${address}`;
+};
+
+/**
  * RPC endpoint - SINGLE SOURCE OF TRUTH
  * ⚠️ IMPORTANT: This MUST be set in your .env file as VITE_RPC_ENDPOINT
  * 

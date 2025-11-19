@@ -476,7 +476,8 @@ export const executeMultiHopSwap = async (
     });
     
     console.log('✅ Transaction sent:', signature);
-  console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}?cluster=devnet`);
+    const { getExplorerUrl } = await import('../config/addresses');
+    console.log('🔗 Explorer:', getExplorerUrl(signature));
     
     console.log('⏳ Confirming transaction...');
     const { confirmTransactionWithBlockhash } = await import('./transactionConfirmation');

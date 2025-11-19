@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { getExplorerUrl } from '../config/addresses';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
@@ -61,7 +62,7 @@ export const Toast: React.FC<ToastProps> = ({
         <p className="text-sm font-medium break-words">{message}</p>
         {txSignature && (
           <a
-            href={`https://solscan.io/tx/${txSignature}?cluster=devnet`}
+            href={getExplorerUrl(txSignature)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-xs underline hover:text-gray-200 mt-1 inline-block"
