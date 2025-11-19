@@ -20,6 +20,7 @@ const Profile = () => {
   const [txHistory, setTxHistory] = useState<TxSig[]>([]);
   const [lpTokens, setLpTokens] = useState<Array<{
     poolAddress: string;
+    lpMint: string;
     token0Symbol: string;
     token1Symbol: string;
     lpBalance: number;
@@ -117,6 +118,7 @@ const Profile = () => {
         const tokenList = getTokenList();
         const lpBalances: Array<{
           poolAddress: string;
+          lpMint: string;
           token0Symbol: string;
           token1Symbol: string;
           lpBalance: number;
@@ -141,6 +143,7 @@ const Profile = () => {
               
               lpBalances.push({
                 poolAddress: pool.address.toString(),
+                lpMint: lpMint.toString(),
                 token0Symbol: token0?.symbol || 'Unknown',
                 token1Symbol: token1?.symbol || 'Unknown',
                 lpBalance,
@@ -150,6 +153,8 @@ const Profile = () => {
               
               console.log(`✅ Profile: Found LP position:`, {
                 pool: `${token0?.symbol || 'Unknown'}/${token1?.symbol || 'Unknown'}`,
+                poolAddress: pool.address.toString(),
+                lpMint: lpMint.toString(),
                 lpBalance: `${lpBalance.toFixed(6)} LP tokens`,
                 token0: {
                   symbol: token0?.symbol || 'Unknown',
@@ -379,6 +384,8 @@ const Profile = () => {
                   // Log token details when rendering
                   console.log(`🖼️ Profile: Rendering LP token card -`, {
                     pool: `${lp.token0Symbol}/${lp.token1Symbol}`,
+                    poolAddress: lp.poolAddress,
+                    lpMint: lp.lpMint,
                     token0: {
                       symbol: lp.token0Symbol,
                       mint: lp.token0Mint,
@@ -480,6 +487,24 @@ const Profile = () => {
                         </div>
                         <div className="text-xs font-mono text-gray-500 break-all">
                           {lp.poolAddress.slice(0, 8)}...{lp.poolAddress.slice(-8)}
+                        </div>
+                      </div>
+                      
+                      <div className="py-2 px-3 bg-dark-900/50 rounded-lg">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-gray-400">LP Token Address</span>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(lp.lpMint);
+                              alert('LP token address copied!');
+                            }}
+                            className="text-xs text-brand-cyan hover:text-brand-pink transition-colors"
+                          >
+                            📋 Copy
+                          </button>
+                        </div>
+                        <div className="text-xs font-mono text-gray-500 break-all">
+                          {lp.lpMint.slice(0, 8)}...{lp.lpMint.slice(-8)}
                         </div>
                       </div>
                     </div>
