@@ -2213,8 +2213,9 @@ export const addLiquidity = async (
       needsWrapToken1,
     });
     
-    // Build the transaction
+    // Build the transaction - set fee payer FIRST to ensure it's included
     const transaction = new Transaction();
+    transaction.feePayer = walletPublicKey;
     
     // Step 0: Create LP token account if it doesn't exist
     if (!lpAccountInfo) {
@@ -2281,6 +2282,46 @@ export const addLiquidity = async (
     transaction.feePayer = walletPublicKey;
     
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
+    
+    // Simulate first to get better error messages
+    console.log('🔍 Simulating transaction...');
+    try {
+      // Create a copy of the transaction for simulation
+      const simTx = Transaction.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false }));
+      simTx.recentBlockhash = blockhash;
+      simTx.feePayer = walletPublicKey;
+
+      const simulation = await connection.simulateTransaction(simTx);
+
+      if (simulation.value.err) {
+        console.error('❌ Simulation failed:', simulation.value.err);
+        console.error('📊 Simulation logs:', simulation.value.logs);
+        console.error('📊 Full simulation result:', JSON.stringify(simulation.value, null, 2));
+        throw new Error(`Simulation failed: ${JSON.stringify(simulation.value.err)}`);
+      }
+
+      console.log('✅ Simulation successful:', {
+        unitsConsumed: simulation.value.unitsConsumed,
+        logs: simulation.value.logs?.slice(0, 10), // First 10 logs
+      });
+    } catch (simError: any) {
+      console.error('❌ Simulation error:', simError);
+      console.error('Error type:', simError.constructor?.name);
+      console.error('Error message:', simError.message);
+      console.error('Error stack:', simError.stack);
+
+      // If simulation fails, try to get more details
+      if (simError.logs) {
+        console.error('📊 Simulation logs:', simError.logs);
+      }
+      if (simError.value?.err) {
+        console.error('📊 Simulation error value:', simError.value.err);
+        console.error('📊 Simulation error logs:', simError.value.logs);
+      }
+
+      // Re-throw to prevent sending a bad transaction
+      throw simError;
+    }
     
     console.log('✍️ Signing transaction...');
     const signedTransaction = await wallet.signTransaction(transaction);
@@ -2443,8 +2484,9 @@ export const removeLiquidity = async (
       minAmount1BN: minAmount1BN.toString(),
     });
     
-    // Build transaction
+    // Build transaction - set fee payer FIRST to ensure it's included
     const transaction = new Transaction();
+    transaction.feePayer = wallet.publicKey;
     
     // Step 0: Create token accounts if they don't exist
     const { createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');

@@ -790,14 +790,15 @@ const CreatePoolModal = ({
         
         <div className="mb-4">
           <label className="block text-sm text-gray-400 mb-2">Amount</label>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-stretch">
             <div className="flex-1">
               <input
                 type="number"
                 value={amount0}
                 onChange={(e) => setAmount0(e.target.value)}
+                onWheel={(e) => e.currentTarget.blur()}
                 placeholder="0.0"
-                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
               {amount0 && parseFloat(amount0) > 0 && token0UsdPrice > 0 && (
                 <div className="text-xs text-gray-500 mt-1 px-4">
@@ -807,7 +808,7 @@ const CreatePoolModal = ({
             </div>
             <button
               onClick={() => setAmount0(token0Balance.toString())}
-              className="px-4 py-2 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold"
+              className="px-4 py-3 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold self-stretch flex items-center"
             >
               MAX
             </button>
@@ -851,14 +852,15 @@ const CreatePoolModal = ({
         
         <div className="mb-6">
           <label className="block text-sm text-gray-400 mb-2">Amount</label>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-stretch">
             <div className="flex-1">
               <input
                 type="number"
                 value={amount1}
                 onChange={(e) => setAmount1(e.target.value)}
+                onWheel={(e) => e.currentTarget.blur()}
                 placeholder="0.0"
-                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
               {amount1 && parseFloat(amount1) > 0 && token1UsdPrice > 0 && (
                 <div className="text-xs text-gray-500 mt-1 px-4">
@@ -868,7 +870,7 @@ const CreatePoolModal = ({
             </div>
             <button
               onClick={() => setAmount1(token1Balance.toString())}
-              className="px-4 py-2 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold"
+              className="px-4 py-3 bg-brand-cyan/20 text-brand-cyan rounded-lg hover:bg-brand-cyan/30 transition-colors text-sm font-semibold self-stretch flex items-center"
             >
               MAX
             </button>
@@ -1110,14 +1112,15 @@ const AddLiquidityModal = ({
             <label className="text-sm text-gray-400">{pool.token0Symbol} Amount</label>
             <span className="text-xs text-gray-500">Balance: {balance0.toLocaleString()}</span>
                   </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-stretch">
             <div className="flex-1">
               <input
                 type="number"
                 value={amount0}
                 onChange={(e) => handleAmount0Change(e.target.value)}
+                onWheel={(e) => e.currentTarget.blur()}
                 placeholder="0.0"
-                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+                className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
               {amount0 && parseFloat(amount0) > 0 && token0UsdPrice > 0 && (
                 <div className="text-xs text-gray-500 mt-1 px-4">
@@ -1148,8 +1151,9 @@ const AddLiquidityModal = ({
             type="number"
             value={amount1}
             readOnly
+            onWheel={(e) => e.currentTarget.blur()}
             placeholder="0.0"
-            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none opacity-60"
+            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none opacity-60 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           />
           {amount1 && parseFloat(amount1) > 0 && token1UsdPrice > 0 && (
             <div className="text-xs text-gray-500 mt-1">
@@ -1395,9 +1399,10 @@ const RemoveLiquidityModal = ({
             type="number"
             value={lpAmount}
             onChange={(e) => setLpAmount(e.target.value)}
+            onWheel={(e) => e.currentTarget.blur()}
             placeholder="0.0"
             max={lpBalance}
-            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan"
+            className="w-full bg-dark-900/50 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-brand-cyan [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           />
         </div>
 
