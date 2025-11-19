@@ -2705,8 +2705,9 @@ export const createPool = async (
       tokensWereSwapped,
     });
     
-    // Build transaction
+    // Build transaction - set fee payer FIRST to ensure it's included
     const transaction = new Transaction();
+    transaction.feePayer = walletPublicKey;
     
     // Step 1: Create token accounts if they don't exist (CRITICAL!)
     if (needsCreateToken0Account) {
@@ -2805,6 +2806,39 @@ export const createPool = async (
     let signature: string;
     
     try {
+      // Debug: Log transaction details before sending
+      console.log('📋 Transaction details:', {
+        instructions: transaction.instructions.length,
+        feePayer: transaction.feePayer?.toString(),
+        recentBlockhash: transaction.recentBlockhash ? 'set' : 'missing',
+      });
+      
+      // Simulate first to get better error messages
+      console.log('🔍 Simulating transaction...');
+      try {
+        const simulation = await connection.simulateTransaction(signedTx, {
+          commitment: 'processed',
+        });
+        
+        if (simulation.value.err) {
+          console.error('❌ Simulation failed:', simulation.value.err);
+          console.error('📊 Simulation logs:', simulation.value.logs);
+          throw new Error(`Simulation failed: ${JSON.stringify(simulation.value.err)}`);
+        }
+        
+        console.log('✅ Simulation successful:', {
+          unitsConsumed: simulation.value.unitsConsumed,
+          logs: simulation.value.logs?.slice(0, 5), // First 5 logs
+        });
+      } catch (simError: any) {
+        console.error('❌ Simulation error:', simError);
+        // If simulation fails, try to get more details
+        if (simError.logs) {
+          console.error('📊 Simulation logs:', simError.logs);
+        }
+        throw simError;
+      }
+      
       console.log('📤 Sending transaction...');
       signature = await connection.sendRawTransaction(signedTx.serialize(), {
         skipPreflight: false,
@@ -2815,6 +2849,11 @@ export const createPool = async (
       console.log(`🔗 Transaction sent: ${signature}`);
     } catch (sendError: any) {
       console.error('❌ Error sending transaction:', sendError);
+      
+      // Try to get logs from the error if available
+      if (sendError.logs) {
+        console.error('📊 Transaction logs:', sendError.logs);
+      }
       
       // Check if it's "already processed" error - transaction might have succeeded!
       if (sendError.message && sendError.message.includes('already been processed')) {
