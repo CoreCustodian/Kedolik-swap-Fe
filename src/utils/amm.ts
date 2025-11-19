@@ -1,19 +1,19 @@
-import { 
-  Connection, 
-  PublicKey, 
+import {
+  Connection,
+  PublicKey,
   SystemProgram,
   SYSVAR_RENT_PUBKEY,
   Transaction,
   TransactionInstruction,
   Keypair,
 } from '@solana/web3.js';
-import { 
-  Program, 
-  AnchorProvider, 
-  Idl, 
+import {
+  Program,
+  AnchorProvider,
+  Idl,
   BN,
 } from '@coral-xyz/anchor';
-import { 
+import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -91,14 +91,32 @@ function addJitoTipInstruction(
   const tipAccount = getJitoTipAccount();
   console.log(`💰 Adding Jito tip: ${tipLamports} lamports to ${tipAccount.toString()}`);
   
+  // Create transfer instruction - SystemProgram.transfer automatically marks destination as writable
   const tipInstruction = SystemProgram.transfer({
     fromPubkey: feePayer,
     toPubkey: tipAccount,
     lamports: tipLamports,
   });
   
+  // Verify the tip account is marked as writable in the instruction
+  const tipAccountKey = tipInstruction.keys.find(key => key.pubkey.equals(tipAccount));
+  if (!tipAccountKey || !tipAccountKey.isWritable) {
+    console.error('❌ ERROR: Tip account is not writable in instruction!');
+    console.error('Tip account key:', tipAccountKey);
+    throw new Error('Failed to create valid Jito tip instruction - tip account must be writable');
+  }
+  
+  console.log(`✅ Tip instruction created - tip account is writable: ${tipAccountKey.isWritable}`);
+  
   // CRITICAL: Tip instruction must be LAST
   transaction.add(tipInstruction);
+  
+  // Double-check it's the last instruction
+  const lastIx = transaction.instructions[transaction.instructions.length - 1];
+  if (lastIx !== tipInstruction) {
+    console.error('❌ ERROR: Tip instruction is not the last instruction!');
+    throw new Error('Tip instruction must be the last instruction in the transaction');
+  }
 }
 
 // Default AMM config: use updated KEDOLOG config
@@ -142,62 +160,62 @@ async function findIntermediatePool(
   if (inputMint.equals(ADDRESSES.USDC_MINT)) {
     return null;
   }
-  
+
   // Direct SOL swaps don't need intermediate pools (SOL/USDC pool is already passed)
   if (inputMint.equals(ADDRESSES.SOL_MINT)) {
     return null;
   }
-  
+
   // KEDOLOG doesn't need intermediate pools (KEDOLOG/USDC pool is already passed)
   if (inputMint.equals(ADDRESSES.KEDOLOG_MINT)) {
     return null;
   }
-  
+
   // Check cache first
   const cacheKey = inputMint.toString();
   if (intermediatePoolCache.has(cacheKey)) {
     return intermediatePoolCache.get(cacheKey) || null;
   }
-  
+
   console.log(`🔍 Searching for intermediate pool: ${getTokenSymbol(inputMint)}/SOL...`);
-  
+
   try {
     // Get all pools from cache or fetch
     const pools = await fetchPools(connection, program);
-    
+
     // Find a pool that has (inputToken, SOL) or (SOL, inputToken)
     const intermediatePool = pools.find(pool => {
       const hasInputToken = pool.token0Mint.equals(inputMint) || pool.token1Mint.equals(inputMint);
       const hasSol = pool.token0Mint.equals(ADDRESSES.SOL_MINT) || pool.token1Mint.equals(ADDRESSES.SOL_MINT);
       return hasInputToken && hasSol;
     });
-    
+
     if (!intermediatePool) {
       console.warn(`⚠️ No ${getTokenSymbol(inputMint)}/SOL pool found for 1-hop pricing`);
       intermediatePoolCache.set(cacheKey, null);
       return null;
     }
-    
+
     // Determine vault order based on token positions
     const isToken0Input = intermediatePool.token0Mint.equals(inputMint);
     const tokenVault = isToken0Input ? intermediatePool.token0Vault : intermediatePool.token1Vault;
     const solVault = isToken0Input ? intermediatePool.token1Vault : intermediatePool.token0Vault;
-    
+
     const result: IntermediatePoolInfo = {
       poolAddress: intermediatePool.address,
       tokenVault,
       solVault,
     };
-    
+
     console.log(`✅ Found intermediate pool:`, {
       pool: result.poolAddress.toString(),
       tokenVault: result.tokenVault.toString(),
       solVault: result.solVault.toString(),
     });
-    
+
     // Cache the result
     intermediatePoolCache.set(cacheKey, result);
-    
+
     return result;
   } catch (error) {
     console.error(`❌ Error finding intermediate pool:`, error);
@@ -222,10 +240,10 @@ export const createWrapSOLInstructions = async (
 ): Promise<{ instructions: TransactionInstruction[]; wsolAccount: PublicKey }> => {
   const instructions: TransactionInstruction[] = [];
   const wsolAccount = await getAssociatedTokenAddress(WSOL_MINT, owner);
-  
+
   // Check if WSOL account exists
   const accountInfo = await connection.getAccountInfo(wsolAccount);
-  
+
   if (!accountInfo) {
     // Create WSOL token account
     instructions.push(
@@ -237,7 +255,7 @@ export const createWrapSOLInstructions = async (
       )
     );
   }
-  
+
   // Transfer SOL to the WSOL account
   instructions.push(
     SystemProgram.transfer({
@@ -246,10 +264,10 @@ export const createWrapSOLInstructions = async (
       lamports: Math.floor(amount * 1e9),
     })
   );
-  
+
   // Sync native (this updates the WSOL balance)
   instructions.push(createSyncNativeInstruction(wsolAccount));
-  
+
   return { instructions, wsolAccount };
 };
 
@@ -261,7 +279,7 @@ export const createUnwrapSOLInstruction = async (
   owner: PublicKey
 ): Promise<TransactionInstruction> => {
   const wsolAccount = await getAssociatedTokenAddress(WSOL_MINT, owner);
-  
+
   // Close the WSOL account, which automatically unwraps and returns SOL
   return createCloseAccountInstruction(
     wsolAccount,
@@ -281,53 +299,53 @@ export const unwrapSOL = async (
 ): Promise<string> => {
   try {
     console.log('🌊 Unwrapping WSOL to native SOL...');
-    
+
     const wsolAccount = await getAssociatedTokenAddress(WSOL_MINT, walletPublicKey);
-    
+
     // Check if WSOL account exists and has balance
     const accountInfo = await connection.getAccountInfo(wsolAccount);
     if (!accountInfo) {
       throw new Error('No WSOL account found. Nothing to unwrap.');
     }
-    
+
     // Get WSOL balance
     const balance = await connection.getTokenAccountBalance(wsolAccount);
     const wsolBalance = parseFloat(balance.value.amount) / 1e9;
-    
+
     if (wsolBalance === 0) {
       throw new Error('WSOL balance is zero. Nothing to unwrap.');
     }
-    
+
     console.log(`💰 Unwrapping ${wsolBalance} WSOL...`);
-    
+
     // Create close account instruction
     const closeInstruction = createCloseAccountInstruction(
       wsolAccount,
       walletPublicKey,
       walletPublicKey
     );
-    
+
     const transaction = new Transaction().add(closeInstruction);
-    
+
     // Get fresh blockhash
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
-    
+
     // Sign and send
     const signedTransaction = await wallet.signTransaction(transaction);
     const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'processed',
     });
-    
+
     // Confirm
     await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'processed');
-    
+
     console.log(`✅ Unwrapped ${wsolBalance} WSOL to SOL`);
     return signature;
   } catch (error) {
@@ -350,7 +368,7 @@ export const getTokenBalance = async (
       const balance = await connection.getBalance(owner);
       return balance / 1e9; // Convert lamports to SOL
     }
-    
+
     // Otherwise, fetch SPL token balance
     const tokenAccount = await getAssociatedTokenAddress(mint, owner);
     const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
@@ -387,24 +405,24 @@ export const getPoolCreationFee = async (
   try {
     const program = getProgram(connection, wallet);
     const configAddress = ammConfigAddress || AMM_CONFIG;
-    
+
     // Fetch AMM config account
     const ammConfig = await (program.account as any).ammConfig.fetch(configAddress);
-    
+
     // Pool creation fee is stored in lamports
     // Try both camelCase (Anchor conversion) and snake_case (raw IDL)
-    const feeLamports = ammConfig.createPoolFee?.toNumber() 
-                     || ammConfig.create_pool_fee?.toNumber() 
-                     || 0;
+    const feeLamports = ammConfig.createPoolFee?.toNumber()
+      || ammConfig.create_pool_fee?.toNumber()
+      || 0;
     const feeSOL = feeLamports / 1e9; // Convert lamports to SOL
-    
+
     // If fee is 0, it might mean the field doesn't exist or wasn't set
     // Return 0.15 SOL as default (150_000_000 lamports)
     if (feeSOL === 0) {
       console.warn('⚠️ Pool creation fee is 0 or not found, using default 0.15 SOL');
       return 0.15;
     }
-    
+
     return feeSOL;
   } catch (error) {
     console.error('Error fetching pool creation fee:', error);
@@ -508,13 +526,13 @@ export const collectCreatorFees = async (
   try {
     const program = getProgram(connection, wallet);
     const authority = getAuthority();
-    
+
     // Get token programs
     const token0Info = await connection.getAccountInfo(token0Mint);
     const token1Info = await connection.getAccountInfo(token1Mint);
     const token0Program = token0Info?.owner || TOKEN_PROGRAM_ID;
     const token1Program = token1Info?.owner || TOKEN_PROGRAM_ID;
-    
+
     // Get vault addresses
     const [vault0] = PublicKey.findProgramAddressSync(
       [Buffer.from('pool_vault'), poolAddress.toBuffer(), token0Mint.toBuffer()],
@@ -524,7 +542,7 @@ export const collectCreatorFees = async (
       [Buffer.from('pool_vault'), poolAddress.toBuffer(), token1Mint.toBuffer()],
       PROGRAM_ID
     );
-    
+
     // Get or create creator token accounts
     const creatorToken0 = await getAssociatedTokenAddress(
       token0Mint,
@@ -538,10 +556,10 @@ export const collectCreatorFees = async (
       false,
       token1Program
     );
-    
+
     // Check if accounts exist and create if needed
     const tx = new Transaction();
-    
+
     const token0AccountInfo = await connection.getAccountInfo(creatorToken0);
     if (!token0AccountInfo) {
       tx.add(
@@ -555,7 +573,7 @@ export const collectCreatorFees = async (
         )
       );
     }
-    
+
     const token1AccountInfo = await connection.getAccountInfo(creatorToken1);
     if (!token1AccountInfo) {
       tx.add(
@@ -569,7 +587,7 @@ export const collectCreatorFees = async (
         )
       );
     }
-    
+
     // Call collect_creator_fee instruction
     const collectIx = await (program.methods as any)
       .collectCreatorFee()
@@ -590,13 +608,13 @@ export const collectCreatorFees = async (
         systemProgram: SystemProgram.programId,
       })
       .instruction();
-    
+
     tx.add(collectIx);
-    
+
     // Send transaction
     const signature = await wallet.sendTransaction(tx, connection);
     await connection.confirmTransaction(signature, 'confirmed');
-    
+
     console.log('✅ Creator fees collected:', signature);
     return signature;
   } catch (error) {
@@ -704,7 +722,7 @@ export const fetchPools = async (
     console.log('📦 Using cached pools (' + Math.round((POOL_CACHE_TTL - (now - poolCache.timestamp)) / 1000) + 's remaining)');
     return poolCache.pools;
   }
-  
+
   // Prevent concurrent fetches
   if (isFetchingPools) {
     console.log('⏳ Pool fetch already in progress, waiting...');
@@ -714,36 +732,36 @@ export const fetchPools = async (
       return poolCache.pools;
     }
   }
-  
+
   isFetchingPools = true;
-  
+
   try {
     console.log('🔄 Fetching pools from RPC...');
     console.log('📍 PROGRAM_ID being used:', PROGRAM_ID.toString());
     console.log('📍 Expected program (unified fee receiver):', '2LVtzKZ7DwoowxeKnwmia6JGKdZy9cjAzH62RrburWtq');
     const program = getProgram(connection, wallet);
     console.log('📍 Program address from program object:', program.programId.toString());
-    
+
     // Fetch all pool accounts
     const pools = await (program.account as any).poolState.all();
     console.log('📊 Found', pools.length, 'pools from program:', program.programId.toString());
-    
+
     const poolInfos: PoolInfo[] = [];
-    
+
     for (const pool of pools) {
       const data = pool.account as any;
-      
+
       // Get vault balances
       const token0VaultInfo = await connection.getTokenAccountBalance(data.token0Vault);
       const token1VaultInfo = await connection.getTokenAccountBalance(data.token1Vault);
-      
+
       // Get token metadata
       const token0MintInfo = await connection.getParsedAccountInfo(data.token0Mint);
       const token1MintInfo = await connection.getParsedAccountInfo(data.token1Mint);
-      
+
       const token0Decimals = (token0MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
       const token1Decimals = (token1MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
-      
+
       // Parse fee data (these are in base units)
       // Log raw values for debugging
       const rawProtocolFeesToken0 = data.protocolFeesToken0?.toString() || '0';
@@ -752,10 +770,10 @@ export const fetchPools = async (
       const rawFundFeesToken1 = data.fundFeesToken1?.toString() || '0';
       const rawCreatorFeesToken0 = data.creatorFeesToken0?.toString() || '0';
       const rawCreatorFeesToken1 = data.creatorFeesToken1?.toString() || '0';
-      
-      if (rawProtocolFeesToken0 !== '0' || rawProtocolFeesToken1 !== '0' || 
-          rawFundFeesToken0 !== '0' || rawFundFeesToken1 !== '0' ||
-          rawCreatorFeesToken0 !== '0' || rawCreatorFeesToken1 !== '0') {
+
+      if (rawProtocolFeesToken0 !== '0' || rawProtocolFeesToken1 !== '0' ||
+        rawFundFeesToken0 !== '0' || rawFundFeesToken1 !== '0' ||
+        rawCreatorFeesToken0 !== '0' || rawCreatorFeesToken1 !== '0') {
         console.log(`💰 Pool ${pool.publicKey.toString().slice(0, 8)}... has fees:`, {
           protocolToken0: rawProtocolFeesToken0,
           protocolToken1: rawProtocolFeesToken1,
@@ -767,14 +785,14 @@ export const fetchPools = async (
           token1Decimals,
         });
       }
-      
+
       const protocolFeesToken0 = Number(rawProtocolFeesToken0) / Math.pow(10, token0Decimals);
       const protocolFeesToken1 = Number(rawProtocolFeesToken1) / Math.pow(10, token1Decimals);
       const fundFeesToken0 = Number(rawFundFeesToken0) / Math.pow(10, token0Decimals);
       const fundFeesToken1 = Number(rawFundFeesToken1) / Math.pow(10, token1Decimals);
       const creatorFeesToken0 = Number(rawCreatorFeesToken0) / Math.pow(10, token0Decimals);
       const creatorFeesToken1 = Number(rawCreatorFeesToken1) / Math.pow(10, token1Decimals);
-      
+
       // Fetch trade fee rate from pool's specific AMM config
       let tradeFeeRate = 100; // Default 0.01% (100 parts per million)
       const poolAmmConfig = data.ammConfig || AMM_CONFIG;
@@ -786,16 +804,16 @@ export const fetchPools = async (
       } catch (error) {
         console.warn(`Could not fetch AMM config for pool ${pool.publicKey.toString().slice(0, 8)}..., using default fee rate`);
       }
-      
+
       const token0Symbol = getTokenSymbol(data.token0Mint);
       const token1Symbol = getTokenSymbol(data.token1Mint);
-      
+
       console.log(`   Tokens: ${token0Symbol}/${token1Symbol}`);
       console.log(`   Token0: ${data.token0Mint.toString()}`);
       console.log(`   Token1: ${data.token1Mint.toString()}`);
       console.log(`   🏦 Token0 Vault: ${data.token0Vault.toString()}`);
       console.log(`   🏦 Token1 Vault: ${data.token1Vault.toString()}`);
-      
+
       poolInfos.push({
         address: pool.publicKey,
         token0Mint: data.token0Mint,
@@ -821,21 +839,21 @@ export const fetchPools = async (
         ammConfig: poolAmmConfig, // Store pool's AMM config
       });
     }
-    
+
     // Cache the results
     poolCache = {
       pools: poolInfos,
       timestamp: Date.now()
     };
-    
+
     console.log('✅ Pools cached:', poolInfos.length, 'pools');
-    
+
     // Find and display KEDOLOG/USDC pool vault addresses
-    const kedologPool = poolInfos.find(p => 
+    const kedologPool = poolInfos.find(p =>
       (p.token0Symbol === 'KEDOLOG' && p.token1Symbol === 'USDC') ||
       (p.token0Symbol === 'USDC' && p.token1Symbol === 'KEDOLOG')
     );
-    
+
     if (kedologPool) {
       console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
       console.log('📝 KEDOLOG/USDC POOL - COPY THESE ADDRESSES:');
@@ -859,7 +877,7 @@ export const fetchPools = async (
       console.log('');
       console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
     }
-    
+
     return poolInfos;
   } catch (error) {
     console.error('Error fetching pools:', error);
@@ -886,19 +904,19 @@ export const getTokenSymbol = (mint: PublicKey): string => {
   if (isNativeSOL(mint)) {
     return 'SOL';
   }
-  
+
   // Use the token configuration
   const tokenInfo = getTokenByMint(mint);
-  
+
   if (tokenInfo) {
     return tokenInfo.symbol;
   }
-  
+
   // Fallback using centralized addresses from config
   if (mint.equals(ADDRESSES.KEDOLOG_MINT)) return 'KEDOLOG';
   if (mint.equals(ADDRESSES.USDC_MINT)) return 'USDC';
   if (mint.equals(ADDRESSES.SOL_MINT)) return 'SOL';
-  
+
   // For unknown tokens, return shortened address
   return mint.toString().substring(0, 8) + '...';
 };
@@ -913,17 +931,17 @@ export const calculateSwapOutput = (
   if (reserveIn === 0 || reserveOut === 0) {
     return { amountOut: 0, priceImpact: 0, fee: 0 };
   }
-  
+
   // Calculate fee
   const fee = (amountIn * tradeFeeRate) / 1000000;
   const amountInAfterFee = amountIn - fee;
-  
+
   // Constant product formula: x * y = k
   const amountOut = (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
-  
+
   // Calculate price impact
   const priceImpact = ((amountIn / reserveIn) / (amountOut / reserveOut) - 1) * 100;
-  
+
   return {
     amountOut,
     priceImpact: Math.abs(priceImpact),
@@ -944,22 +962,22 @@ export const swapBaseInput = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     // Check if we need to wrap/unwrap SOL
     const needsWrapInput = isNativeSOL(inputMint);
     const needsUnwrapOutput = isNativeSOL(outputMint);
-    
+
     console.log('🌊 SOL handling:', { needsWrapInput, needsUnwrapOutput });
-    
+
     // Sort tokens
     const { token0, token1 } = sortTokenMints(inputMint, outputMint);
     const isInputToken0 = inputMint.equals(token0);
-    
+
     // Get PDAs
     const poolState = getPoolState(token0, token1);
     const authority = getAuthority();
     const observationState = getObservationState(poolState);
-    
+
     // Fetch pool data to get vault addresses
     console.log('📦 Fetching pool data for swap...');
     const poolData = await (program.account as any).poolState.fetch(poolState);
@@ -969,28 +987,28 @@ export const swapBaseInput = async (
       token0Reserve: poolData.token0Reserve?.toString(),
       token1Reserve: poolData.token1Reserve?.toString(),
     });
-    
+
     const inputVault = isInputToken0 ? poolData.token0Vault : poolData.token1Vault;
     const outputVault = isInputToken0 ? poolData.token1Vault : poolData.token0Vault;
-    
+
     console.log('🔑 Vault selection:', {
       isInputToken0,
       inputVault: inputVault.toString(),
       outputVault: outputVault.toString(),
     });
-    
+
     // Get user token accounts
     const userInputAccount = await getAssociatedTokenAddress(
       inputMint,
       walletPublicKey
     );
-    
+
     // For WSOL output, we'll create a temporary account and close it in the same transaction
     // This allows us to receive native SOL in ONE transaction!
     let userOutputAccount: PublicKey;
     let needsCreateOutputAccount = false;
     let tempWsolKeypair: Keypair | null = null;
-    
+
     if (needsUnwrapOutput) {
       // Create a temporary WSOL account that we'll close immediately
       tempWsolKeypair = Keypair.generate();
@@ -1003,7 +1021,7 @@ export const swapBaseInput = async (
         outputMint,
         walletPublicKey
       );
-      
+
       // Check if the output account exists
       const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
       if (!outputAccountInfo) {
@@ -1013,18 +1031,18 @@ export const swapBaseInput = async (
         console.log('✅ Output token account exists');
       }
     }
-    
+
     // Get token programs
     const inputTokenProgram = TOKEN_PROGRAM_ID;
     const outputTokenProgram = TOKEN_PROGRAM_ID;
-    
+
     // Get token decimals from mint accounts
     const inputMintInfo = await connection.getParsedAccountInfo(inputMint);
     const outputMintInfo = await connection.getParsedAccountInfo(outputMint);
-    
+
     const inputDecimals = (inputMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
     const outputDecimals = (outputMintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
-    
+
     console.log('💱 Swap details:', {
       inputMint: inputMint.toString(),
       outputMint: outputMint.toString(),
@@ -1034,14 +1052,14 @@ export const swapBaseInput = async (
       minimumAmountOut,
       isInputToken0,
     });
-    
+
     // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
     const amountInScaled = Math.floor(amountIn * Math.pow(10, inputDecimals));
     const minAmountOutScaled = Math.floor(minimumAmountOut * Math.pow(10, outputDecimals));
     // Use toFixed(0) to prevent scientific notation for large numbers
     const amountInBN = new BN(amountInScaled.toFixed(0));
     const minAmountOutBN = new BN(minAmountOutScaled.toFixed(0));
-    
+
     console.log('📤 Preparing swap transaction:', {
       amountInBN: amountInBN.toString(),
       minAmountOutBN: minAmountOutBN.toString(),
@@ -1052,20 +1070,20 @@ export const swapBaseInput = async (
       inputVault: inputVault.toString(),
       outputVault: outputVault.toString(),
     });
-    
+
     // Build the transaction
     const transaction = new Transaction();
     const signers: Keypair[] = [];
-    
+
     // Step 0: Create output account if needed
     if (needsCreateOutputAccount) {
       if (tempWsolKeypair) {
         // For WSOL unwrap, create a temporary account
         console.log('🔨 Creating temporary WSOL account...');
-        
+
         // Calculate rent exemption for token account
         const rentExemption = await connection.getMinimumBalanceForRentExemption(165); // Token account size
-        
+
         // Create the temporary account
         const createAccountIx = SystemProgram.createAccount({
           fromPubkey: walletPublicKey,
@@ -1074,16 +1092,16 @@ export const swapBaseInput = async (
           space: 165,
           programId: TOKEN_PROGRAM_ID,
         });
-        
+
         // Initialize the token account
         const initAccountIx = createInitializeAccount3Instruction(
           tempWsolKeypair.publicKey,
           outputMint,
           walletPublicKey
         );
-        
+
         transaction.add(createAccountIx, initAccountIx);
-        
+
         // Add the temp keypair as a signer
         signers.push(tempWsolKeypair);
       } else {
@@ -1098,7 +1116,7 @@ export const swapBaseInput = async (
         transaction.add(createAtaIx);
       }
     }
-    
+
     // Step 1: If input is SOL, wrap it first
     if (needsWrapInput) {
       console.log('🌊 Wrapping SOL for input...');
@@ -1109,7 +1127,7 @@ export const swapBaseInput = async (
       );
       transaction.add(...wrapInstructions);
     }
-    
+
     // Step 2: Build the swap instruction
     console.log('🚀 Building swap instruction...');
     const swapInstruction = await program.methods
@@ -1130,9 +1148,9 @@ export const swapBaseInput = async (
         observationState,
       })
       .instruction();
-    
+
     transaction.add(swapInstruction);
-    
+
     // Step 3: If output is SOL using temp account, close it to unwrap
     if (needsUnwrapOutput && tempWsolKeypair) {
       console.log('🌊 Adding unwrap SOL instruction (close temp account)...');
@@ -1143,47 +1161,47 @@ export const swapBaseInput = async (
       );
       transaction.add(unwrapInstruction);
     }
-    
+
     // Execute transaction - get fresh blockhash right before sending
     console.log('📡 Getting fresh blockhash...');
-    
+
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (processed - freshest)`);
-    
+
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
-    
+
     console.log('✍️ Signing transaction...');
-    
+
     // If we have additional signers (temp account), we need to sign them first
     if (signers.length > 0) {
       console.log(`🔑 Pre-signing with ${signers.length} additional signer(s)...`);
       transaction.partialSign(...signers);
     }
-    
+
     // Then sign with wallet
     const signedTransaction = await wallet.signTransaction(transaction);
-    
+
     console.log('📤 Sending transaction...');
     const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
       maxRetries: 3,
     });
-    
+
     console.log(`🔗 Transaction sent: ${signature}`);
-    
+
     console.log('⏳ Confirming transaction...');
     const confirmation = await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'confirmed');
-    
+
     if (confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
-    
+
     console.log('✅ Swap successful!');
     return signature;
   } catch (error) {
@@ -1205,18 +1223,18 @@ export const swapWithKedologDiscount = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     console.log('💰 Swapping with KEDOLOG discount - inputs:', {
       inputMint: inputMint.toString(),
       outputMint: outputMint.toString(),
       amountIn,
       minimumAmountOut,
     });
-    
+
     // Get protocol token config
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     console.log('📊 Protocol Token Config:', protocolTokenConfig.toString());
-    
+
     // Fetch config to get treasury, protocol token mint, and reference pool addresses
     const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
     console.log('⚙️ Config loaded:', {
@@ -1227,44 +1245,44 @@ export const swapWithKedologDiscount = async (
       solUsdcPool: config.solUsdcPool?.toString() || 'Not set',
       kedologSolPool: config.kedologSolPool?.toString() || 'Not set',
     });
-    
+
     // Sort tokens
     const { token0, token1 } = sortTokenMints(inputMint, outputMint);
     const poolState = getPoolState(token0, token1);
     const authority = getAuthority();
-    
+
     console.log('🏊 Pool info:', {
       poolState: poolState.toString(),
       token0: token0.toString(),
       token1: token1.toString(),
     });
-    
+
     // Determine token programs
     const inputTokenInfo = await connection.getAccountInfo(inputMint);
     const outputTokenInfo = await connection.getAccountInfo(outputMint);
     const inputTokenProgram = inputTokenInfo?.owner || TOKEN_PROGRAM_ID;
     const outputTokenProgram = outputTokenInfo?.owner || TOKEN_PROGRAM_ID;
     const protocolTokenProgram = TOKEN_PROGRAM_ID; // KEDOLOG is standard SPL token
-    
+
     // Convert amounts to BN
     const inputTokenData = getTokenByMint(inputMint);
     const outputTokenData = getTokenByMint(outputMint);
     const inputDecimals = inputTokenData?.decimals || 9;
     const outputDecimals = outputTokenData?.decimals || 9;
-    
+
     // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
     const amountInScaled = Math.floor(amountIn * Math.pow(10, inputDecimals));
     const minAmountOutScaled = Math.floor(minimumAmountOut * Math.pow(10, outputDecimals));
     // Use toFixed(0) to prevent scientific notation for large numbers
     const amountInBN = new BN(amountInScaled.toFixed(0));
     const minAmountOutBN = new BN(minAmountOutScaled.toFixed(0));
-    
+
     // Calculate expected protocol fee for debugging
     const protocolFeeRate = 500; // 0.05% in basis points
     const protocolFeeAmount = (amountIn * protocolFeeRate) / 1000000;
     const kedologPerUsd = config.protocolTokenPerUsd ? Number(config.protocolTokenPerUsd) / 1e9 : 10;
     const estimatedKedologFee = protocolFeeAmount * kedologPerUsd;
-    
+
     console.log('💱 Amounts:', {
       amountIn,
       amountInBN: amountInBN.toString(),
@@ -1273,7 +1291,7 @@ export const swapWithKedologDiscount = async (
       kedologPerUsd,
       estimatedKedologFee: estimatedKedologFee.toFixed(6),
     });
-    
+
     // Get vault PDAs
     const [inputVault] = PublicKey.findProgramAddressSync(
       [Buffer.from('pool_vault'), poolState.toBuffer(), inputMint.toBuffer()],
@@ -1283,22 +1301,22 @@ export const swapWithKedologDiscount = async (
       [Buffer.from('pool_vault'), poolState.toBuffer(), outputMint.toBuffer()],
       PROGRAM_ID
     );
-    
+
     // Get observation state
     const poolData = await (program.account as any).poolState.fetch(poolState);
     const observationState = poolData.observationKey;
-    
+
     // Create transaction
     const transaction = new Transaction();
-    
+
     // Handle SOL wrapping if needed (Step 1: Wrap SOL)
     const needsInputWrap = isNativeSOL(inputMint);
     const needsOutputWrap = isNativeSOL(outputMint);
-    
+
     // Get or create user token accounts
     let userInputAccount: PublicKey;
     let userOutputAccount: PublicKey;
-    
+
     if (needsInputWrap) {
       // Use WSOL account for input
       userInputAccount = await getAssociatedTokenAddress(
@@ -1307,7 +1325,7 @@ export const swapWithKedologDiscount = async (
         false,
         inputTokenProgram
       );
-      
+
       console.log('🌯 Wrapping SOL input...');
       const { instructions: wrapInstructions } = await createWrapSOLInstructions(
         connection,
@@ -1323,7 +1341,7 @@ export const swapWithKedologDiscount = async (
         inputTokenProgram
       );
     }
-    
+
     if (needsOutputWrap) {
       // Use WSOL account for output
       userOutputAccount = await getAssociatedTokenAddress(
@@ -1332,7 +1350,7 @@ export const swapWithKedologDiscount = async (
         false,
         outputTokenProgram
       );
-      
+
       // Create WSOL account if it doesn't exist
       const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
       if (!outputAccountInfo) {
@@ -1354,7 +1372,7 @@ export const swapWithKedologDiscount = async (
         false,
         outputTokenProgram
       );
-      
+
       // Create output account if it doesn't exist
       const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
       if (!outputAccountInfo) {
@@ -1370,7 +1388,7 @@ export const swapWithKedologDiscount = async (
         );
       }
     }
-    
+
     // Get user's KEDOLOG account
     const userKedologAccount = await getAssociatedTokenAddress(
       config.protocolTokenMint,
@@ -1378,25 +1396,25 @@ export const swapWithKedologDiscount = async (
       false,
       protocolTokenProgram
     );
-    
+
     // Check if user has KEDOLOG account
     const kedologAccountInfo = await connection.getAccountInfo(userKedologAccount);
     if (!kedologAccountInfo) {
       throw new Error('You need a KEDOLOG token account. Please acquire some KEDOLOG tokens first.');
     }
-    
+
     // Get treasury KEDOLOG account from AMM config fee_receiver (NEW!)
     // The contract now validates that treasury.owner == amm_config.fee_receiver
     console.log('💰 Fetching fee receiver from AMM config...');
     const ammConfigData = await (program.account as any).ammConfig.fetch(AMM_CONFIG);
     const feeReceiver = ammConfigData.feeReceiver || ammConfigData.fundOwner;
-    
+
     if (!feeReceiver) {
       throw new Error('Could not find fee receiver in AMM config');
     }
-    
+
     console.log('✅ Fee receiver from AMM config:', feeReceiver.toString());
-    
+
     // Get the fee receiver's KEDOLOG token account (this is the correct treasury)
     const treasuryKedologAccount = await getAssociatedTokenAddress(
       config.protocolTokenMint,
@@ -1404,9 +1422,9 @@ export const swapWithKedologDiscount = async (
       false,
       protocolTokenProgram
     );
-    
+
     console.log('💰 Treasury KEDOLOG account:', treasuryKedologAccount.toString());
-    
+
     // Check if treasury KEDOLOG account exists, create if needed
     const treasuryAccountInfo = await connection.getAccountInfo(treasuryKedologAccount);
     if (!treasuryAccountInfo) {
@@ -1424,240 +1442,240 @@ export const swapWithKedologDiscount = async (
     } else {
       console.log('✅ Treasury KEDOLOG account exists');
     }
-    
-      // Step 2: Build the swap instruction with KEDOLOG discount
-      console.log('🚀 Building KEDOLOG discount swap instruction...');
-      
-      // Get KEDOLOG price pool for on-chain price oracle
-      // Try to get from protocol token config first (on-chain), fallback to hardcoded address
-      const kedologPricePool = config.kedologUsdcPool 
-        ? new PublicKey(config.kedologUsdcPool)
-        : KEDOLOG_CONFIG.PRICE_POOL;
-      
-      console.log('🔮 Using KEDOLOG/USDC pool for on-chain price oracle:', kedologPricePool.toString());
-      
-      // Validate pool address is not placeholder
-      if (kedologPricePool.equals(new PublicKey('11111111111111111111111111111111'))) {
-        throw new Error('KEDOLOG/USDC pool address is not configured. Please set reference pools in protocol token config.');
-      }
-      
-      // Fetch the pool data to get vault addresses
-      const kedologPoolData = await (program.account as any).poolState.fetch(kedologPricePool);
-      
-      // Get token mints to detect vault order
-      const token0Mint = kedologPoolData.token0Mint || kedologPoolData.mint0;
-      
-      // Detect which vault is KEDOLOG and which is USDC by checking mint addresses
-      const isToken0Kedolog = token0Mint?.equals(KEDOLOG_CONFIG.MINT);
-      
-      let kedologVault: PublicKey;
-      let usdcVault: PublicKey;
-      
-      if (isToken0Kedolog) {
-        // KEDOLOG is token0, USDC is token1
-        kedologVault = kedologPoolData.token0Vault;
-        usdcVault = kedologPoolData.token1Vault;
-        console.log('📦 Pool vaults: KEDOLOG is token0, USDC is token1');
-      } else {
-        // USDC is token0, KEDOLOG is token1
-        kedologVault = kedologPoolData.token1Vault;
-        usdcVault = kedologPoolData.token0Vault;
-        console.log('📦 Pool vaults: USDC is token0, KEDOLOG is token1');
-      }
-      
-      console.log('📦 Vault addresses:', {
-        kedologVault: kedologVault.toString(),
-        usdcVault: usdcVault.toString(),
+
+    // Step 2: Build the swap instruction with KEDOLOG discount
+    console.log('🚀 Building KEDOLOG discount swap instruction...');
+
+    // Get KEDOLOG price pool for on-chain price oracle
+    // Try to get from protocol token config first (on-chain), fallback to hardcoded address
+    const kedologPricePool = config.kedologUsdcPool
+      ? new PublicKey(config.kedologUsdcPool)
+      : KEDOLOG_CONFIG.PRICE_POOL;
+
+    console.log('🔮 Using KEDOLOG/USDC pool for on-chain price oracle:', kedologPricePool.toString());
+
+    // Validate pool address is not placeholder
+    if (kedologPricePool.equals(new PublicKey('11111111111111111111111111111111'))) {
+      throw new Error('KEDOLOG/USDC pool address is not configured. Please set reference pools in protocol token config.');
+    }
+
+    // Fetch the pool data to get vault addresses
+    const kedologPoolData = await (program.account as any).poolState.fetch(kedologPricePool);
+
+    // Get token mints to detect vault order
+    const token0Mint = kedologPoolData.token0Mint || kedologPoolData.mint0;
+
+    // Detect which vault is KEDOLOG and which is USDC by checking mint addresses
+    const isToken0Kedolog = token0Mint?.equals(KEDOLOG_CONFIG.MINT);
+
+    let kedologVault: PublicKey;
+    let usdcVault: PublicKey;
+
+    if (isToken0Kedolog) {
+      // KEDOLOG is token0, USDC is token1
+      kedologVault = kedologPoolData.token0Vault;
+      usdcVault = kedologPoolData.token1Vault;
+      console.log('📦 Pool vaults: KEDOLOG is token0, USDC is token1');
+    } else {
+      // USDC is token0, KEDOLOG is token1
+      kedologVault = kedologPoolData.token1Vault;
+      usdcVault = kedologPoolData.token0Vault;
+      console.log('📦 Pool vaults: USDC is token0, KEDOLOG is token1');
+    }
+
+    console.log('📦 Vault addresses:', {
+      kedologVault: kedologVault.toString(),
+      usdcVault: usdcVault.toString(),
+    });
+
+    // IMPORTANT: Contract expects vaults in POOL ORDER (token_0, token_1), not semantic order!
+    // The contract's get_pool_price function has parameters: token_0_vault, token_1_vault
+    // So we must pass them in the same order as the pool, then the contract detects which is which
+    const token0Vault = kedologPoolData.token0Vault;
+    const token1Vault = kedologPoolData.token1Vault;
+
+    console.log('📦 KEDOLOG/USDC pool vaults (will pass in remainingAccounts):', {
+      token0Vault: token0Vault.toString(),
+      token1Vault: token1Vault.toString(),
+    });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 🆕 UNIVERSAL PRICING SYSTEM
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // The new contract NO LONGER uses oracle accounts (inputTokenOracle, protocolTokenOracle).
+    // Instead, it uses reference liquidity pools passed via remainingAccounts.
+    // The contract automatically:
+    //   - Reads pool reserves to calculate token prices
+    //   - Detects token ordering (token_0 vs token_1)
+    //   - Supports multi-hop pricing (Token → SOL → USDC)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    console.log('🆕 Using universal pool-based pricing system (no oracle accounts!)');
+    console.log('📊 Contract will read reference pool reserves directly');
+
+    // Build remainingAccounts dynamically based on input token
+    const remainingAccounts = [
+      // 1. KEDOLOG/USDC pool (always required for KEDOLOG fee calculation)
+      { pubkey: kedologPricePool, isSigner: false, isWritable: false },
+      { pubkey: token0Vault, isSigner: false, isWritable: false },
+      { pubkey: token1Vault, isSigner: false, isWritable: false },
+    ];
+
+    // 2. Dynamically find intermediate pool for 1-hop pricing (e.g., BTC → SOL → USDC)
+    console.log(`🔍 Checking if ${getTokenSymbol(inputMint)} needs intermediate pool...`);
+    const intermediatePool = await findIntermediatePool(inputMint, connection, program);
+    let isIntermediatePoolSameAsSwapPool = false;
+
+    if (intermediatePool) {
+      isIntermediatePoolSameAsSwapPool = intermediatePool.poolAddress.equals(poolState);
+
+      console.log('🔀 1-hop pricing required! Adding intermediate pool VAULTS:', {
+        token: getTokenSymbol(inputMint),
+        poolAddress: intermediatePool.poolAddress.toString(),
+        isSameAsSwapPool: isIntermediatePoolSameAsSwapPool,
       });
-      
-      // IMPORTANT: Contract expects vaults in POOL ORDER (token_0, token_1), not semantic order!
-      // The contract's get_pool_price function has parameters: token_0_vault, token_1_vault
-      // So we must pass them in the same order as the pool, then the contract detects which is which
-      const token0Vault = kedologPoolData.token0Vault;
-      const token1Vault = kedologPoolData.token1Vault;
-      
-      console.log('📦 KEDOLOG/USDC pool vaults (will pass in remainingAccounts):', {
-        token0Vault: token0Vault.toString(),
-        token1Vault: token1Vault.toString(),
-      });
-      
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      // 🆕 UNIVERSAL PRICING SYSTEM
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      // The new contract NO LONGER uses oracle accounts (inputTokenOracle, protocolTokenOracle).
-      // Instead, it uses reference liquidity pools passed via remainingAccounts.
-      // The contract automatically:
-      //   - Reads pool reserves to calculate token prices
-      //   - Detects token ordering (token_0 vs token_1)
-      //   - Supports multi-hop pricing (Token → SOL → USDC)
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      
-      console.log('🆕 Using universal pool-based pricing system (no oracle accounts!)');
-      console.log('📊 Contract will read reference pool reserves directly');
-      
-      // Build remainingAccounts dynamically based on input token
-      const remainingAccounts = [
-        // 1. KEDOLOG/USDC pool (always required for KEDOLOG fee calculation)
-        { pubkey: kedologPricePool, isSigner: false, isWritable: false },
-        { pubkey: token0Vault, isSigner: false, isWritable: false },
-        { pubkey: token1Vault, isSigner: false, isWritable: false },
-      ];
-      
-      // 2. Dynamically find intermediate pool for 1-hop pricing (e.g., BTC → SOL → USDC)
-      console.log(`🔍 Checking if ${getTokenSymbol(inputMint)} needs intermediate pool...`);
-      const intermediatePool = await findIntermediatePool(inputMint, connection, program);
-      let isIntermediatePoolSameAsSwapPool = false;
-      
-      if (intermediatePool) {
-        isIntermediatePoolSameAsSwapPool = intermediatePool.poolAddress.equals(poolState);
-        
-        console.log('🔀 1-hop pricing required! Adding intermediate pool VAULTS:', {
-          token: getTokenSymbol(inputMint),
-          poolAddress: intermediatePool.poolAddress.toString(),
-          isSameAsSwapPool: isIntermediatePoolSameAsSwapPool,
-        });
-        
-        // IMPORTANT: Contract expects ONLY VAULTS, not pool addresses!
-        // Format: [0] KEDOLOG/USDC pool, [1-2] KEDOLOG vaults, [3-4] intermediate vaults, [5-6] SOL/USDC vaults
-        remainingAccounts.push(
-          { pubkey: intermediatePool.tokenVault, isSigner: false, isWritable: false },
-          { pubkey: intermediatePool.solVault, isSigner: false, isWritable: false },
-        );
-        
-        if (isIntermediatePoolSameAsSwapPool) {
-          console.log('  ⚠️ Note: This pool is ALSO the swap pool (will appear twice in transaction)');
-        }
-      } else {
-        console.log(`✅ ${getTokenSymbol(inputMint)} uses direct pricing (no intermediate pool needed)`);
+
+      // IMPORTANT: Contract expects ONLY VAULTS, not pool addresses!
+      // Format: [0] KEDOLOG/USDC pool, [1-2] KEDOLOG vaults, [3-4] intermediate vaults, [5-6] SOL/USDC vaults
+      remainingAccounts.push(
+        { pubkey: intermediatePool.tokenVault, isSigner: false, isWritable: false },
+        { pubkey: intermediatePool.solVault, isSigner: false, isWritable: false },
+      );
+
+      if (isIntermediatePoolSameAsSwapPool) {
+        console.log('  ⚠️ Note: This pool is ALSO the swap pool (will appear twice in transaction)');
       }
-      
-      // 3. Add SOL/USDC pool + vaults for final USD conversion
-      // Get SOL/USDC pool from protocol token config (on-chain) or fallback to hardcoded
-      const solUsdcPoolAddress = config.solUsdcPool 
-        ? new PublicKey(config.solUsdcPool)
-        : ADDRESSES.SOL_USDC_POOL;
-      
-      // Fetch SOL/USDC pool data to get vault addresses dynamically
-      let solUsdcToken0Vault: PublicKey | null = null;
-      let solUsdcToken1Vault: PublicKey | null = null;
-      
-      if (!solUsdcPoolAddress.equals(new PublicKey('11111111111111111111111111111111'))) {
-        try {
-          const solUsdcPoolData = await (program.account as any).poolState.fetch(solUsdcPoolAddress);
-          solUsdcToken0Vault = solUsdcPoolData.token0Vault || solUsdcPoolData.token_0_vault;
-          solUsdcToken1Vault = solUsdcPoolData.token1Vault || solUsdcPoolData.token_1_vault;
-          if (solUsdcToken0Vault && solUsdcToken1Vault) {
-            console.log('✅ Fetched SOL/USDC pool vaults from on-chain:', {
-              pool: solUsdcPoolAddress.toString(),
-              vault0: solUsdcToken0Vault.toString(),
-              vault1: solUsdcToken1Vault.toString(),
-            });
-          }
-        } catch (error) {
-          console.warn('⚠️ Could not fetch SOL/USDC pool data, using hardcoded vaults:', error);
-          solUsdcToken0Vault = ADDRESSES.SOL_VAULT;
-          solUsdcToken1Vault = ADDRESSES.USDC_VAULT_IN_SOL_POOL;
+    } else {
+      console.log(`✅ ${getTokenSymbol(inputMint)} uses direct pricing (no intermediate pool needed)`);
+    }
+
+    // 3. Add SOL/USDC pool + vaults for final USD conversion
+    // Get SOL/USDC pool from protocol token config (on-chain) or fallback to hardcoded
+    const solUsdcPoolAddress = config.solUsdcPool
+      ? new PublicKey(config.solUsdcPool)
+      : ADDRESSES.SOL_USDC_POOL;
+
+    // Fetch SOL/USDC pool data to get vault addresses dynamically
+    let solUsdcToken0Vault: PublicKey | null = null;
+    let solUsdcToken1Vault: PublicKey | null = null;
+
+    if (!solUsdcPoolAddress.equals(new PublicKey('11111111111111111111111111111111'))) {
+      try {
+        const solUsdcPoolData = await (program.account as any).poolState.fetch(solUsdcPoolAddress);
+        solUsdcToken0Vault = solUsdcPoolData.token0Vault || solUsdcPoolData.token_0_vault;
+        solUsdcToken1Vault = solUsdcPoolData.token1Vault || solUsdcPoolData.token_1_vault;
+        if (solUsdcToken0Vault && solUsdcToken1Vault) {
+          console.log('✅ Fetched SOL/USDC pool vaults from on-chain:', {
+            pool: solUsdcPoolAddress.toString(),
+            vault0: solUsdcToken0Vault.toString(),
+            vault1: solUsdcToken1Vault.toString(),
+          });
         }
-      } else {
-        // Fallback to hardcoded if not set in config
+      } catch (error) {
+        console.warn('⚠️ Could not fetch SOL/USDC pool data, using hardcoded vaults:', error);
         solUsdcToken0Vault = ADDRESSES.SOL_VAULT;
         solUsdcToken1Vault = ADDRESSES.USDC_VAULT_IN_SOL_POOL;
       }
-      
-      // Check if intermediate pool already provides SOL → USDC path
-      const intermediatePoolProvidesSolPrice = intermediatePool && 
-        (intermediatePool.poolAddress.equals(solUsdcPoolAddress) ||
-         (solUsdcToken0Vault && intermediatePool.solVault.equals(solUsdcToken0Vault)) ||
-         (solUsdcToken1Vault && intermediatePool.solVault.equals(solUsdcToken1Vault)));
-      
-      const isSolUsdcPoolSameAsSwapPool = solUsdcPoolAddress.equals(poolState);
-      
-      if (!isSolUsdcPoolSameAsSwapPool && !intermediatePoolProvidesSolPrice && solUsdcToken0Vault && solUsdcToken1Vault) {
-        // IMPORTANT: Contract expects ONLY VAULTS, not pool address!
-        remainingAccounts.push(
-          { pubkey: solUsdcToken0Vault, isSigner: false, isWritable: false },
-          { pubkey: solUsdcToken1Vault, isSigner: false, isWritable: false },
-        );
-        console.log('✅ Added SOL/USDC VAULTS for SOL → USD pricing');
-      } else if (isSolUsdcPoolSameAsSwapPool) {
-        console.log('✅ SOL/USDC pool is the SWAP POOL - skipping to avoid duplicate');
-      } else if (intermediatePoolProvidesSolPrice) {
-        console.log('✅ Intermediate pool already provides SOL pricing path');
-      }
-      
-      // DEBUG: Show EXACTLY what will be passed
-      console.log('');
-      console.log('🔍 DEBUG - remainingAccounts being passed:');
-      remainingAccounts.forEach((acc, index) => {
-        console.log(`  [${index}] ${acc.pubkey.toString()}`);
-      });
-      console.log(`  Total: ${remainingAccounts.length} accounts`);
-      console.log('');
-      
-      const swapInstruction = await program.methods
-        .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
-        .accountsPartial({
-          payer: walletPublicKey,
-          authority,
-          ammConfig: AMM_CONFIG,
-          protocolTokenConfig,
-          poolState,
-          inputTokenAccount: userInputAccount,
-          outputTokenAccount: userOutputAccount,
-          protocolTokenAccount: userKedologAccount,
-          protocolTokenTreasury: treasuryKedologAccount,
-          inputVault,
-          outputVault,
-          inputTokenProgram,
-          outputTokenProgram,
-          protocolTokenProgram,
-          inputTokenMint: inputMint,
-          outputTokenMint: outputMint,
-          protocolTokenMint: config.protocolTokenMint,
-          observationState,
-          // ⚠️ NOTE: inputTokenOracle and protocolTokenOracle REMOVED in new contract!
-          // Contract now uses reference pools passed via remainingAccounts
-        })
-        .remainingAccounts(remainingAccounts)
-        .instruction();
-      
-      console.log('✅ Swap instruction built successfully:', {
-        swap: `${getTokenSymbol(inputMint)} → ${getTokenSymbol(outputMint)}`,
-        remainingAccountsCount: remainingAccounts.length,
-        hasIntermediatePool: intermediatePool && !isIntermediatePoolSameAsSwapPool,
-        hasSolUsdcPool: !isSolUsdcPoolSameAsSwapPool,
-      });
-      
-      transaction.add(swapInstruction);
-    
+    } else {
+      // Fallback to hardcoded if not set in config
+      solUsdcToken0Vault = ADDRESSES.SOL_VAULT;
+      solUsdcToken1Vault = ADDRESSES.USDC_VAULT_IN_SOL_POOL;
+    }
+
+    // Check if intermediate pool already provides SOL → USDC path
+    const intermediatePoolProvidesSolPrice = intermediatePool &&
+      (intermediatePool.poolAddress.equals(solUsdcPoolAddress) ||
+        (solUsdcToken0Vault && intermediatePool.solVault.equals(solUsdcToken0Vault)) ||
+        (solUsdcToken1Vault && intermediatePool.solVault.equals(solUsdcToken1Vault)));
+
+    const isSolUsdcPoolSameAsSwapPool = solUsdcPoolAddress.equals(poolState);
+
+    if (!isSolUsdcPoolSameAsSwapPool && !intermediatePoolProvidesSolPrice && solUsdcToken0Vault && solUsdcToken1Vault) {
+      // IMPORTANT: Contract expects ONLY VAULTS, not pool address!
+      remainingAccounts.push(
+        { pubkey: solUsdcToken0Vault, isSigner: false, isWritable: false },
+        { pubkey: solUsdcToken1Vault, isSigner: false, isWritable: false },
+      );
+      console.log('✅ Added SOL/USDC VAULTS for SOL → USD pricing');
+    } else if (isSolUsdcPoolSameAsSwapPool) {
+      console.log('✅ SOL/USDC pool is the SWAP POOL - skipping to avoid duplicate');
+    } else if (intermediatePoolProvidesSolPrice) {
+      console.log('✅ Intermediate pool already provides SOL pricing path');
+    }
+
+    // DEBUG: Show EXACTLY what will be passed
+    console.log('');
+    console.log('🔍 DEBUG - remainingAccounts being passed:');
+    remainingAccounts.forEach((acc, index) => {
+      console.log(`  [${index}] ${acc.pubkey.toString()}`);
+    });
+    console.log(`  Total: ${remainingAccounts.length} accounts`);
+    console.log('');
+
+    const swapInstruction = await program.methods
+      .swapBaseInputWithProtocolToken(amountInBN, minAmountOutBN)
+      .accountsPartial({
+        payer: walletPublicKey,
+        authority,
+        ammConfig: AMM_CONFIG,
+        protocolTokenConfig,
+        poolState,
+        inputTokenAccount: userInputAccount,
+        outputTokenAccount: userOutputAccount,
+        protocolTokenAccount: userKedologAccount,
+        protocolTokenTreasury: treasuryKedologAccount,
+        inputVault,
+        outputVault,
+        inputTokenProgram,
+        outputTokenProgram,
+        protocolTokenProgram,
+        inputTokenMint: inputMint,
+        outputTokenMint: outputMint,
+        protocolTokenMint: config.protocolTokenMint,
+        observationState,
+        // ⚠️ NOTE: inputTokenOracle and protocolTokenOracle REMOVED in new contract!
+        // Contract now uses reference pools passed via remainingAccounts
+      })
+      .remainingAccounts(remainingAccounts)
+      .instruction();
+
+    console.log('✅ Swap instruction built successfully:', {
+      swap: `${getTokenSymbol(inputMint)} → ${getTokenSymbol(outputMint)}`,
+      remainingAccountsCount: remainingAccounts.length,
+      hasIntermediatePool: intermediatePool && !isIntermediatePoolSameAsSwapPool,
+      hasSolUsdcPool: !isSolUsdcPoolSameAsSwapPool,
+    });
+
+    transaction.add(swapInstruction);
+
     // Step 3: Unwrap SOL if output is SOL
     if (needsOutputWrap) {
       console.log('🌯 Unwrapping SOL output...');
       const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
       transaction.add(unwrapInstruction);
     }
-    
+
     // CRITICAL DEBUG: Inspect the actual transaction object
     console.log('');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('🚨 CRITICAL CHECK - INSPECTING ACTUAL TRANSACTION');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('Transaction has', transaction.instructions.length, 'instructions');
-    
+
     // Find the swap instruction (might be last or second-to-last if unwrap is added)
     let swapInstrIndex = transaction.instructions.length - 1;
     let actualSwapInstr = transaction.instructions[swapInstrIndex];
-    
+
     // If last instruction is unwrap, swap is second-to-last
     if (actualSwapInstr.programId.toString() === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') {
       swapInstrIndex = transaction.instructions.length - 2;
       actualSwapInstr = transaction.instructions[swapInstrIndex];
       console.log('Swap instruction is at index', swapInstrIndex, '(unwrap is last)');
     }
-    
+
     console.log('Swap instruction programId:', actualSwapInstr.programId.toString());
     console.log('Swap instruction has', actualSwapInstr.keys.length, 'account keys');
-    
+
     // The swap instruction should have all the accounts
     // Log the last 6 keys (which should be the remainingAccounts)
     const totalKeys = actualSwapInstr.keys.length;
@@ -1676,21 +1694,21 @@ export const swapWithKedologDiscount = async (
     console.log('  [5-6] SOL/USDC vaults (SOL vault + USDC vault, NO POOL ADDRESS)');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
-    
+
     // Get fresh blockhash - use 'processed' for freshest possible blockhash
     console.log('📡 Getting fresh blockhash...');
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (processed - freshest)`);
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
-    
+
     // Sign and send transaction
     console.log('✍️ Signing transaction...');
     const signedTransaction = await wallet.signTransaction(transaction);
-    
+
     console.log('📤 Sending transaction...');
     let signature: string;
-    
+
     try {
       signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
         skipPreflight: false,
@@ -1700,7 +1718,7 @@ export const swapWithKedologDiscount = async (
       console.log(`🔗 Transaction sent: ${signature}`);
     } catch (sendError: any) {
       console.error('❌ Error sending transaction:', sendError);
-      
+
       // Check if it's "already processed" error - transaction might have succeeded!
       if (sendError.message && sendError.message.includes('already been processed')) {
         console.log('⚠️ Transaction might have already succeeded despite error!');
@@ -1708,10 +1726,10 @@ export const swapWithKedologDiscount = async (
         // Return a success indicator even though we don't have the signature
         return 'success-already-processed';
       }
-      
+
       throw sendError;
     }
-    
+
     console.log('⏳ Confirming transaction...');
     try {
       await connection.confirmTransaction({
@@ -1719,20 +1737,20 @@ export const swapWithKedologDiscount = async (
         blockhash,
         lastValidBlockHeight,
       }, 'confirmed');
-      
+
       console.log('✅ KEDOLOG discount swap successful!');
       console.log('💚 You saved 25% on protocol fees!');
       return signature;
     } catch (confirmError: any) {
       console.error('❌ Confirmation error:', confirmError);
-      
+
       // Check if it's "already processed" error
       if (confirmError.message && confirmError.message.includes('already been processed')) {
         console.log('⚠️ Confirmation failed but transaction was already processed');
         console.log('✅ Swap likely succeeded! Signature:', signature);
         return signature;
       }
-      
+
       throw confirmError;
     }
   } catch (error) {
@@ -1752,88 +1770,88 @@ export const fetchKedologPrice = async (
 ): Promise<number> => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     // Try to get pool address from protocol token config first
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     let poolAddress: PublicKey;
-    
+
     try {
       const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
-      poolAddress = config.kedologUsdcPool 
+      poolAddress = config.kedologUsdcPool
         ? new PublicKey(config.kedologUsdcPool)
         : KEDOLOG_CONFIG.PRICE_POOL;
     } catch (error) {
       console.warn('⚠️ Could not fetch protocol token config, using hardcoded pool address');
       poolAddress = KEDOLOG_CONFIG.PRICE_POOL;
     }
-    
+
     // Validate pool address is not placeholder
     if (poolAddress.equals(new PublicKey('11111111111111111111111111111111'))) {
       console.warn('⚠️ KEDOLOG/USDC pool address is not configured, using fallback price');
       return 0.01;
     }
-    
+
     console.log('💰 Fetching KEDOLOG price from pool:', poolAddress.toString());
-    
+
     // Fetch pool data
     const poolData = await (program.account as any).poolState.fetch(poolAddress);
-    
+
     // Get token mints to verify order
     const token0Mint = poolData.token0Mint || poolData.mint0;
     const token1Mint = poolData.token1Mint || poolData.mint1;
-    
+
     console.log('💰 Pool token mints:', {
       token0: token0Mint?.toString(),
       token1: token1Mint?.toString(),
       expectedKEDOLOG: KEDOLOG_CONFIG.MINT.toString(),
     });
-    
+
     // Get vault addresses (these are PublicKeys, not amounts)
     const token0VaultAddress = poolData.token0Vault || poolData.token_0_vault;
     const token1VaultAddress = poolData.token1Vault || poolData.token_1_vault;
-    
+
     // Get decimals from mint accounts (DON'T use fallbacks - fetch actual decimals!)
     const { getMint } = await import('@solana/spl-token');
     const token0MintInfo = await getMint(connection, token0Mint);
     const token1MintInfo = await getMint(connection, token1Mint);
     const token0Decimals = token0MintInfo.decimals;
     const token1Decimals = token1MintInfo.decimals;
-    
+
     console.log('💰 Actual decimals from mints:', {
       token0Decimals,
       token1Decimals,
       token0Mint: token0Mint.toString(),
       token1Mint: token1Mint.toString(),
     });
-    
+
     if (!token0VaultAddress || !token1VaultAddress) {
       console.error('💰 Could not find vault addresses in pool data');
       console.log('💰 Available fields:', Object.keys(poolData));
       return 0.01;
     }
-    
+
     console.log('💰 Vault addresses:', {
       token0Vault: token0VaultAddress.toString(),
       token1Vault: token1VaultAddress.toString(),
     });
-    
+
     // Fetch actual token account balances from the vault addresses
     const { getAccount } = await import('@solana/spl-token');
-    
+
     const token0VaultAccount = await getAccount(connection, token0VaultAddress);
     const token1VaultAccount = await getAccount(connection, token1VaultAddress);
-    
+
     // Get the actual balances
     const token0Reserve = Number(token0VaultAccount.amount) / Math.pow(10, token0Decimals);
     const token1Reserve = Number(token1VaultAccount.amount) / Math.pow(10, token1Decimals);
-    
+
     console.log('💰 Reserves:', {
       token0Reserve,
       token1Reserve,
       token0Decimals,
       token1Decimals,
     });
-    
+
     // Validate reserves
     if (!token0Reserve || !token1Reserve || token0Reserve === 0 || token1Reserve === 0 || isNaN(token0Reserve) || isNaN(token1Reserve)) {
       console.error('💰 Invalid reserves - pool might be empty or not initialized:', { token0Reserve, token1Reserve });
@@ -1841,10 +1859,10 @@ export const fetchKedologPrice = async (
       console.warn('⚠️ Please add liquidity to the KEDOLOG/USDC pool for accurate pricing');
       return 0.01;
     }
-    
+
     // Determine which token is KEDOLOG
     const isToken0Kedolog = token0Mint?.equals(KEDOLOG_CONFIG.MINT);
-    
+
     // Calculate price of KEDOLOG in USDC
     let kedologPrice: number;
     if (isToken0Kedolog) {
@@ -1858,13 +1876,13 @@ export const fetchKedologPrice = async (
       kedologPrice = token0Reserve / token1Reserve;
       console.log('💰 USDC is token0, KEDOLOG is token1');
     }
-    
+
     // Validate price
     if (!isFinite(kedologPrice) || isNaN(kedologPrice) || kedologPrice <= 0) {
       console.error('💰 Invalid price calculated:', kedologPrice);
       return 0.01;
     }
-    
+
     // Sanity check: KEDOLOG price should be reasonable (between $0.0001 and $100)
     // Note: Frontend uses pool price for display only. Contract uses manual price from config.
     if (kedologPrice < 0.0001 || kedologPrice > 100) {
@@ -1875,7 +1893,7 @@ export const fetchKedologPrice = async (
       console.warn('⚠️ Pool might have incorrect liquidity ratios. Using fallback price.');
       return 0.01;
     }
-    
+
     // Warn if price is suspiciously high
     if (kedologPrice > 1) {
       console.warn('⚠️ KEDOLOG price seems high:', {
@@ -1883,14 +1901,14 @@ export const fetchKedologPrice = async (
         recommendation: 'Check pool liquidity ratios',
       });
     }
-    
+
     console.log('💰 KEDOLOG Price:', {
       token0Reserve: token0Reserve.toFixed(2),
       token1Reserve: token1Reserve.toFixed(2),
       price: kedologPrice.toFixed(6),
       priceDisplay: `$${kedologPrice.toFixed(6)} per KEDOLOG`,
     });
-    
+
     return kedologPrice;
   } catch (error) {
     console.error('Error fetching KEDOLOG price from pool:', error);
@@ -1904,9 +1922,9 @@ export const calculateKedologFee = async (
   wallet: any,
   amountIn: number,
   inputTokenPrice: number = 1 // Default to 1 if price not available
-): Promise<{ 
-  kedologFee: number; 
-  discountedFeeUsd: number; 
+): Promise<{
+  kedologFee: number;
+  discountedFeeUsd: number;
   normalFeeUsd: number;
   protocolFeeInInputToken: number; // Protocol fee in input token (0.05% of input)
   savingsInInputToken: number; // Savings in input token (25% of protocol fee)
@@ -1916,21 +1934,21 @@ export const calculateKedologFee = async (
 }> => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     // Get protocol token config for discount rate
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
-    
+
     // Fee breakdown (in parts per million)
     const lpFeeRate = 2000; // 0.20% = 2000 parts per million
     const protocolFeeRate = 500; // 0.05% = 500 parts per million
     const totalFeeRate = 2500; // 0.25% = 2500 parts per million
-    
+
     // Calculate fees in input token
     const lpFeeInInputToken = (amountIn * lpFeeRate) / 1_000_000;
     const protocolFeeInInputToken = (amountIn * protocolFeeRate) / 1_000_000;
     const totalFeeInInputToken = (amountIn * totalFeeRate) / 1_000_000;
-    
+
     // Calculate discount
     const discountRate = config.discountRate.toNumber(); // e.g., 2500 = 25%
     // When using KEDOLOG discount, protocol fee is paid in KEDOLOG (not input token)
@@ -1939,15 +1957,15 @@ export const calculateKedologFee = async (
     // Savings in input token = full protocol fee (since you're not paying it in input token)
     // Plus 25% discount on the KEDOLOG you pay (represented as input token equivalent)
     const savingsInInputToken = (protocolFeeInInputToken * discountRate) / 10000;
-    
+
     // Calculate protocol fee in USD for KEDOLOG conversion
     const amountInUsd = amountIn * inputTokenPrice;
     const protocolFeeUsd = (amountInUsd * protocolFeeRate) / 1_000_000;
     const discountedFeeUsd = (protocolFeeUsd * (10000 - discountRate)) / 10000;
-    
+
     // Fetch KEDOLOG price from pool (price in USDC per KEDOLOG)
     const kedologPriceUsd = await fetchKedologPrice(connection, wallet);
-    
+
     console.log('💰 Calculating KEDOLOG fee:', {
       amountIn,
       inputTokenPrice,
@@ -1956,18 +1974,18 @@ export const calculateKedologFee = async (
       discountedFeeUsd,
       kedologPriceUsd,
     });
-    
+
     // Convert discounted fee to KEDOLOG
     let kedologFee = discountedFeeUsd / kedologPriceUsd;
-    
+
     // Validate the calculated fee
     if (!isFinite(kedologFee) || isNaN(kedologFee) || kedologFee < 0) {
       console.error('💰 Invalid KEDOLOG fee calculated:', kedologFee);
       kedologFee = 0;
     }
-    
+
     console.log('💰 Final KEDOLOG fee:', kedologFee);
-    
+
     return {
       kedologFee,
       discountedFeeUsd,
@@ -1984,7 +2002,7 @@ export const calculateKedologFee = async (
     const lpFee = (amountIn * 2000) / 1_000_000; // 0.20%
     const protocolFee = (amountIn * 500) / 1_000_000; // 0.05%
     const totalFee = (amountIn * 2500) / 1_000_000; // 0.25%
-    
+
     return {
       kedologFee: 0,
       discountedFeeUsd: 0,
@@ -2012,22 +2030,22 @@ export const addLiquidity = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     console.log('💵 Adding liquidity - inputs:', {
       token0Mint: token0Mint.toString(),
       token1Mint: token1Mint.toString(),
       amount0,
       amount1,
     });
-    
+
     // Sort tokens FIRST
     const { token0, token1 } = sortTokenMints(token0Mint, token1Mint);
     const tokensWereSwapped = !token0Mint.equals(token0);
-    
+
     // If tokens were swapped, swap amounts too
     let finalAmount0 = amount0;
     let finalAmount1 = amount1;
-    
+
     if (tokensWereSwapped) {
       finalAmount0 = amount1;
       finalAmount1 = amount0;
@@ -2038,47 +2056,47 @@ export const addLiquidity = async (
         finalAmount1,
       });
     }
-    
+
     // Check if we need to wrap SOL (check AFTER sorting, using sorted tokens)
     const needsWrapToken0 = isNativeSOL(token0);
     const needsWrapToken1 = isNativeSOL(token1);
-    
-    console.log('🌊 SOL handling (after sorting):', { 
-      needsWrapToken0, 
+
+    console.log('🌊 SOL handling (after sorting):', {
+      needsWrapToken0,
       needsWrapToken1,
       token0: token0.toString().slice(0, 8),
       token1: token1.toString().slice(0, 8),
     });
-    
+
     // Get PDAs (use pool's AMM config if provided)
     const poolState = getPoolState(token0, token1, ammConfigOverride);
     const authority = getAuthority();
     const lpMint = getLpMint(poolState);
     const token0Vault = getTokenVault(poolState, token0);
     const token1Vault = getTokenVault(poolState, token1);
-    
+
     // Get user token accounts
     const userToken0Account = await getAssociatedTokenAddress(token0, walletPublicKey);
     const userToken1Account = await getAssociatedTokenAddress(token1, walletPublicKey);
     const userLpAccount = await getAssociatedTokenAddress(lpMint, walletPublicKey);
-    
+
     // Check if LP account exists - create if needed
     const lpAccountInfo = await connection.getAccountInfo(userLpAccount);
     if (!lpAccountInfo) {
       console.log('📝 LP token account does not exist - will create it in transaction');
     }
-    
+
     // Get pool data
     const poolData = await (program.account as any).poolState.fetch(poolState);
     const token0Decimals = (poolData as any).mint0Decimals;
     const token1Decimals = (poolData as any).mint1Decimals;
-    
+
     // Get vault balances (reserves are stored in vault token accounts, not in pool state)
     const token0VaultInfo = await connection.getTokenAccountBalance(token0Vault);
     const token1VaultInfo = await connection.getTokenAccountBalance(token1Vault);
     const token0Reserve = parseFloat(token0VaultInfo.value.amount) / Math.pow(10, token0Decimals);
     const token1Reserve = parseFloat(token1VaultInfo.value.amount) / Math.pow(10, token1Decimals);
-    
+
     console.log('💧 Pool reserves (from vaults):', {
       token0Vault: token0Vault.toString(),
       token1Vault: token1Vault.toString(),
@@ -2089,10 +2107,10 @@ export const addLiquidity = async (
       depositAmount0: finalAmount0,
       depositAmount1: finalAmount1,
     });
-    
+
     // Get LP mint info to check total supply
     const lpMintInfo = await connection.getParsedAccountInfo(lpMint);
-    
+
     if (!lpMintInfo || !lpMintInfo.value) {
       console.error('❌ LP Mint does not exist! This is a BROKEN/DUST POOL!', {
         lpMint: lpMint.toString(),
@@ -2112,24 +2130,24 @@ export const addLiquidity = async (
         `LP Mint (Missing): ${lpMint.toString().slice(0, 12)}...`
       );
     }
-    
+
     const lpTotalSupply = parseFloat((lpMintInfo.value?.data as any)?.parsed?.info?.supply || '0') / Math.pow(10, 9);
-    
+
     console.log('🪙 LP Token info:', {
       lpTotalSupply,
       lpMint: lpMint.toString(),
     });
-    
+
     // Detect if pool has dust reserves
     const isDustReserve = token0Reserve < (finalAmount0 * 0.001) || token1Reserve < (finalAmount1 * 0.001);
     const isDustLPSupply = lpTotalSupply < 0.01;
     const hasDust = (isDustReserve || isDustLPSupply) && token0Reserve > 0 && token1Reserve > 0;
-    
+
     // For dust pools, adjust amounts to match the existing ratio
     if (hasDust) {
       const existingRatio = token1Reserve / token0Reserve;
       const depositRatio = finalAmount1 / finalAmount0;
-      
+
       console.log('⚠️ DUST POOL DETECTED - Adjusting amounts to match existing ratio:', {
         existingRatio,
         depositRatio,
@@ -2138,17 +2156,17 @@ export const addLiquidity = async (
         token0Reserve,
         token1Reserve,
       });
-      
+
       // Fetch user balances to ensure we don't exceed them
       const balance0 = await getTokenBalance(connection, token0, walletPublicKey);
       const balance1 = await getTokenBalance(connection, token1, walletPublicKey);
-      
+
       console.log('💰 User balances:', { balance0, balance1 });
-      
+
       // Calculate what amounts would be needed to match ratio
       const option1Amount1 = finalAmount0 * existingRatio; // Keep amount0, adjust amount1
       const option2Amount0 = finalAmount1 / existingRatio; // Keep amount1, adjust amount0
-      
+
       // Choose option that doesn't exceed balances
       let chosenOption = 1;
       if (option1Amount1 <= balance1 && finalAmount0 <= balance0) {
@@ -2164,12 +2182,12 @@ export const addLiquidity = async (
         const maxRatio0 = balance0 / finalAmount0;
         const maxRatio1 = balance1 / finalAmount1;
         const scaleFactor = Math.min(maxRatio0, maxRatio1) * 0.95; // 95% to be safe
-        
+
         finalAmount0 = finalAmount0 * scaleFactor;
         finalAmount1 = finalAmount0 * existingRatio; // Match ratio
         chosenOption = 3;
       }
-      
+
       console.log(`  → Adjusted (Option ${chosenOption}):`, {
         finalAmount0,
         finalAmount1,
@@ -2177,14 +2195,14 @@ export const addLiquidity = async (
         matchesPoolRatio: Math.abs((finalAmount1 / finalAmount0) - existingRatio) < 0.0001,
       });
     }
-    
+
     // Calculate LP tokens based on pool reserves
     let lpAmount: BN;
-    
+
     // Treat as initial deposit ONLY if reserves are truly zero
     // If reserves exist (even dust), use ratio-based calculation
     const isTrulyEmpty = token0Reserve === 0 || token1Reserve === 0;
-    
+
     if (isTrulyEmpty) {
       // True initial deposit - use geometric mean
       const lpScaled = Math.floor(Math.sqrt(finalAmount0 * finalAmount1) * Math.pow(10, 9));
@@ -2219,10 +2237,10 @@ export const addLiquidity = async (
         });
       }
     }
-    
+
     // Use generous slippage for max amounts
     let slippageBuffer;
-    
+
     if (isTrulyEmpty) {
       // Initial deposit (empty pool): 50% base
       slippageBuffer = _slippage + 50;
@@ -2241,21 +2259,21 @@ export const addLiquidity = async (
       slippageBuffer = _slippage + 15;
       console.log('📊 Normal deposit - using standard slippage buffer (15% base)');
     }
-    
+
     if (needsWrapToken0 || needsWrapToken1) {
       slippageBuffer += 10; // Extra buffer for SOL wrapping overhead
       console.log('🌊 Adding extra slippage buffer for native SOL wrapping');
     }
-    
+
     console.log(`📊 Total slippage buffer: ${slippageBuffer}% (hasDust: ${hasDust}, lpSupply: ${lpTotalSupply})`);
-    
+
     // Use Math.ceil and toFixed(0) to avoid BN assertion errors and scientific notation
     const maxAmount0Scaled = Math.ceil(finalAmount0 * (1 + slippageBuffer / 100) * Math.pow(10, token0Decimals));
     const maxAmount1Scaled = Math.ceil(finalAmount1 * (1 + slippageBuffer / 100) * Math.pow(10, token1Decimals));
     // Use toFixed(0) to prevent scientific notation for large numbers
     const maxAmount0BN = new BN(maxAmount0Scaled.toFixed(0));
     const maxAmount1BN = new BN(maxAmount1Scaled.toFixed(0));
-    
+
     console.log('📤 Deposit parameters:', {
       lpAmount: lpAmount.toString(),
       maxAmount0: maxAmount0BN.toString(),
@@ -2264,11 +2282,11 @@ export const addLiquidity = async (
       needsWrapToken0,
       needsWrapToken1,
     });
-    
+
     // Build the transaction - set fee payer FIRST to ensure it's included
     const transaction = new Transaction();
     transaction.feePayer = walletPublicKey;
-    
+
     // Step 0: Create LP token account if it doesn't exist
     if (!lpAccountInfo) {
       console.log('📝 Adding LP token account creation instruction...');
@@ -2282,7 +2300,7 @@ export const addLiquidity = async (
         )
       );
     }
-    
+
     // Step 1: Wrap SOL if needed (use finalAmount0/1 which are already sorted)
     if (needsWrapToken0) {
       console.log('🌊 Wrapping SOL for token0 (amount: ' + finalAmount0 + ')...');
@@ -2293,7 +2311,7 @@ export const addLiquidity = async (
       );
       transaction.add(...wrapInstructions);
     }
-    
+
     if (needsWrapToken1) {
       console.log('🌊 Wrapping SOL for token1 (amount: ' + finalAmount1 + ')...');
       const { instructions: wrapInstructions } = await createWrapSOLInstructions(
@@ -2303,7 +2321,7 @@ export const addLiquidity = async (
       );
       transaction.add(...wrapInstructions);
     }
-    
+
     // Step 2: Build the deposit instruction
     console.log('💰 Building deposit instruction...');
     const depositInstruction = await program.methods
@@ -2324,17 +2342,17 @@ export const addLiquidity = async (
         lpMint,
       })
       .instruction();
-    
+
     transaction.add(depositInstruction);
-    
+
     // Get the freshest possible blockhash using 'processed' commitment
     console.log('📡 Getting fresh blockhash...');
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
-    
+
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
-    
+
     // Simulate first to get better error messages
     console.log('🔍 Simulating transaction...');
     try {
@@ -2374,58 +2392,58 @@ export const addLiquidity = async (
       // Re-throw to prevent sending a bad transaction
       throw simError;
     }
-    
+
     console.log('✍️ Signing transaction...');
     const signedTransaction = await wallet.signTransaction(transaction);
-    
+
     console.log('📤 Sending transaction immediately...');
     const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
       skipPreflight: false,
       preflightCommitment: 'processed',
       maxRetries: 5, // Increased retries for better reliability
     });
-    
+
     console.log(`🔗 Transaction sent: ${signature}`);
-    
+
     console.log('⏳ Confirming transaction...');
     const confirmation = await connection.confirmTransaction({
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'processed');
-    
+
     if (confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
-    
+
     console.log('✅ Liquidity added successfully!', {
       txSignature: signature,
       lpTokensReceived: (lpAmount.toNumber() / Math.pow(10, 9)).toFixed(4),
     });
-    
+
     return signature;
   } catch (error: any) {
     console.error('❌ Error adding liquidity:', error);
-    
+
     // Check for ExceededSlippage error
     if (error.message && error.message.includes('ExceededSlippage')) {
       throw new Error('Slippage tolerance exceeded. The pool ratio may have changed. Please try again with a slightly different amount or higher slippage tolerance.');
     }
-    
+
     // Check if it's an "already processed" error
     if (error.message && error.message.includes('already been processed')) {
       console.log('⚠️ Transaction "already processed" - this usually means it succeeded!');
       console.log('🔍 Waiting 2 seconds then verifying transaction status...');
-      
+
       // Wait for transaction to settle
       await new Promise(resolve => setTimeout(resolve, 2000));
-      
+
       // Try to get transaction status - if we have a signature from the error, check it
       // Otherwise, assume success since "already processed" typically means the tx went through
       console.log('✅ Transaction likely succeeded despite "already processed" error');
       return 'success-already-processed'; // Return special signature to indicate success
     }
-    
+
     throw error;
   }
 };
@@ -2443,28 +2461,28 @@ export const removeLiquidity = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     // Check if we need to unwrap SOL
     const needsUnwrapToken0 = isNativeSOL(token0Mint);
     const needsUnwrapToken1 = isNativeSOL(token1Mint);
-    
+
     console.log('🌊 SOL handling:', { needsUnwrapToken0, needsUnwrapToken1 });
-    
+
     // Sort tokens
     const { token0, token1 } = sortTokenMints(token0Mint, token1Mint);
-    
+
     // Get PDAs (use pool's AMM config if provided)
     const poolState = getPoolState(token0, token1, ammConfigOverride);
     const authority = getAuthority();
     const lpMint = getLpMint(poolState);
     const token0Vault = getTokenVault(poolState, token0);
     const token1Vault = getTokenVault(poolState, token1);
-    
+
     // Get user token accounts
     const userToken0Account = await getAssociatedTokenAddress(token0, wallet.publicKey);
     const userToken1Account = await getAssociatedTokenAddress(token1, wallet.publicKey);
     const userLpAccount = await getAssociatedTokenAddress(lpMint, wallet.publicKey);
-    
+
     // Check if LP mint exists (detect broken pools)
     const lpMintInfo = await connection.getAccountInfo(lpMint);
     if (!lpMintInfo) {
@@ -2480,44 +2498,44 @@ export const removeLiquidity = async (
         `LP Mint (Missing): ${lpMint.toString().slice(0, 12)}...`
       );
     }
-    
+
     // Get pool data
     const poolData = await (program.account as any).poolState.fetch(poolState);
     const token0Decimals = (poolData as any).mint0Decimals;
     const token1Decimals = (poolData as any).mint1Decimals;
     const totalLpSupply = Number((poolData as any).lpSupply.toString()) / Math.pow(10, 9);
-    
+
     // ANTI-DUST POOL PROTECTION
     // Always keep a minimum of 0.001 LP tokens (1,000,000 base units) in the pool
     // This prevents the pool from becoming unusable "dust pool"
     const MINIMUM_LP_LOCKED = 0.001; // Minimum LP tokens to keep in pool
     const actualLpAmount = lpAmount;
     let adjustedLpAmount = lpAmount;
-    
+
     // Check if user is trying to remove all or almost all liquidity
     const wouldBeRemainingLp = totalLpSupply - lpAmount;
-    
+
     if (wouldBeRemainingLp < MINIMUM_LP_LOCKED) {
       // User is trying to drain the pool - silently reduce withdrawal amount
       const maxWithdrawable = totalLpSupply - MINIMUM_LP_LOCKED;
-      
+
       if (maxWithdrawable <= 0) {
         throw new Error('Cannot remove liquidity: Pool must maintain minimum liquidity');
       }
-      
+
       adjustedLpAmount = maxWithdrawable;
       console.log('🛡️ ANTI-DUST PROTECTION ACTIVATED:');
       console.log(`   Requested: ${actualLpAmount.toFixed(9)} LP`);
       console.log(`   Adjusted to: ${adjustedLpAmount.toFixed(9)} LP`);
       console.log(`   Keeping locked: ${MINIMUM_LP_LOCKED.toFixed(9)} LP`);
       console.log(`   Remaining in pool: ${(totalLpSupply - adjustedLpAmount).toFixed(9)} LP`);
-      
+
       // Adjust minimum amounts proportionally
       const adjustmentRatio = adjustedLpAmount / actualLpAmount;
       minAmount0 = minAmount0 * adjustmentRatio;
       minAmount1 = minAmount1 * adjustmentRatio;
     }
-    
+
     // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
     const lpAmountScaled = Math.floor(adjustedLpAmount * Math.pow(10, 9));
     const minAmount0Scaled = Math.floor(minAmount0 * Math.pow(10, token0Decimals));
@@ -2526,7 +2544,7 @@ export const removeLiquidity = async (
     const lpAmountBN = new BN(lpAmountScaled.toFixed(0));
     const minAmount0BN = new BN(minAmount0Scaled.toFixed(0));
     const minAmount1BN = new BN(minAmount1Scaled.toFixed(0));
-    
+
     console.log('🔥 Removing liquidity:', {
       lpAmount,
       lpAmountBN: lpAmountBN.toString(),
@@ -2535,14 +2553,14 @@ export const removeLiquidity = async (
       minAmount0BN: minAmount0BN.toString(),
       minAmount1BN: minAmount1BN.toString(),
     });
-    
+
     // Build transaction - set fee payer FIRST to ensure it's included
     const transaction = new Transaction();
     transaction.feePayer = wallet.publicKey;
-    
+
     // Step 0: Create token accounts if they don't exist
     const { createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
-    
+
     const token0AccountInfo = await connection.getAccountInfo(userToken0Account);
     if (!token0AccountInfo) {
       console.log('🔧 Creating token account for token0...');
@@ -2554,7 +2572,7 @@ export const removeLiquidity = async (
       );
       transaction.add(createToken0AccountIx);
     }
-    
+
     const token1AccountInfo = await connection.getAccountInfo(userToken1Account);
     if (!token1AccountInfo) {
       console.log('🔧 Creating token account for token1...');
@@ -2566,7 +2584,7 @@ export const removeLiquidity = async (
       );
       transaction.add(createToken1AccountIx);
     }
-    
+
     // Step 1: Build the withdraw instruction
     console.log('💰 Building withdraw instruction...');
     const withdrawInstruction = await program.methods
@@ -2588,34 +2606,34 @@ export const removeLiquidity = async (
         memoProgram: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
       })
       .instruction();
-    
+
     transaction.add(withdrawInstruction);
-    
+
     // Step 2: Add unwrap instructions if needed
     if (needsUnwrapToken0) {
       console.log('🌊 Adding unwrap SOL instruction for token0...');
       const unwrapInstruction = await createUnwrapSOLInstruction(wallet.publicKey);
       transaction.add(unwrapInstruction);
     }
-    
+
     if (needsUnwrapToken1) {
       console.log('🌊 Adding unwrap SOL instruction for token1...');
       const unwrapInstruction = await createUnwrapSOLInstruction(wallet.publicKey);
       transaction.add(unwrapInstruction);
     }
-    
+
     // Get FRESH blockhash to avoid "already processed" error
     console.log('🔄 Getting fresh blockhash...');
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = wallet.publicKey;
-    
+
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
-    
+
     // Sign transaction immediately
     console.log('✍️ Signing transaction...');
     const signedTransaction = await wallet.signTransaction(transaction);
-    
+
     // Send transaction with proper options
     console.log('📤 Sending transaction...');
     const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
@@ -2623,9 +2641,9 @@ export const removeLiquidity = async (
       preflightCommitment: 'processed',
       maxRetries: 5, // Retry if blockhash expires
     });
-    
+
     console.log(`🔗 Transaction sent: ${signature}`);
-    
+
     // Confirm transaction
     console.log('⏳ Confirming transaction...');
     const confirmation = await connection.confirmTransaction({
@@ -2633,16 +2651,16 @@ export const removeLiquidity = async (
       blockhash,
       lastValidBlockHeight,
     }, 'processed');
-    
+
     if (confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
-    
+
     console.log('✅ Liquidity removed successfully!');
     return signature;
   } catch (error: any) {
     console.error('❌ Error removing liquidity:', error);
-    
+
     // Check if it's an "already processed" error (actually means success!)
     if (error.message && (error.message.includes('already been processed') || error.message.includes('already processed'))) {
       console.log('✅ Transaction succeeded! (Got "already processed" confirmation)');
@@ -2650,7 +2668,7 @@ export const removeLiquidity = async (
       // Return a success indicator - caller should check transaction on-chain
       return 'SUCCESS_ALREADY_PROCESSED';
     }
-    
+
     throw error;
   }
 };
@@ -2668,11 +2686,11 @@ export const createPool = async (
 ) => {
   try {
     const program = getProgram(connection, wallet);
-    
+
     // Use provided AMM config or default
     let selectedAmmConfig = ammConfigAddress || AMM_CONFIG;
     console.log('🎯 Creating pool with AMM config:', selectedAmmConfig.toBase58());
-    
+
     // CRITICAL: Check if AMM config exists on-chain
     console.log('🔍 Checking if AMM config exists on-chain...');
     const ammConfigInfo = await connection.getAccountInfo(selectedAmmConfig);
@@ -2701,33 +2719,33 @@ export const createPool = async (
       }
     }
     console.log('✅ AMM config exists on-chain');
-    
+
     // Validate user has sufficient balances BEFORE attempting to create pool
     console.log('💰 Checking token balances...');
     const balance0 = await getTokenBalance(connection, token0Mint, walletPublicKey);
     const balance1 = await getTokenBalance(connection, token1Mint, walletPublicKey);
-    
+
     const token0Symbol = getTokenSymbol(token0Mint);
     const token1Symbol = getTokenSymbol(token1Mint);
-    
+
     if (balance0 < initAmount0) {
       throw new Error(`Insufficient ${token0Symbol} balance. You have ${balance0.toFixed(6)}, but need ${initAmount0} to create the pool.`);
     }
     if (balance1 < initAmount1) {
       throw new Error(`Insufficient ${token1Symbol} balance. You have ${balance1.toFixed(6)}, but need ${initAmount1} to create the pool.`);
     }
-    
+
     console.log('✅ Balance check passed:', {
       [token0Symbol]: `${balance0} (need ${initAmount0})`,
       [token1Symbol]: `${balance1} (need ${initAmount1})`
     });
-    
+
     // Get decimals BEFORE sorting
     const token0MintInfo = await connection.getParsedAccountInfo(token0Mint);
     const token1MintInfo = await connection.getParsedAccountInfo(token1Mint);
     const token0MintDecimals = (token0MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
     const token1MintDecimals = (token1MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
-    
+
     console.log('📋 Before sorting:', {
       token0Mint: token0Mint.toString(),
       token1Mint: token1Mint.toString(),
@@ -2736,11 +2754,11 @@ export const createPool = async (
       decimals0: token0MintDecimals,
       decimals1: token1MintDecimals,
     });
-    
+
     // Sort tokens and check if they were swapped
     const { token0, token1 } = sortTokenMints(token0Mint, token1Mint);
     const tokensWereSwapped = !token0Mint.equals(token0);
-    
+
     // Verify sorting with manual check
     const bufferComparison = Buffer.compare(token0.toBuffer(), token1.toBuffer());
     console.log('🔍 Token sort verification:', {
@@ -2750,17 +2768,17 @@ export const createPool = async (
       isSortedCorrectly: bufferComparison < 0,
       tokensWereSwapped,
     });
-    
+
     if (bufferComparison >= 0) {
       throw new Error('CRITICAL: Tokens are not sorted correctly! token0 must be < token1');
     }
-    
+
     // If tokens were swapped, swap the amounts too!
     let finalAmount0 = initAmount0;
     let finalAmount1 = initAmount1;
     let finalDecimals0 = token0MintDecimals;
     let finalDecimals1 = token1MintDecimals;
-    
+
     if (tokensWereSwapped) {
       finalAmount0 = initAmount1;
       finalAmount1 = initAmount0;
@@ -2768,20 +2786,20 @@ export const createPool = async (
       finalDecimals1 = token0MintDecimals;
       console.log('⚠️ Tokens were swapped! Swapping amounts too.');
     }
-    
+
     // Use PDA for pool state (as per IDL: seeds = [POOL_SEED, amm_config, token_0_mint, token_1_mint])
     const poolState = getPoolState(token0, token1, selectedAmmConfig);
-    
+
     console.log('🔑 Using PDA for Pool State:', poolState.toString());
     console.log('🔑 Using AMM Config:', selectedAmmConfig.toString());
-    
+
     // Get PDAs derived from pool state
     const authority = getAuthority();
     const lpMint = getLpMint(poolState);
     const token0Vault = getTokenVault(poolState, token0);
     const token1Vault = getTokenVault(poolState, token1);
     const observationState = getObservationState(poolState);
-    
+
     // Fetch the fee receiver from AMM config (dynamically, not hardcoded!)
     console.log('🔍 Fetching fee receiver from AMM config...');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2793,28 +2811,28 @@ export const createPool = async (
     }
     const createPoolFee = feeReceiverPubkey;
     console.log('✅ Fee receiver from config:', createPoolFee.toString());
-    
+
     // Determine the correct token programs FIRST (before getting ATAs)
     const token0Info = await connection.getAccountInfo(token0);
     const token1Info = await connection.getAccountInfo(token1);
     const token0Program = token0Info?.owner || TOKEN_PROGRAM_ID;
     const token1Program = token1Info?.owner || TOKEN_PROGRAM_ID;
-    
+
     console.log('🔍 Token programs detected:', {
       token0Program: token0Program.toString(),
       token1Program: token1Program.toString(),
     });
-    
+
     // Get user token accounts with correct token programs
     const userToken0Account = await getAssociatedTokenAddress(token0, walletPublicKey, false, token0Program);
     const userToken1Account = await getAssociatedTokenAddress(token1, walletPublicKey, false, token1Program);
     const userLpAccount = await getAssociatedTokenAddress(lpMint, walletPublicKey);
-    
+
     // Convert amounts to BN with correct decimals
     // Use string-based construction to avoid floating point precision errors
     const amount0Scaled = Math.floor(finalAmount0 * Math.pow(10, finalDecimals0));
     const amount1Scaled = Math.floor(finalAmount1 * Math.pow(10, finalDecimals1));
-    
+
     console.log('💰 Scaled amounts:', {
       finalAmount0,
       finalDecimals0,
@@ -2823,26 +2841,26 @@ export const createPool = async (
       finalDecimals1,
       amount1Scaled,
     });
-    
+
     // Convert to BN using toFixed(0) to prevent scientific notation for large numbers
     const initAmount0BN = new BN(amount0Scaled.toFixed(0));
     const initAmount1BN = new BN(amount1Scaled.toFixed(0));
     const openTime = new BN(Math.floor(Date.now() / 1000)); // Open immediately
-    
+
     // Check if we need to handle native SOL
     const needsWrapToken0 = isNativeSOL(token0);
     const needsWrapToken1 = isNativeSOL(token1);
-    
+
     console.log('🌊 SOL handling for pool creation:', { needsWrapToken0, needsWrapToken1 });
-    
+
     // Check if user token accounts exist (IMPORTANT for pool creation)
     console.log('🔍 Checking if token accounts exist...');
     const token0AccountInfo = await connection.getAccountInfo(userToken0Account);
     const token1AccountInfo = await connection.getAccountInfo(userToken1Account);
-    
+
     const needsCreateToken0Account = !token0AccountInfo && !needsWrapToken0; // SOL wrapping creates account
     const needsCreateToken1Account = !token1AccountInfo && !needsWrapToken1; // SOL wrapping creates account
-    
+
     console.log('🔑 Account status:', {
       token0Account: userToken0Account.toString(),
       token0Exists: !!token0AccountInfo,
@@ -2851,7 +2869,7 @@ export const createPool = async (
       token1Exists: !!token1AccountInfo,
       needsCreateToken1Account,
     });
-    
+
     console.log('🔧 Creating pool with params:', {
       originalToken0: token0Mint.toString(),
       originalToken1: token1Mint.toString(),
@@ -2868,11 +2886,11 @@ export const createPool = async (
       creator: walletPublicKey.toString(),
       tokensWereSwapped,
     });
-    
+
     // Build transaction - set fee payer FIRST to ensure it's included
     const transaction = new Transaction();
     transaction.feePayer = walletPublicKey;
-    
+
     // Step 1: Create token accounts if they don't exist (CRITICAL!)
     if (needsCreateToken0Account) {
       console.log('🔧 Creating token0 account with program:', token0Program.toString());
@@ -2885,7 +2903,7 @@ export const createPool = async (
       );
       transaction.add(createToken0AccountIx);
     }
-    
+
     if (needsCreateToken1Account) {
       console.log('🔧 Creating token1 account with program:', token1Program.toString());
       const createToken1AccountIx = createAssociatedTokenAccountInstruction(
@@ -2897,7 +2915,7 @@ export const createPool = async (
       );
       transaction.add(createToken1AccountIx);
     }
-    
+
     // Step 2: Wrap SOL if needed (AFTER creating accounts, BEFORE initialize instruction)
     // ONLY wrap if actually needed!
     if (needsWrapToken0) {
@@ -2910,7 +2928,7 @@ export const createPool = async (
       transaction.add(...wrapInstructions);
       console.log(`✅ Added ${wrapInstructions.length} wrap instructions for token0`);
     }
-    
+
     if (needsWrapToken1) {
       console.log('🌊 Wrapping SOL for token1...');
       const { instructions: wrapInstructions } = await createWrapSOLInstructions(
@@ -2921,9 +2939,9 @@ export const createPool = async (
       transaction.add(...wrapInstructions);
       console.log(`✅ Added ${wrapInstructions.length} wrap instructions for token1`);
     }
-    
+
     console.log(`📝 Total instructions before initialize: ${transaction.instructions.length}`);
-    
+
     // Step 3: Build the initialize pool instruction (token programs already detected above)
     console.log('🏗️ Building initialize pool instruction...');
     console.log('📋 Account details:', {
@@ -2944,7 +2962,7 @@ export const createPool = async (
       token0Program: token0Program.toString(),
       token1Program: token1Program.toString(),
     });
-    
+
     let initializeInstruction;
     try {
       initializeInstruction = await program.methods
@@ -2983,69 +3001,61 @@ export const createPool = async (
       });
       throw new Error(`Failed to build initialize instruction: ${instructionError.message}`);
     }
-    
+
     transaction.add(initializeInstruction);
-    
+
     // Check if using Jito endpoint and add tip instruction if needed
     // CRITICAL: Tip instruction must be LAST in the transaction
     // According to Jito docs: Tip instruction must be in the last transaction
     // For single transactions, it must be the last instruction
+    // Always add Jito tip instruction defensively.
+    // Many RPCs route through Jito even if URL doesn't show it.
     try {
-      // Get RPC URL from centralized config (most reliable method)
       let rpcUrl = '';
       try {
         rpcUrl = ADDRESSES.getRpcEndpoint();
       } catch {
-        // Fallback: Try to get from connection object or environment
         try {
-          rpcUrl = (connection as any)._rpcEndpoint || 
-                   (connection as any).rpcEndpoint || 
-                   (connection as any)._rpc?.endpoint || '';
+          rpcUrl =
+            (connection as any)._rpcEndpoint ||
+            (connection as any).rpcEndpoint ||
+            (connection as any)._rpc?.endpoint ||
+            '';
         } catch {
           if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_RPC_ENDPOINT) {
             rpcUrl = import.meta.env.VITE_RPC_ENDPOINT;
           }
         }
       }
-      
-      console.log('🔍 Checking RPC endpoint type...', { 
+
+      console.log('🔍 Checking RPC endpoint type...', {
         rpcUrl: rpcUrl ? `${rpcUrl.substring(0, 50)}...` : 'not detected',
-        isJito: rpcUrl ? isJitoEndpoint(rpcUrl) : 'unknown'
       });
-      
-      // Always add tip if we detect Jito endpoint, or if we can't detect (defensive)
-      if (rpcUrl && isJitoEndpoint(rpcUrl)) {
-        console.log('🔍 Detected Jito endpoint - adding tip instruction...');
-        addJitoTipInstruction(transaction, walletPublicKey, 10_000); // 0.00001 SOL tip
-      } else if (!rpcUrl) {
-        // If we can't detect, add tip as a safety measure to avoid errors
-        console.warn('⚠️ Could not detect RPC endpoint - adding Jito tip as safety measure');
-        console.warn('💡 If you\'re not using Jito, you can remove this tip to save 0.00001 SOL');
-        addJitoTipInstruction(transaction, walletPublicKey, 10_000);
-      } else {
-        console.log('ℹ️ Using standard RPC endpoint (no Jito tip required)');
-      }
     } catch (error) {
-      // If detection fails, add tip anyway to be safe
-      console.warn('⚠️ Error checking RPC endpoint - adding Jito tip as safety measure');
-      addJitoTipInstruction(transaction, walletPublicKey, 10_000);
+      console.warn('⚠️ Error checking RPC endpoint');
     }
-    
-    // Get latest blockhash right before sending
+
+    // Get latest blockhash BEFORE adding tip (tip must be added after blockhash)
     console.log('📡 Getting fresh blockhash...');
-    let { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
     
+    // ALWAYS add Jito tip instruction as LAST instruction - many RPCs route through Jito
+    // This prevents the "tip account" error and ensures single transaction
+    // CRITICAL: Must be added AFTER blockhash is set
+    console.log('💰 Adding Jito tip instruction (always included for compatibility)...');
+    addJitoTipInstruction(transaction, walletPublicKey, 10_000); // 0.00001 SOL
+
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
-    
+
     // Sign with user's wallet immediately
     console.log('✍️ Signing transaction...');
     const signedTx = await wallet.signTransaction(transaction);
-    
+
     // Send transaction with proper error handling
     let signature: string;
-    
+
     try {
       // Debug: Log transaction details before sending
       console.log('📋 Transaction details:', {
@@ -3053,7 +3063,28 @@ export const createPool = async (
         feePayer: transaction.feePayer?.toString(),
         recentBlockhash: transaction.recentBlockhash ? 'set' : 'missing',
       });
+
+      // Verify tip instruction is present and last
+      const lastInstruction = transaction.instructions[transaction.instructions.length - 1];
+      const tipAccountInLast = lastInstruction?.keys?.find(key => 
+        JITO_TIP_ACCOUNTS.includes(key.pubkey.toString())
+      );
+      const hasTipInstruction = tipAccountInLast && tipAccountInLast.isWritable;
       
+      console.log('🔍 Tip instruction verification:', {
+        totalInstructions: transaction.instructions.length,
+        lastInstructionProgram: lastInstruction?.programId?.toString(),
+        hasTipInstruction,
+        tipAccount: tipAccountInLast?.pubkey?.toString(),
+        tipAccountWritable: tipAccountInLast?.isWritable,
+        allInstructionPrograms: transaction.instructions.map(ix => ix.programId.toString())
+      });
+      
+      if (!hasTipInstruction) {
+        console.error('❌ WARNING: Tip instruction not found or tip account not writable!');
+        console.error('This may cause the transaction to fail with "tip account" error.');
+      }
+
       // Simulate first to get better error messages
       console.log('🔍 Simulating transaction...');
       try {
@@ -3061,16 +3092,16 @@ export const createPool = async (
         const simTx = Transaction.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false }));
         simTx.recentBlockhash = blockhash;
         simTx.feePayer = walletPublicKey;
-        
+
         const simulation = await connection.simulateTransaction(simTx);
-        
+
         if (simulation.value.err) {
           console.error('❌ Simulation failed:', simulation.value.err);
           console.error('📊 Simulation logs:', simulation.value.logs);
           console.error('📊 Full simulation result:', JSON.stringify(simulation.value, null, 2));
           throw new Error(`Simulation failed: ${JSON.stringify(simulation.value.err)}`);
         }
-        
+
         console.log('✅ Simulation successful:', {
           unitsConsumed: simulation.value.unitsConsumed,
           logs: simulation.value.logs?.slice(0, 10), // First 10 logs
@@ -3080,7 +3111,7 @@ export const createPool = async (
         console.error('Error type:', simError.constructor?.name);
         console.error('Error message:', simError.message);
         console.error('Error stack:', simError.stack);
-        
+
         // If simulation fails, try to get more details
         if (simError.logs) {
           console.error('📊 Simulation logs:', simError.logs);
@@ -3089,117 +3120,68 @@ export const createPool = async (
           console.error('📊 Simulation error value:', simError.value.err);
           console.error('📊 Simulation error logs:', simError.value.logs);
         }
-        
+
         // Don't throw here - continue to try sending anyway
         console.warn('⚠️ Simulation failed, but continuing to send transaction...');
       }
-      
+
       console.log('📤 Sending transaction...');
       signature = await connection.sendRawTransaction(signedTx.serialize(), {
         skipPreflight: false,
         preflightCommitment: 'processed',
         maxRetries: 5,
       });
-      
+
       console.log(`🔗 Transaction sent: ${signature}`);
     } catch (sendError: any) {
       console.error('❌ Error sending transaction:', sendError);
-      
-      // Check if error is about tip account - if so, retry with tip instruction
-      const errorMessage = sendError?.message || sendError?.toString() || '';
-      if ((errorMessage.includes('tip account') || errorMessage.includes('write lock')) && !transaction.instructions.some(ix => {
-        const keys = ix.keys || [];
-        return keys.some(key => 
-          JITO_TIP_ACCOUNTS.some(tipAccount => key.pubkey.toString() === tipAccount)
-        );
-      })) {
-        console.log('🔄 Detected tip account error - retrying with Jito tip instruction...');
-        
-        // Rebuild transaction with tip instruction
-        const retryTransaction = new Transaction();
-        retryTransaction.feePayer = walletPublicKey;
-        
-        // Re-add all instructions from original transaction
-        for (const ix of transaction.instructions) {
-          retryTransaction.add(ix);
-        }
-        
-        // Add tip instruction as LAST
-        addJitoTipInstruction(retryTransaction, walletPublicKey, 10_000);
-        
-        // Get fresh blockhash
-        const { blockhash: retryBlockhash, lastValidBlockHeight: retryLastValidBlockHeight } = 
-          await connection.getLatestBlockhash('processed');
-        retryTransaction.recentBlockhash = retryBlockhash;
-        retryTransaction.feePayer = walletPublicKey;
-        
-        // Sign and send retry
-        console.log('✍️ Signing retry transaction with tip...');
-        const retrySignedTx = await wallet.signTransaction(retryTransaction);
-        
+
+      // Try to get logs from the error if available
+      if (sendError.logs) {
+        console.error('📊 Transaction logs:', sendError.logs);
+      }
+
+      // Check if it's "already processed" error - transaction might have succeeded!
+      if (sendError.message && sendError.message.includes('already been processed')) {
+        console.log('⚠️ Transaction might have already succeeded!');
+        console.log('⏳ Waiting 3 seconds before checking pool state...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Check if pool was actually created
         try {
-          signature = await connection.sendRawTransaction(retrySignedTx.serialize(), {
-            skipPreflight: false,
-            preflightCommitment: 'processed',
-            maxRetries: 5,
-          });
-          
-          console.log(`🔗 Retry transaction sent: ${signature}`);
-          // Update blockhash for confirmation below
-          blockhash = retryBlockhash;
-          lastValidBlockHeight = retryLastValidBlockHeight;
-        } catch (retryError: any) {
-          console.error('❌ Retry also failed:', retryError);
-          throw retryError;
-        }
-      } else {
-        // Try to get logs from the error if available
-        if (sendError.logs) {
-          console.error('📊 Transaction logs:', sendError.logs);
-        }
-        
-        // Check if it's "already processed" error - transaction might have succeeded!
-        if (sendError.message && sendError.message.includes('already been processed')) {
-          console.log('⚠️ Transaction might have already succeeded!');
-          console.log('⏳ Waiting 3 seconds before checking pool state...');
-          await new Promise(resolve => setTimeout(resolve, 3000));
-          
-          // Check if pool was actually created
-          try {
-            const poolAccountInfo = await connection.getAccountInfo(poolState);
-            if (poolAccountInfo) {
-              console.log('✅ Pool was created successfully despite error!');
-              return {
-                tx: 'success (already processed)',
-                poolState: poolState
-              };
-            }
-          } catch (checkError) {
-            console.error('❌ Pool does not exist - transaction truly failed');
+          const poolAccountInfo = await connection.getAccountInfo(poolState);
+          if (poolAccountInfo) {
+            console.log('✅ Pool was created successfully despite error!');
+            return {
+              tx: 'success (already processed)',
+              poolState: poolState
+            };
           }
+        } catch (checkError) {
+          console.error('❌ Pool does not exist - transaction truly failed');
         }
       }
-      
+
       throw sendError; // Re-throw if not "already processed"
     }
-    
+
     // Confirm transaction with robust error handling
     console.log('⏳ Confirming transaction...');
-    
+
     try {
       const confirmation = await connection.confirmTransaction({
         signature,
         blockhash,
         lastValidBlockHeight,
       }, 'confirmed'); // Use 'confirmed' for better reliability
-      
+
       if (confirmation.value.err) {
         console.error('❌ Transaction confirmation error:', confirmation.value.err);
-        
+
         // Even with error, check if pool was created
         console.log('🔍 Checking if pool was actually created...');
         await new Promise(resolve => setTimeout(resolve, 2000));
-        
+
         const poolAccountInfo = await connection.getAccountInfo(poolState);
         if (poolAccountInfo) {
           console.log('✅ Pool exists! Transaction succeeded despite confirmation error.');
@@ -3208,23 +3190,23 @@ export const createPool = async (
             poolState: poolState
           };
         }
-        
+
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
-      
+
       console.log('✅ Pool created successfully:', signature);
       console.log('📍 Pool State PDA:', poolState.toString());
       console.log('🔗 View on Explorer:', `https://solscan.io/tx/${signature}?cluster=devnet`);
-      
+
       return { tx: signature, poolState: poolState };
-      
+
     } catch (confirmError: any) {
       console.error('❌ Confirmation error:', confirmError);
-      
+
       // Final check: did the pool get created anyway?
       console.log('🔍 Final check: verifying pool state...');
       await new Promise(resolve => setTimeout(resolve, 2000));
-      
+
       const poolAccountInfo = await connection.getAccountInfo(poolState);
       if (poolAccountInfo) {
         console.log('✅ Pool exists! Transaction succeeded despite confirmation timeout.');
@@ -3233,25 +3215,25 @@ export const createPool = async (
           poolState: poolState
         };
       }
-      
+
       throw confirmError; // Re-throw if pool truly doesn't exist
     }
   } catch (error: any) {
     console.error('❌ Error creating pool:', error);
-    
+
     // Check if pool already exists
     if (error.message && (error.message.includes('already in use') || error.message.includes('custom program error: 0x0'))) {
       const token0Symbol = getTokenSymbol(token0Mint);
       const token1Symbol = getTokenSymbol(token1Mint);
       throw new Error(`Pool ${token0Symbol}/${token1Symbol} already exists! Please check the Pools page to add liquidity to the existing pool instead.`);
     }
-    
+
     // Check if it's an "already processed" error (often a false negative)
     if (error.message && error.message.includes('already been processed')) {
       console.log('⚠️ Transaction might have already succeeded - check the pools page!');
       throw new Error('Transaction might have already been processed. Please check the Pools page to verify if the pool was created.');
     }
-    
+
     // Enhanced error message for account initialization errors
     if (error.message && error.message.includes('AccountNotInitialized')) {
       // Check if it's AMM config issue
@@ -3264,10 +3246,10 @@ export const createPool = async (
           `Or try a different fee tier that has been initialized.`
         );
       }
-      
+
       throw new Error('Token account not initialized. Please ensure you have token balances for both tokens.');
     }
-    
+
     throw error;
   }
 };
