@@ -18,7 +18,9 @@ const ConnectionProviderWithRPC: FC<{ children: ReactNode }> = ({ children }) =>
     
     if (!rpcEndpoint) {
       console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in .env file!');
-      console.error('💡 Please create a .env file with: VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+      console.error('💡 Please create a .env file with your RPC endpoint:');
+      console.error('   For Devnet: VITE_RPC_ENDPOINT=https://api.devnet.solana.com');
+      console.error('   For Mainnet: VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
       throw new Error('VITE_RPC_ENDPOINT environment variable is required. Please set it in your .env file.');
     }
     

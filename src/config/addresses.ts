@@ -52,6 +52,7 @@ export const SOL_MINT = new PublicKey('So111111111111111111111111111111111111111
  * The protocol's native token used for fee discounts
  * 
  * MAINNET: FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN
+ * DEVNET: 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
  */
 export const KEDOLOG_MINT = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN');
 
@@ -60,6 +61,7 @@ export const KEDOLOG_MINT = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS
  * Used as the base pair for pool-based pricing oracles
  * 
  * Mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+ * Devnet: 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
  */
 export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
@@ -78,11 +80,11 @@ export const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8Ben
 // ============================================================================
 
 /**
- * MAINNET REFERENCE POOLS
- * These pools will be created on mainnet and used for dynamic pricing
+ * REFERENCE POOLS
+ * These pools are used for dynamic pricing
  * The contract reads these pools to calculate KEDOLOG discount fees
  * 
- * NOTE: Create these pools first on mainnet, then update addresses here:
+ * NOTE: Create these pools first, then update addresses here:
  * 1. KEDOLOG/USDC pool - for KEDOLOG pricing
  * 2. SOL/USDC pool - for SOL pricing (if not already exists)
  * 
@@ -90,18 +92,26 @@ export const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8Ben
  * - Pool state account contains vault references
  * - Or use: anchor account pool_state <POOL_ADDRESS>
  * 
- * TODO: UPDATE THESE WITH ACTUAL MAINNET POOL ADDRESSES
+ * TODO: UPDATE THESE WITH ACTUAL POOL ADDRESSES (currently placeholders)
  */
 
-// KEDOLOG/USDC Pool (TODO: Create on mainnet and update)
+// KEDOLOG/USDC Pool (Mainnet)
+// TODO: Update with actual mainnet pool address after creating the pool
 export const KEDOLOG_USDC_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
 export const KEDOLOG_VAULT = new PublicKey('11111111111111111111111111111111'); // Placeholder
 export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
 
-// SOL/USDC Pool (TODO: Create on mainnet and update, or use existing Jupiter/Raydium pool)
+// SOL/USDC Pool (Mainnet)
+// TODO: Update with actual mainnet pool address after creating the pool
 export const SOL_USDC_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
 export const SOL_VAULT = new PublicKey('11111111111111111111111111111111'); // Placeholder
 export const USDC_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+
+// KEDOLOG/SOL Pool (Mainnet)
+// TODO: Update with actual mainnet pool address after creating the pool
+export const KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+export const KEDOLOG_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
 
 // ============================================================================
 // DYNAMIC POOL DISCOVERY
@@ -117,7 +127,8 @@ export const USDC_VAULT_IN_SOL_POOL = new PublicKey('111111111111111111111111111
  * Default AMM Config (index 0)
  * Used for KEDOLOG discount feature
  * Contains unified fee_receiver for all fee types
- * MAINNET DEPLOYMENT: Nov 15, 2025
+ * MAINNET: ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ
+ * DEVNET: TsWSDkAJ9TfkspGLkpVEPtCsvGx8NRVurAfabPyRu9C
  * Pool Creation Fee: 0.15 SOL
  */
 export const DEFAULT_AMM_CONFIG = new PublicKey('ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ');
@@ -126,7 +137,8 @@ export const DEFAULT_AMM_CONFIG = new PublicKey('ENDftP3K19BX29PnyQ6sAwHFGyjtuzA
  * Protocol Token Config (KEDOLOG Config)
  * Stores KEDOLOG discount configuration (discount rate: 25%, treasury, etc.)
  * NOW ALSO STORES: Reference pool addresses (KEDOLOG/USDC, SOL/USDC, KEDOLOG/SOL)
- * MAINNET DEPLOYMENT: Nov 15, 2025
+ * MAINNET: pVRUHo1ecQA5QjyoCJzBSdPTi4hSgjW2ErK8huNYB51
+ * DEVNET: EprKag9DAdRhMekcHzHzC64ZBmrbECeytd5uL1G9cXP9
  */
 export const PROTOCOL_TOKEN_CONFIG = new PublicKey('pVRUHo1ecQA5QjyoCJzBSdPTi4hSgjW2ErK8huNYB51');
 
@@ -156,6 +168,7 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('EGX4XLHooJ8vtMeyu6JRzudPM
 
 /**
  * Current network environment
+ * Set to 'devnet' for testing, 'mainnet-beta' for production
  */
 export const NETWORK = 'mainnet-beta' as const;
 

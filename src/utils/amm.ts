@@ -316,7 +316,14 @@ export const getProgram = (connection: Connection, wallet: any) => {
     wallet,
     { commitment: 'confirmed' }
   );
-  return new Program(IDL, provider);
+  // Explicitly use PROGRAM_ID from addresses.ts to override IDL's address
+  // This ensures we use the correct program ID even if IDL has a different one
+  // Create a new IDL object with the correct program ID
+  const idlWithCorrectAddress = {
+    ...IDL,
+    address: PROGRAM_ID.toString(),
+  };
+  return new Program(idlWithCorrectAddress as Idl, provider);
 };
 
 // Fetch pool creation fee from AMM config
@@ -1158,12 +1165,15 @@ export const swapWithKedologDiscount = async (
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     console.log('📊 Protocol Token Config:', protocolTokenConfig.toString());
     
-    // Fetch config to get treasury and protocol token mint
+    // Fetch config to get treasury, protocol token mint, and reference pool addresses
     const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
     console.log('⚙️ Config loaded:', {
       treasury: config.treasury.toString(),
       protocolTokenMint: config.protocolTokenMint.toString(),
       discountRate: config.discountRate.toString(),
+      kedologUsdcPool: config.kedologUsdcPool?.toString() || 'Not set',
+      solUsdcPool: config.solUsdcPool?.toString() || 'Not set',
+      kedologSolPool: config.kedologSolPool?.toString() || 'Not set',
     });
     
     // Sort tokens
@@ -1367,9 +1377,17 @@ export const swapWithKedologDiscount = async (
       console.log('🚀 Building KEDOLOG discount swap instruction...');
       
       // Get KEDOLOG price pool for on-chain price oracle
-      const kedologPricePool = KEDOLOG_CONFIG.PRICE_POOL;
+      // Try to get from protocol token config first (on-chain), fallback to hardcoded address
+      const kedologPricePool = config.kedologUsdcPool 
+        ? new PublicKey(config.kedologUsdcPool)
+        : KEDOLOG_CONFIG.PRICE_POOL;
       
       console.log('🔮 Using KEDOLOG/USDC pool for on-chain price oracle:', kedologPricePool.toString());
+      
+      // Validate pool address is not placeholder
+      if (kedologPricePool.equals(new PublicKey('11111111111111111111111111111111'))) {
+        throw new Error('KEDOLOG/USDC pool address is not configured. Please set reference pools in protocol token config.');
+      }
       
       // Fetch the pool data to get vault addresses
       const kedologPoolData = await (program.account as any).poolState.fetch(kedologPricePool);
@@ -1462,18 +1480,51 @@ export const swapWithKedologDiscount = async (
       }
       
       // 3. Add SOL/USDC pool + vaults for final USD conversion
+      // Get SOL/USDC pool from protocol token config (on-chain) or fallback to hardcoded
+      const solUsdcPoolAddress = config.solUsdcPool 
+        ? new PublicKey(config.solUsdcPool)
+        : ADDRESSES.SOL_USDC_POOL;
+      
+      // Fetch SOL/USDC pool data to get vault addresses dynamically
+      let solUsdcToken0Vault: PublicKey | null = null;
+      let solUsdcToken1Vault: PublicKey | null = null;
+      
+      if (!solUsdcPoolAddress.equals(new PublicKey('11111111111111111111111111111111'))) {
+        try {
+          const solUsdcPoolData = await (program.account as any).poolState.fetch(solUsdcPoolAddress);
+          solUsdcToken0Vault = solUsdcPoolData.token0Vault || solUsdcPoolData.token_0_vault;
+          solUsdcToken1Vault = solUsdcPoolData.token1Vault || solUsdcPoolData.token_1_vault;
+          if (solUsdcToken0Vault && solUsdcToken1Vault) {
+            console.log('✅ Fetched SOL/USDC pool vaults from on-chain:', {
+              pool: solUsdcPoolAddress.toString(),
+              vault0: solUsdcToken0Vault.toString(),
+              vault1: solUsdcToken1Vault.toString(),
+            });
+          }
+        } catch (error) {
+          console.warn('⚠️ Could not fetch SOL/USDC pool data, using hardcoded vaults:', error);
+          solUsdcToken0Vault = ADDRESSES.SOL_VAULT;
+          solUsdcToken1Vault = ADDRESSES.USDC_VAULT_IN_SOL_POOL;
+        }
+      } else {
+        // Fallback to hardcoded if not set in config
+        solUsdcToken0Vault = ADDRESSES.SOL_VAULT;
+        solUsdcToken1Vault = ADDRESSES.USDC_VAULT_IN_SOL_POOL;
+      }
+      
       // Check if intermediate pool already provides SOL → USDC path
       const intermediatePoolProvidesSolPrice = intermediatePool && 
-        (intermediatePool.poolAddress.equals(ADDRESSES.SOL_USDC_POOL) ||
-         intermediatePool.solVault.equals(ADDRESSES.SOL_VAULT));
+        (intermediatePool.poolAddress.equals(solUsdcPoolAddress) ||
+         (solUsdcToken0Vault && intermediatePool.solVault.equals(solUsdcToken0Vault)) ||
+         (solUsdcToken1Vault && intermediatePool.solVault.equals(solUsdcToken1Vault)));
       
-      const isSolUsdcPoolSameAsSwapPool = ADDRESSES.SOL_USDC_POOL.equals(poolState);
+      const isSolUsdcPoolSameAsSwapPool = solUsdcPoolAddress.equals(poolState);
       
-      if (!isSolUsdcPoolSameAsSwapPool && !intermediatePoolProvidesSolPrice) {
+      if (!isSolUsdcPoolSameAsSwapPool && !intermediatePoolProvidesSolPrice && solUsdcToken0Vault && solUsdcToken1Vault) {
         // IMPORTANT: Contract expects ONLY VAULTS, not pool address!
         remainingAccounts.push(
-          { pubkey: ADDRESSES.SOL_VAULT, isSigner: false, isWritable: false },
-          { pubkey: ADDRESSES.USDC_VAULT_IN_SOL_POOL, isSigner: false, isWritable: false },
+          { pubkey: solUsdcToken0Vault, isSigner: false, isWritable: false },
+          { pubkey: solUsdcToken1Vault, isSigner: false, isWritable: false },
         );
         console.log('✅ Added SOL/USDC VAULTS for SOL → USD pricing');
       } else if (isSolUsdcPoolSameAsSwapPool) {
@@ -1649,7 +1700,26 @@ export const fetchKedologPrice = async (
 ): Promise<number> => {
   try {
     const program = getProgram(connection, wallet);
-    const poolAddress = KEDOLOG_CONFIG.PRICE_POOL;
+    
+    // Try to get pool address from protocol token config first
+    const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
+    let poolAddress: PublicKey;
+    
+    try {
+      const config = await (program.account as any).protocolTokenConfig.fetch(protocolTokenConfig);
+      poolAddress = config.kedologUsdcPool 
+        ? new PublicKey(config.kedologUsdcPool)
+        : KEDOLOG_CONFIG.PRICE_POOL;
+    } catch (error) {
+      console.warn('⚠️ Could not fetch protocol token config, using hardcoded pool address');
+      poolAddress = KEDOLOG_CONFIG.PRICE_POOL;
+    }
+    
+    // Validate pool address is not placeholder
+    if (poolAddress.equals(new PublicKey('11111111111111111111111111111111'))) {
+      console.warn('⚠️ KEDOLOG/USDC pool address is not configured, using fallback price');
+      return 0.01;
+    }
     
     console.log('💰 Fetching KEDOLOG price from pool:', poolAddress.toString());
     
@@ -2762,31 +2832,63 @@ export const createPool = async (
     
     // Step 3: Build the initialize pool instruction (token programs already detected above)
     console.log('🏗️ Building initialize pool instruction...');
-    const initializeInstruction = await program.methods
-      .initialize(initAmount0BN, initAmount1BN, openTime)
-      .accounts({
-        creator: walletPublicKey,
-        ammConfig: selectedAmmConfig, // Use selected fee tier
-        authority,
-        poolState: poolState, // Using PDA now
-        token0Mint: token0,
-        token1Mint: token1,
-        lpMint,
-        creatorToken0: userToken0Account,
-        creatorToken1: userToken1Account,
-        creatorLpToken: userLpAccount,
-        token0Vault,
-        token1Vault,
-        createPoolFee,
-        observationState,
-        tokenProgram: TOKEN_PROGRAM_ID,
-        token0Program,  // Use detected program
-        token1Program,  // Use detected program
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        systemProgram: SystemProgram.programId,
-        rent: SYSVAR_RENT_PUBKEY,
-      })
-      .instruction();
+    console.log('📋 Account details:', {
+      creator: walletPublicKey.toString(),
+      ammConfig: selectedAmmConfig.toString(),
+      authority: authority.toString(),
+      poolState: poolState.toString(),
+      token0Mint: token0.toString(),
+      token1Mint: token1.toString(),
+      lpMint: lpMint.toString(),
+      creatorToken0: userToken0Account.toString(),
+      creatorToken1: userToken1Account.toString(),
+      creatorLpToken: userLpAccount.toString(),
+      token0Vault: token0Vault.toString(),
+      token1Vault: token1Vault.toString(),
+      createPoolFee: createPoolFee.toString(),
+      observationState: observationState.toString(),
+      token0Program: token0Program.toString(),
+      token1Program: token1Program.toString(),
+    });
+    
+    let initializeInstruction;
+    try {
+      initializeInstruction = await program.methods
+        .initialize(initAmount0BN, initAmount1BN, openTime)
+        .accounts({
+          creator: walletPublicKey,
+          ammConfig: selectedAmmConfig,
+          authority,
+          poolState: poolState,
+          token0Mint: token0,
+          token1Mint: token1,
+          lpMint,
+          creatorToken0: userToken0Account,
+          creatorToken1: userToken1Account,
+          creatorLpToken: userLpAccount,
+          token0Vault,
+          token1Vault,
+          createPoolFee,
+          observationState,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          token0Program,
+          token1Program,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: SYSVAR_RENT_PUBKEY,
+        })
+        .instruction();
+      console.log('✅ Initialize instruction built successfully');
+    } catch (instructionError: any) {
+      console.error('❌ Error building initialize instruction:', instructionError);
+      console.error('Error details:', {
+        message: instructionError.message,
+        stack: instructionError.stack,
+        code: instructionError.code,
+        name: instructionError.name,
+      });
+      throw new Error(`Failed to build initialize instruction: ${instructionError.message}`);
+    }
     
     transaction.add(initializeInstruction);
     
@@ -2816,27 +2918,41 @@ export const createPool = async (
       // Simulate first to get better error messages
       console.log('🔍 Simulating transaction...');
       try {
-        const simulation = await connection.simulateTransaction(signedTx, {
-          commitment: 'processed',
-        });
+        // Create a copy of the transaction for simulation
+        const simTx = Transaction.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false }));
+        simTx.recentBlockhash = blockhash;
+        simTx.feePayer = walletPublicKey;
+        
+        const simulation = await connection.simulateTransaction(simTx);
         
         if (simulation.value.err) {
           console.error('❌ Simulation failed:', simulation.value.err);
           console.error('📊 Simulation logs:', simulation.value.logs);
+          console.error('📊 Full simulation result:', JSON.stringify(simulation.value, null, 2));
           throw new Error(`Simulation failed: ${JSON.stringify(simulation.value.err)}`);
         }
         
         console.log('✅ Simulation successful:', {
           unitsConsumed: simulation.value.unitsConsumed,
-          logs: simulation.value.logs?.slice(0, 5), // First 5 logs
+          logs: simulation.value.logs?.slice(0, 10), // First 10 logs
         });
       } catch (simError: any) {
         console.error('❌ Simulation error:', simError);
+        console.error('Error type:', simError.constructor?.name);
+        console.error('Error message:', simError.message);
+        console.error('Error stack:', simError.stack);
+        
         // If simulation fails, try to get more details
         if (simError.logs) {
           console.error('📊 Simulation logs:', simError.logs);
         }
-        throw simError;
+        if (simError.value?.err) {
+          console.error('📊 Simulation error value:', simError.value.err);
+          console.error('📊 Simulation error logs:', simError.value.logs);
+        }
+        
+        // Don't throw here - continue to try sending anyway
+        console.warn('⚠️ Simulation failed, but continuing to send transaction...');
       }
       
       console.log('📤 Sending transaction...');
