@@ -353,7 +353,7 @@ const PoolCard = ({
   const token1Info = getTokenByMint(pool.token1Mint);
   
   return (
-    <div className="card p-4 sm:p-6 hover:scale-105 transition-transform">
+    <div className="card p-4 sm:p-6 hover:scale-105 transition-transform min-h-[400px] flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2 sm:gap-3">
           {token0Info?.logoURI ? (
@@ -459,21 +459,26 @@ const PoolCard = ({
           <span className="text-gray-400">LP Supply</span>
           <span className="font-semibold">{(pool.lpSupply / 1e9).toFixed(2)}</span>
         </div>
-        {userLpBalance > 0 && (
-          <>
-            <div className="flex justify-between text-xs sm:text-sm bg-brand-cyan/10 -mx-3 px-3 py-2 rounded-lg">
-              <span className="text-brand-cyan font-semibold">Your LP Tokens</span>
-              <span className="font-bold text-brand-cyan">{userLpBalance.toFixed(6)}</span>
-            </div>
-            <div className="flex justify-between text-xs sm:text-sm">
-              <span className="text-gray-400">Your Pool Share</span>
-              <span className="font-semibold text-brand-pink">{userPoolShare.toFixed(4)}%</span>
-            </div>
-          </>
-        )}
+        {/* Always show LP token section to maintain consistent card height */}
+        <div className={`flex justify-between text-xs sm:text-sm -mx-3 px-3 py-2 rounded-lg ${
+          userLpBalance > 0 ? 'bg-brand-cyan/10' : 'bg-transparent'
+        }`}>
+          <span className={`font-semibold ${userLpBalance > 0 ? 'text-brand-cyan' : 'text-gray-400'}`}>
+            Your LP Tokens
+          </span>
+          <span className={`font-bold ${userLpBalance > 0 ? 'text-brand-cyan' : 'text-gray-500'}`}>
+            {userLpBalance > 0 ? userLpBalance.toFixed(6) : '0.000000'}
+          </span>
+        </div>
+        <div className="flex justify-between text-xs sm:text-sm">
+          <span className="text-gray-400">Your Pool Share</span>
+          <span className={`font-semibold ${userLpBalance > 0 ? 'text-brand-pink' : 'text-gray-500'}`}>
+            {userLpBalance > 0 ? `${userPoolShare.toFixed(4)}%` : '0.0000%'}
+          </span>
+        </div>
               </div>
       
-      <div className="grid grid-cols-2 gap-2 sm:gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-auto">
         <button
           onClick={onAddLiquidity}
           disabled={!connected}
