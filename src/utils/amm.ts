@@ -49,6 +49,20 @@ export interface FeeConfig extends BaseFeeConfig {
 // Get all available fee tiers with computed addresses
 export const FEE_TIERS: FeeConfig[] = getFeeTiersWithAddresses(PROGRAM_ID);
 
+// ============================================================================
+// JITO TIP CONFIGURATION
+// ============================================================================
+
+/**
+ * Global flag to enable/disable Jito tip instructions
+ * 
+ * Set to `true` if your RPC endpoint requires Jito tips (e.g., Jito-enabled endpoints)
+ * Set to `false` if your RPC endpoint does NOT require Jito tips (e.g., standard Solana RPC)
+ * 
+ * Default: `true` (always add tip for compatibility)
+ */
+export const ENABLE_JITO_TIP = false;
+
 // Jito tip accounts (mainnet) - these are the official Jito tip accounts
 const JITO_TIP_ACCOUNTS = [
   '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
@@ -3033,11 +3047,15 @@ export const createPool = async (
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
     
-    // ALWAYS add Jito tip instruction as LAST instruction - many RPCs route through Jito
-    // This prevents the "tip account" error and ensures single transaction
-    // CRITICAL: Must be added AFTER blockhash is set
-    console.log('💰 Adding Jito tip instruction (always included for compatibility)...');
-    addJitoTipInstruction(transaction, walletPublicKey, 10_000); // 0.00001 SOL
+    // Conditionally add Jito tip instruction based on global flag
+    if (ENABLE_JITO_TIP) {
+      // Add Jito tip instruction as LAST instruction - required for Jito-enabled RPCs
+      // CRITICAL: Must be added AFTER blockhash is set
+      console.log('💰 Adding Jito tip instruction (ENABLE_JITO_TIP = true)...');
+      addJitoTipInstruction(transaction, walletPublicKey, 10_000); // 0.00001 SOL
+    } else {
+      console.log('ℹ️ Skipping Jito tip instruction (ENABLE_JITO_TIP = false)');
+    }
 
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
 
