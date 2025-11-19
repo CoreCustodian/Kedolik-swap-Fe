@@ -17,6 +17,7 @@ import {
   clearPoolCache,
   WSOL_MINT,
 } from '../utils/amm';
+import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
 import { KEDOLOG_CONFIG } from '../config/fees';
 import { SOL_MINT, KEDOLOG_MINT, USDC_MINT } from '../config/addresses';
 import { 
@@ -112,42 +113,44 @@ const Swap = () => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
   
-  // Fetch token balances
-
+  // Fetch token balances with caching and debouncing
   useEffect(() => {
-    const fetchBalances = async () => {
-      if (!publicKey || !connected) {
-        setFromBalance(0);
-        setToBalance(0);
-        return;
-      }
-      
+    if (!publicKey || !connected) {
+      setFromBalance(0);
+      setToBalance(0);
+      setKedologBalance(0);
+      return;
+    }
+    
+    // Debounced balance fetcher to prevent excessive RPC calls
+    const fetchBalances = debounce(async () => {
       try {
-        // Fetch from token balance (handles both native SOL and SPL tokens)
-        const fromBal = await getTokenBalance(connection, fromToken.mint, publicKey);
+        // Use cached balance fetcher (10s cache, prevents duplicate requests)
+        const [fromBal, toBal, kedologBal] = await Promise.all([
+          getCachedBalance(connection, fromToken.mint, publicKey),
+          getCachedBalance(connection, toToken.mint, publicKey),
+          getCachedBalance(connection, KEDOLOG_CONFIG.MINT, publicKey),
+        ]);
+        
         setFromBalance(fromBal);
-        
-        // Fetch to token balance (handles both native SOL and SPL tokens)
-        const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
         setToBalance(toBal);
-        
-        // Fetch KEDOLOG balance
-        const kedologBal = await getTokenBalance(connection, KEDOLOG_CONFIG.MINT, publicKey);
         setKedologBalance(kedologBal);
       } catch (error) {
         console.error('Error fetching balances:', error);
-        showToast('Failed to fetch token balances', 'error');
+        // Don't show toast on every error to avoid spam
       }
-    };
+    }, 500); // 500ms debounce
     
     fetchBalances();
-    const interval = setInterval(fetchBalances, 15000); // Update every 15s
-    return () => clearInterval(interval);
-  }, [publicKey, connected, fromToken, toToken, connection]);
+    
+    // No interval - balances will refresh when tokens change or cache expires
+    // Cache TTL is 10 seconds, so balances auto-refresh when needed
+  }, [publicKey, connected, fromToken.mint.toString(), toToken.mint.toString(), connection]);
   
-  // Fetch pool reserves and check for routes
+  // Fetch pool reserves and check for routes (debounced to prevent excessive calls)
   useEffect(() => {
-    const fetchPoolData = async () => {
+    // Debounce pool data fetching to prevent rapid successive calls
+    const fetchPoolData = debounce(async () => {
       try {
         // Check if trying to swap same token (including WSOL <-> Native SOL)
         const { isNativeSOL } = await import('../utils/amm');
@@ -171,6 +174,7 @@ const Swap = () => {
           poolState: poolState.toString(),
         });
         
+        // fetchPools uses 10s cache, so this won't spam RPC
         const pools = await fetchPools(connection, wallet);
         const pool = pools.find(p => p.address.equals(poolState));
         
@@ -228,15 +232,13 @@ const Swap = () => {
         setSwapRoute(null);
         setIsMultiHop(false);
       }
-    };
+    }, 800); // 800ms debounce
     
     fetchPoolData();
     
-    // Refresh less frequently to avoid RPC rate limits (every 15 seconds)
-    // Pool cache handles updates between refreshes
-    const interval = setInterval(fetchPoolData, 15000);
-    return () => clearInterval(interval);
-  }, [fromToken, toToken, connection, wallet, poolRefreshTrigger]);
+    // NO INTERVAL - pool cache (10s TTL) handles refresh automatically
+    // Only refetch when tokens actually change
+  }, [fromToken.mint.toString(), toToken.mint.toString(), connection, wallet, poolRefreshTrigger]);
   
   // Check KEDOLOG discount availability when tokens change
   useEffect(() => {
@@ -865,9 +867,10 @@ const Swap = () => {
       setToAmount('');
       setQuoteData(null);
       
-      // Clear pool cache and trigger refresh after successful swap
+      // Clear caches and trigger refresh after successful swap
       console.log('🔄 Clearing cache and triggering pool refresh after successful swap');
       clearPoolCache(); // Clear cache to force fresh fetch
+      if (publicKey) clearBalanceCache(publicKey); // Clear balance cache
       setPoolRefreshTrigger(prev => prev + 1);
       
       // Refresh balances and pool reserves after successful swap
@@ -930,6 +933,7 @@ const Swap = () => {
         
         // Refresh data
         clearPoolCache();
+        if (publicKey) clearBalanceCache(publicKey); // Clear balance cache
         setPoolRefreshTrigger(prev => prev + 1);
         
         setTimeout(() => {

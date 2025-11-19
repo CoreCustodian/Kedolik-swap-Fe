@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getTokenBalance, getPoolCreationFee } from '../utils/amm';
+import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getPoolCreationFee } from '../utils/amm';
+import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
 import { DEVNET_TOKENS, TokenInfo, getTokenByMint } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -82,40 +82,40 @@ const Pools = () => {
     // No auto-refresh - user can manually refresh if needed
   }, [connection, wallet]);
   
-  // Fetch user's LP token balances for each pool
+  // Fetch user's LP token balances for each pool (debounced and cached)
   useEffect(() => {
-    const fetchUserLpBalances = async () => {
-      if (!connected || !publicKey || pools.length === 0) {
-        setUserLpBalances(new Map());
-        return;
-      }
-      
+    if (!connected || !publicKey || pools.length === 0) {
+      setUserLpBalances(new Map());
+      return;
+    }
+    
+    // Debounce to prevent excessive calls when pools array updates
+    const fetchUserLpBalances = debounce(async () => {
       const balances = new Map<string, number>();
       
-      // Fetch LP balance for each pool
-      await Promise.all(
-        pools.map(async (pool) => {
-          try {
-            const lpMint = getLpMint(pool.address);
-            const userLpAccount = await getAssociatedTokenAddress(lpMint, publicKey);
-            const lpAccountInfo = await connection.getTokenAccountBalance(userLpAccount);
-            const balance = parseFloat(lpAccountInfo.value.amount) / Math.pow(10, lpAccountInfo.value.decimals);
-            
-            if (balance > 0) {
-              balances.set(pool.address.toString(), balance);
-            }
-          } catch (error) {
-            // User doesn't have LP tokens for this pool
-            // This is expected, so we don't log it as an error
+      // Batch fetch LP balances using cached balance fetcher
+      // This reduces RPC calls significantly
+      const balancePromises = pools.map(async (pool) => {
+        try {
+          const lpMint = getLpMint(pool.address);
+          // Use cached balance fetcher (10s cache, prevents duplicate requests)
+          const balance = await getCachedBalance(connection, lpMint, publicKey);
+          
+          if (balance > 0) {
+            balances.set(pool.address.toString(), balance);
           }
-        })
-      );
+        } catch (error) {
+          // User doesn't have LP tokens for this pool - this is expected
+          // Don't log to avoid console spam
+        }
+      });
       
+      await Promise.all(balancePromises);
       setUserLpBalances(balances);
-    };
+    }, 500); // 500ms debounce
     
     fetchUserLpBalances();
-  }, [connected, publicKey, pools, connection]);
+  }, [connected, publicKey, pools.length, connection]); // Only depend on pools.length, not entire pools array
   
   // Calculate stats
   const totalTVL = pools.reduce((sum, pool) => sum + (pool.token0Reserve + pool.token1Reserve), 0);
@@ -249,9 +249,10 @@ const Pools = () => {
           onClose={() => setShowCreatePool(false)}
           onSuccess={async () => {
             setShowCreatePool(false);
-            // Clear pool cache and refresh pools list
+            // Clear caches and refresh pools list
             const { clearPoolCache } = await import('../utils/amm');
             clearPoolCache();
+            if (publicKey) clearBalanceCache(publicKey);
             try {
               const fetchedPools = await fetchPools(connection, wallet, true); // Force refresh
               setPools(fetchedPools);
@@ -562,33 +563,32 @@ const CreatePoolModal = ({
     fetchFee();
   }, [connection, wallet]);
   
-  // Fetch token 0 balance when it changes
+  // Fetch token balances (debounced and cached)
   useEffect(() => {
-    const fetchBalance = async () => {
-      if (!publicKey) return;
-      
-      // Use getTokenBalance helper (handles both native SOL and SPL tokens)
-      const balance = await getTokenBalance(connection, token0.mint, publicKey);
-      setToken0Balance(balance);
-      console.log(`✅ ${token0.symbol} balance: ${balance}`);
-    };
+    if (!publicKey) {
+      setToken0Balance(0);
+      setToken1Balance(0);
+      return;
+    }
     
-    fetchBalance();
-  }, [token0, publicKey, connection]);
-  
-  // Fetch token 1 balance when it changes
-  useEffect(() => {
-    const fetchBalance = async () => {
-      if (!publicKey) return;
-      
-      // Use getTokenBalance helper (handles both native SOL and SPL tokens)
-      const balance = await getTokenBalance(connection, token1.mint, publicKey);
-      setToken1Balance(balance);
-      console.log(`✅ ${token1.symbol} balance: ${balance}`);
-    };
+    // Debounce to prevent excessive calls when tokens change rapidly
+    const fetchBalances = debounce(async () => {
+      try {
+        // Use cached balance fetcher (10s cache, prevents duplicate requests)
+        const [bal0, bal1] = await Promise.all([
+          getCachedBalance(connection, token0.mint, publicKey),
+          getCachedBalance(connection, token1.mint, publicKey),
+        ]);
+        
+        setToken0Balance(bal0);
+        setToken1Balance(bal1);
+      } catch (error) {
+        console.error('Error fetching token balances:', error);
+      }
+    }, 500); // 500ms debounce
     
-    fetchBalance();
-  }, [token1, publicKey, connection]);
+    fetchBalances();
+  }, [token0.mint.toString(), token1.mint.toString(), publicKey, connection]);
   
   // Fetch USD prices for tokens
   useEffect(() => {
@@ -686,9 +686,10 @@ const CreatePoolModal = ({
       
       showToast('Pool created successfully!', 'success', result.tx);
       
-      // Clear pool cache - onSuccess callback will refresh pools
+      // Clear caches - onSuccess callback will refresh pools
       const { clearPoolCache } = await import('../utils/amm');
       clearPoolCache();
+      if (publicKey) clearBalanceCache(publicKey);
       
       onSuccess();
     } catch (error: unknown) {
@@ -959,21 +960,31 @@ const AddLiquidityModal = ({
   const [token0UsdPrice, setToken0UsdPrice] = useState<number>(0);
   const [token1UsdPrice, setToken1UsdPrice] = useState<number>(0);
   
-  // Fetch balances
+  // Fetch balances (cached to reduce RPC calls)
   useEffect(() => {
-    const fetchBalances = async () => {
-      if (!publicKey) return;
-      
-      // Use getTokenBalance helper (handles both native SOL and SPL tokens)
-      const bal0 = await getTokenBalance(connection, pool.token0Mint, publicKey);
-      setBalance0(bal0);
-      
-      const bal1 = await getTokenBalance(connection, pool.token1Mint, publicKey);
-      setBalance1(bal1);
-    };
+    if (!publicKey) {
+      setBalance0(0);
+      setBalance1(0);
+      return;
+    }
+    
+    // Use cached balance fetcher (10s cache, prevents duplicate requests)
+    const fetchBalances = debounce(async () => {
+      try {
+        const [bal0, bal1] = await Promise.all([
+          getCachedBalance(connection, pool.token0Mint, publicKey),
+          getCachedBalance(connection, pool.token1Mint, publicKey),
+        ]);
+        
+        setBalance0(bal0);
+        setBalance1(bal1);
+      } catch (error) {
+        console.error('Error fetching balances:', error);
+      }
+    }, 500); // 500ms debounce
     
     fetchBalances();
-  }, [pool, publicKey, connection]);
+  }, [pool.token0Mint.toString(), pool.token1Mint.toString(), publicKey, connection]);
   
   // Fetch USD prices for tokens
   useEffect(() => {
@@ -1055,6 +1066,7 @@ const AddLiquidityModal = ({
       });
       
       showToast('Liquidity added successfully!', 'success', result);
+      if (publicKey) clearBalanceCache(publicKey);
       onSuccess();
     } catch (error: unknown) {
       const err = error as { message?: string };
@@ -1206,25 +1218,27 @@ const RemoveLiquidityModal = ({
   const [estimatedToken0, setEstimatedToken0] = useState(0);
   const [estimatedToken1, setEstimatedToken1] = useState(0);
 
-  // Fetch LP balance
+  // Fetch LP balance (cached to reduce RPC calls)
   useEffect(() => {
-    const fetchLpBalance = async () => {
-      if (!publicKey || !connection) return;
+    if (!publicKey || !connection) {
+      setLpBalance(0);
+      return;
+    }
 
+    // Use cached balance fetcher (10s cache, prevents duplicate requests)
+    const fetchLpBalance = debounce(async () => {
       try {
         const lpMint = getLpMint(pool.address);
-        const userLpAccount = await getAssociatedTokenAddress(lpMint, publicKey);
-        const lpAccountInfo = await connection.getTokenAccountBalance(userLpAccount);
-        const balance = parseFloat(lpAccountInfo.value.amount) / Math.pow(10, lpAccountInfo.value.decimals);
+        const balance = await getCachedBalance(connection, lpMint, publicKey);
         setLpBalance(balance);
       } catch (error) {
-        console.error('Error fetching LP balance:', error);
+        // Account might not exist - this is expected
         setLpBalance(0);
       }
-    };
+    }, 500); // 500ms debounce
 
     fetchLpBalance();
-  }, [publicKey, connection, pool]);
+  }, [publicKey, connection, pool.address.toString()]);
 
   // Calculate estimated tokens to receive
   useEffect(() => {
@@ -1292,6 +1306,7 @@ const RemoveLiquidityModal = ({
         tx
       );
 
+      if (publicKey) clearBalanceCache(publicKey);
       onSuccess();
       onClose();
     } catch (error: unknown) {

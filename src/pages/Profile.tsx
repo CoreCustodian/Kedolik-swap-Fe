@@ -1,10 +1,11 @@
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { fetchAllBalances, TokenBalance } from '../utils/balances';
-import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { fetchPools, getLpMint } from '../utils/amm';
-import { getTokenList } from '../config/tokens';
+import { getTokenList, getTokenByMint, getLocalTokenLogo } from '../config/tokens';
+import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
+import { PublicKey } from '@solana/web3.js';
 
 const Profile = () => {
   const { connected, publicKey, disconnect } = useWallet();
@@ -27,78 +28,116 @@ const Profile = () => {
   }>>([]);
   const [isLoadingLp, setIsLoadingLp] = useState(true);
   
-  // Fetch balances
+  // Fetch balances (debounced and cached)
   useEffect(() => {
+    if (!publicKey || !connected) {
+      setBalances([]);
+      setSolBalance(0);
+      setIsLoading(false);
+      return;
+    }
+    
     let isInitialLoad = true;
     
-    const loadBalances = async () => {
-      if (!publicKey || !connected) {
-        setBalances([]);
-        setSolBalance(0);
-        setIsLoading(false);
-        return;
-      }
-      
+    // Debounced balance fetcher to prevent excessive RPC calls
+    const loadBalances = debounce(async () => {
       // Only show loading spinner on initial load
       if (isInitialLoad) {
         setIsLoading(true);
+        console.log('📊 Profile: Loading token balances...');
       }
       
       try {
+        console.log('💰 Profile: Fetching all token balances...');
         const allBalances = await fetchAllBalances(connection, publicKey);
         const solBal = allBalances.find(b => b.symbol === 'SOL' && b.mint === 'native');
+        
         if (solBal) {
           setSolBalance(solBal.balance);
+          console.log(`✅ Profile: SOL balance: ${solBal.balance.toFixed(4)} SOL`);
         }
-        setBalances(allBalances.filter(b => b.mint !== 'native'));
+        
+        const tokenBalances = allBalances.filter(b => b.mint !== 'native');
+        setBalances(tokenBalances);
+        console.log(`✅ Profile: Loaded ${tokenBalances.length} token balances`);
+        
+        // Log each token with its details
+        tokenBalances.forEach((balance) => {
+          const tokenMint = new PublicKey(balance.mint);
+          const tokenInfo = getTokenByMint(tokenMint);
+          const tokenLogo = tokenInfo?.logoURI || getLocalTokenLogo(tokenMint);
+          
+          console.log(`🪙 Profile: Token balance -`, {
+            symbol: balance.symbol,
+            name: balance.name,
+            balance: balance.balance.toFixed(balance.decimals >= 6 ? 6 : balance.decimals),
+            mint: balance.mint,
+            logoURI: tokenLogo,
+            hasLogo: !!tokenInfo?.logoURI,
+          });
+        });
       } catch (error) {
-        console.error('Error fetching balances:', error);
+        console.error('❌ Profile: Error fetching balances:', error);
       } finally {
         if (isInitialLoad) {
           setIsLoading(false);
           isInitialLoad = false;
         }
       }
-    };
+    }, 500); // 500ms debounce
     
     loadBalances();
-    // No auto-refresh - balances update after transactions
+    // No auto-refresh - balances update after transactions or when cache expires
   }, [publicKey, connected, connection]);
   
-  // Fetch LP tokens
+  // Fetch LP tokens (optimized with cached balance fetcher)
   useEffect(() => {
+    if (!publicKey || !connected || !wallet) {
+      setLpTokens([]);
+      setIsLoadingLp(false);
+      return;
+    }
+    
     let isInitialLoad = true;
     
-    const loadLpTokens = async () => {
-      if (!publicKey || !connected || !wallet) {
-        setLpTokens([]);
-        setIsLoadingLp(false);
-        return;
-      }
-      
+    // Debounced LP token fetcher to prevent excessive RPC calls
+    const loadLpTokens = debounce(async () => {
       // Only show loading spinner on initial load
       if (isInitialLoad) {
         setIsLoadingLp(true);
+        console.log('🏊 Profile: Loading LP token positions...');
       }
       
       try {
-        // Fetch all pools
+        // Fetch all pools (uses 10s cache)
+        console.log('🔄 Profile: Fetching pools for LP positions...');
         const pools = await fetchPools(connection, wallet);
-        const tokenList = getTokenList();
-        const lpBalances = [];
+        console.log(`📦 Profile: Found ${pools.length} pools, checking LP balances...`);
         
-        for (const pool of pools) {
+        const tokenList = getTokenList();
+        const lpBalances: Array<{
+          poolAddress: string;
+          token0Symbol: string;
+          token1Symbol: string;
+          lpBalance: number;
+          token0Mint: string;
+          token1Mint: string;
+        }> = [];
+        
+        // Batch fetch LP balances using cached balance fetcher
+        // This significantly reduces RPC calls
+        const balancePromises = pools.map(async (pool) => {
           try {
             const lpMint = getLpMint(pool.address);
-            const userLpAccount = await getAssociatedTokenAddress(lpMint, publicKey);
-            
-            // Check if account exists and has balance
-            const lpAccountInfo = await connection.getTokenAccountBalance(userLpAccount);
-            const lpBalance = parseFloat(lpAccountInfo.value.amount) / Math.pow(10, lpAccountInfo.value.decimals);
+            // Use cached balance fetcher (10s cache, prevents duplicate requests)
+            const lpBalance = await getCachedBalance(connection, lpMint, publicKey);
             
             if (lpBalance > 0) {
               const token0 = tokenList.find(t => t.mint.equals(pool.token0Mint));
               const token1 = tokenList.find(t => t.mint.equals(pool.token1Mint));
+              
+              const token0Info = getTokenByMint(pool.token0Mint);
+              const token1Info = getTokenByMint(pool.token1Mint);
               
               lpBalances.push({
                 poolAddress: pool.address.toString(),
@@ -108,41 +147,83 @@ const Profile = () => {
                 token0Mint: pool.token0Mint.toString(),
                 token1Mint: pool.token1Mint.toString(),
               });
+              
+              console.log(`✅ Profile: Found LP position:`, {
+                pool: `${token0?.symbol || 'Unknown'}/${token1?.symbol || 'Unknown'}`,
+                lpBalance: `${lpBalance.toFixed(6)} LP tokens`,
+                token0: {
+                  symbol: token0?.symbol || 'Unknown',
+                  mint: pool.token0Mint.toString(),
+                  logoURI: token0Info?.logoURI || getLocalTokenLogo(pool.token0Mint),
+                },
+                token1: {
+                  symbol: token1?.symbol || 'Unknown',
+                  mint: pool.token1Mint.toString(),
+                  logoURI: token1Info?.logoURI || getLocalTokenLogo(pool.token1Mint),
+                },
+              });
             }
           } catch (error) {
-            // Account might not exist, skip
-            continue;
+            // Account might not exist - this is expected, don't log to avoid spam
           }
-        }
+        });
         
+        await Promise.all(balancePromises);
         setLpTokens(lpBalances);
+        console.log(`✅ Profile: Loaded ${lpBalances.length} LP positions`);
       } catch (error) {
-        console.error('Error fetching LP tokens:', error);
+        console.error('❌ Profile: Error fetching LP tokens:', error);
+        setLpTokens([]);
       } finally {
         if (isInitialLoad) {
           setIsLoadingLp(false);
           isInitialLoad = false;
         }
       }
-    };
+    }, 500); // 500ms debounce
     
     loadLpTokens();
     // No auto-refresh - LP positions update after add/remove liquidity transactions
   }, [publicKey, connected, connection, wallet]);
   
-  // Fetch transaction history
+  // Transaction history cache (persists across renders)
+  const txHistoryCacheRef = useRef<{ data: typeof txHistory; timestamp: number; publicKey: string } | null>(null);
+  const TX_HISTORY_CACHE_TTL = 30000; // 30 seconds cache
+  
+  // Fetch transaction history (cached to reduce RPC calls)
   useEffect(() => {
-    const loadTxHistory = async () => {
-      if (!publicKey) return;
+    if (!publicKey) {
+      setTxHistory([]);
+      return;
+    }
+    
+    const loadTxHistory = debounce(async () => {
+      // Return cached data if still valid and for same wallet
+      const now = Date.now();
+      const cache = txHistoryCacheRef.current;
+      if (cache && cache.publicKey === publicKey.toString() && (now - cache.timestamp) < TX_HISTORY_CACHE_TTL) {
+        console.log('📦 Profile: Using cached transaction history');
+        setTxHistory(cache.data);
+        return;
+      }
       
       try {
+        console.log('📝 Profile: Fetching transaction history...');
         const signatures = await connection.getSignaturesForAddress(publicKey, { limit: 5 });
-        const mapped = signatures.map(s => ({ signature: s.signature, blockTime: s.blockTime ?? undefined, err: s.err }));
+        const mapped = signatures.map(s => ({ 
+          signature: s.signature, 
+          blockTime: s.blockTime ?? undefined, 
+          err: s.err 
+        }));
+        
         setTxHistory(mapped);
+        txHistoryCacheRef.current = { data: mapped, timestamp: Date.now(), publicKey: publicKey.toString() };
+        console.log(`✅ Profile: Loaded ${mapped.length} recent transactions`);
       } catch (error) {
-        console.error('Error fetching transaction history:', error);
+        console.error('❌ Profile: Error fetching transaction history:', error);
+        setTxHistory([]);
       }
-    };
+    }, 500); // 500ms debounce
     
     loadTxHistory();
   }, [publicKey, connection]);
@@ -217,7 +298,17 @@ const Profile = () => {
                   View on Explorer
                 </a>
                 <button
-                  onClick={async () => { try { await disconnect(); } catch (e) { console.error('Disconnect failed:', e); } }}
+                  onClick={async () => { 
+                    try { 
+                      console.log('🔌 Profile: Disconnecting wallet...');
+                      await disconnect(); 
+                      clearBalanceCache(); // Clear all balance cache on disconnect
+                      txHistoryCacheRef.current = null; // Clear transaction history cache
+                      console.log('✅ Profile: Wallet disconnected');
+                    } catch (e) { 
+                      console.error('❌ Profile: Disconnect failed:', e); 
+                    } 
+                  }}
                   className="px-6 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl font-semibold border border-red-500/30 transition-all"
                 >
                   Disconnect
@@ -279,19 +370,82 @@ const Profile = () => {
               </div>
             ) : (
               <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {lpTokens.map((lp) => (
+                {lpTokens.map((lp) => {
+                  const token0Mint = new PublicKey(lp.token0Mint);
+                  const token1Mint = new PublicKey(lp.token1Mint);
+                  const token0Info = getTokenByMint(token0Mint);
+                  const token1Info = getTokenByMint(token1Mint);
+                  
+                  // Log token details when rendering
+                  console.log(`🖼️ Profile: Rendering LP token card -`, {
+                    pool: `${lp.token0Symbol}/${lp.token1Symbol}`,
+                    token0: {
+                      symbol: lp.token0Symbol,
+                      mint: lp.token0Mint,
+                      logoURI: token0Info?.logoURI || getLocalTokenLogo(token0Mint),
+                    },
+                    token1: {
+                      symbol: lp.token1Symbol,
+                      mint: lp.token1Mint,
+                      logoURI: token1Info?.logoURI || getLocalTokenLogo(token1Mint),
+                    },
+                    lpBalance: lp.lpBalance,
+                  });
+                  
+                  return (
                   <div
                     key={lp.poolAddress}
                     className="p-5 rounded-xl border bg-gradient-to-br from-brand-cyan/5 to-brand-pink/5 border-brand-cyan/30 hover:border-brand-cyan hover:shadow-glow-brand transition-all"
                   >
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
-                        <div className="w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand">
-                          {lp.token0Symbol[0]}
-                        </div>
-                        <div className="w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand -ml-4 border-2 border-dark-800">
-                          {lp.token1Symbol[0]}
-                        </div>
+                        {(() => {
+                          const token0Mint = new PublicKey(lp.token0Mint);
+                          const token1Mint = new PublicKey(lp.token1Mint);
+                          const token0Info = getTokenByMint(token0Mint);
+                          const token1Info = getTokenByMint(token1Mint);
+                          const token0Logo = token0Info?.logoURI || getLocalTokenLogo(token0Mint);
+                          const token1Logo = token1Info?.logoURI || getLocalTokenLogo(token1Mint);
+                          
+                          return (
+                            <>
+                              {token0Logo ? (
+                                <img 
+                                  src={token0Logo} 
+                                  alt={lp.token0Symbol}
+                                  className="w-12 h-12 rounded-full shadow-glow-brand"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    if (target.nextElementSibling) {
+                                      (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                                    }
+                                  }}
+                                />
+                              ) : null}
+                              <div className={`w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand ${token0Logo ? 'hidden' : ''}`}>
+                                {lp.token0Symbol[0]}
+                              </div>
+                              {token1Logo ? (
+                                <img 
+                                  src={token1Logo} 
+                                  alt={lp.token1Symbol}
+                                  className="w-12 h-12 rounded-full shadow-glow-brand -ml-4 border-2 border-dark-800"
+                                  onError={(e) => {
+                                    const target = e.target as HTMLImageElement;
+                                    target.style.display = 'none';
+                                    if (target.nextElementSibling) {
+                                      (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                                    }
+                                  }}
+                                />
+                              ) : null}
+                              <div className={`w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand -ml-4 border-2 border-dark-800 ${token1Logo ? 'hidden' : ''}`}>
+                                {lp.token1Symbol[0]}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                       <span className="text-xs px-3 py-1 bg-green-500/20 text-green-400 rounded-full font-semibold border border-green-500/30">
                         ACTIVE
@@ -345,7 +499,8 @@ const Profile = () => {
                       </a>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -366,6 +521,20 @@ const Profile = () => {
               <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar">
                 {balances.map((balance) => {
                   const hasBalance = balance.balance > 0;
+                  const tokenMint = new PublicKey(balance.mint);
+                  const tokenInfo = getTokenByMint(tokenMint);
+                  const tokenLogo = tokenInfo?.logoURI || getLocalTokenLogo(tokenMint);
+                  
+                  // Log token details when rendering
+                  console.log(`🖼️ Profile: Rendering token balance card -`, {
+                    symbol: balance.symbol,
+                    name: balance.name,
+                    balance: balance.balance.toFixed(balance.decimals >= 6 ? 6 : balance.decimals),
+                    mint: balance.mint,
+                    logoURI: tokenLogo,
+                    hasBalance: hasBalance,
+                  });
+                  
                   return (
                     <div
                       key={balance.mint}
@@ -376,11 +545,25 @@ const Profile = () => {
                       }`}
                     >
                       <div className="flex items-center gap-4">
-                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold ${
+                        {tokenLogo ? (
+                          <img 
+                            src={tokenLogo} 
+                            alt={balance.symbol}
+                            className="w-12 h-12 rounded-full flex-shrink-0"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                              if (target.nextElementSibling) {
+                                (target.nextElementSibling as HTMLElement).style.display = 'flex';
+                              }
+                            }}
+                          />
+                        ) : null}
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0 ${
                           balance.symbol === 'SOL'
                             ? 'bg-gradient-to-br from-purple-500 to-cyan-500'
                             : 'bg-gradient-brand'
-                        }`}>
+                        } ${tokenLogo ? 'hidden' : ''}`}>
                           {balance.symbol[0]}
                         </div>
                         <div>
