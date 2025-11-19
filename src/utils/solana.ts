@@ -1,8 +1,10 @@
 import { Connection, PublicKey, ParsedTransactionWithMeta } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
-// Use devnet RPC endpoint
-const RPC_ENDPOINT = import.meta.env.VITE_RPC_URL || 'https://api.devnet.solana.com';
+// RPC endpoint - use VITE_RPC_ENDPOINT from .env or fallback to PublicNode (free, reliable)
+// PublicNode: https://solana-rpc.publicnode.com (free, no API key required)
+// For production with high traffic, consider: Helius, Quicknode, or Alchemy
+const RPC_ENDPOINT = import.meta.env.VITE_RPC_ENDPOINT || import.meta.env.VITE_RPC_URL || 'https://solana-rpc.publicnode.com';
 
 export const connection = new Connection(RPC_ENDPOINT, 'confirmed');
 

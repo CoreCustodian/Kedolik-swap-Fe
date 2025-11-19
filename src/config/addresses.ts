@@ -161,10 +161,11 @@ export const NETWORK = 'mainnet-beta' as const;
 
 /**
  * RPC endpoint
- * For production, consider using a private RPC provider (Helius, Quicknode, etc.)
+ * Default: PublicNode (https://solana-rpc.publicnode.com) - free, reliable, no API key needed
+ * For production with high traffic, consider using a private RPC provider (Helius, Quicknode, etc.)
  * Set VITE_RPC_ENDPOINT in .env file to override this default
  */
-export const RPC_ENDPOINT = 'https://api.mainnet-beta.solana.com';
+export const RPC_ENDPOINT = 'https://solana-rpc.publicnode.com';
 
 // ============================================================================
 // HELPER FUNCTIONS

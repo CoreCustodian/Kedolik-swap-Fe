@@ -100,11 +100,24 @@ The project is configured with:
 
 ## 🌐 Network Configuration
 
-By default, the app connects to Solana Devnet. To change the network, edit `src/contexts/WalletProvider.tsx`:
+The app is configured for Solana Mainnet. 
 
-```typescript
-const network = WalletAdapterNetwork.Devnet; // Change to Mainnet or Testnet
+### 🌐 RPC Endpoint Configuration
+
+**Default**: The app uses [PublicNode](https://solana-rpc.publicnode.com) as the default RPC endpoint - it's free, reliable, and requires no API key.
+
+**Optional**: To use a custom RPC provider (for higher rate limits), create a `.env` file:
 ```
+VITE_RPC_ENDPOINT=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
+```
+
+See [RPC_SETUP.md](./RPC_SETUP.md) for detailed instructions and provider options.
+
+**Recommended RPC Providers for Production:**
+- **PublicNode** (Default - Free, no API key) - https://solana-rpc.publicnode.com
+- **Helius** (Free tier: 100k requests/day) - https://helius.dev
+- **Quicknode** (Enterprise-grade) - https://quicknode.com
+- **Alchemy** (Good free tier) - https://alchemy.com
 
 ## 📄 License
 
