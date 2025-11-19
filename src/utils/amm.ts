@@ -2988,29 +2988,34 @@ export const createPool = async (
     
     // Check if using Jito endpoint and add tip instruction if needed
     // CRITICAL: Tip instruction must be LAST in the transaction
+    // Always check environment variable first (most reliable)
+    let rpcUrl = '';
     try {
-      // Try to get RPC URL from connection or environment
-      let rpcUrl = '';
-      try {
-        rpcUrl = (connection as any)._rpcEndpoint || (connection as any).rpcEndpoint || '';
-      } catch {
-        // Fallback to environment variable
-        rpcUrl = typeof import.meta !== 'undefined' && import.meta.env?.VITE_RPC_ENDPOINT || '';
+      // First try environment variable (most reliable)
+      if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_RPC_ENDPOINT) {
+        rpcUrl = import.meta.env.VITE_RPC_ENDPOINT;
       }
+      // Fallback to connection object properties
+      if (!rpcUrl) {
+        rpcUrl = (connection as any)._rpcEndpoint || (connection as any).rpcEndpoint || '';
+      }
+      
+      console.log('🔍 Checking RPC endpoint type...', rpcUrl ? 'URL found' : 'URL not found');
       
       if (rpcUrl && isJitoEndpoint(rpcUrl)) {
         console.log('🔍 Detected Jito endpoint - adding tip instruction...');
         addJitoTipInstruction(transaction, walletPublicKey, 10_000); // 0.00001 SOL tip
       } else {
         console.log('ℹ️ Using standard RPC endpoint (no Jito tip required)');
+        // If we can't detect, we'll add tip on error retry (see error handling below)
       }
     } catch (error) {
-      console.warn('⚠️ Could not detect RPC endpoint type, skipping Jito tip check');
+      console.warn('⚠️ Could not detect RPC endpoint type, will add tip on error retry if needed');
     }
     
     // Get latest blockhash right before sending
     console.log('📡 Getting fresh blockhash...');
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
+    let { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
     
@@ -3087,8 +3092,48 @@ export const createPool = async (
         console.error('📊 Transaction logs:', sendError.logs);
       }
       
+      // Check if it's a Jito tip account error - retry with tip instruction
+      const errorMessage = sendError.message || sendError.toString() || '';
+      if (errorMessage.includes('tip account') || errorMessage.includes('write lock at least one tip account')) {
+        console.log('🔄 Detected Jito tip account error - retrying with tip instruction...');
+        
+        // Rebuild transaction with tip instruction
+        const retryTransaction = new Transaction();
+        retryTransaction.feePayer = walletPublicKey;
+        
+        // Re-add all instructions from original transaction
+        for (const ix of transaction.instructions) {
+          retryTransaction.add(ix);
+        }
+        
+        // Add tip instruction as LAST
+        addJitoTipInstruction(retryTransaction, walletPublicKey, 10_000);
+        
+        // Get fresh blockhash
+        const { blockhash: retryBlockhash, lastValidBlockHeight: retryLastValidBlockHeight } = 
+          await connection.getLatestBlockhash('processed');
+        retryTransaction.recentBlockhash = retryBlockhash;
+        retryTransaction.feePayer = walletPublicKey;
+        
+        // Sign and send retry
+        console.log('✍️ Signing retry transaction with tip...');
+        const retrySignedTx = await wallet.signTransaction(retryTransaction);
+        
+        console.log('📤 Sending retry transaction with tip...');
+        signature = await connection.sendRawTransaction(retrySignedTx.serialize(), {
+          skipPreflight: false,
+          preflightCommitment: 'processed',
+          maxRetries: 5,
+        });
+        
+        console.log(`🔗 Retry transaction sent: ${signature}`);
+        
+        // Update blockhash for confirmation (use retry values)
+        blockhash = retryBlockhash;
+        lastValidBlockHeight = retryLastValidBlockHeight;
+      }
       // Check if it's "already processed" error - transaction might have succeeded!
-      if (sendError.message && sendError.message.includes('already been processed')) {
+      else if (sendError.message && sendError.message.includes('already been processed')) {
         console.log('⚠️ Transaction might have already succeeded!');
         console.log('⏳ Waiting 3 seconds before checking pool state...');
         await new Promise(resolve => setTimeout(resolve, 3000));
@@ -3106,9 +3151,12 @@ export const createPool = async (
         } catch (checkError) {
           console.error('❌ Pool does not exist - transaction truly failed');
         }
+        
+        throw sendError; // Re-throw if pool wasn't created
+      } else {
+        // If not handled above, re-throw the error
+        throw sendError;
       }
-      
-      throw sendError; // Re-throw if not "already processed"
     }
     
     // Confirm transaction with robust error handling
