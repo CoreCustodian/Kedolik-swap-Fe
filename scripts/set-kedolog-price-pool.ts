@@ -4,8 +4,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { BN } from 'bn.js';
 
-// Configuration
-const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT || 'https://api.devnet.solana.com';
+// Configuration - Get RPC from environment variable (REQUIRED)
+const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+if (!RPC_ENDPOINT) {
+  console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+  console.error('💡 Please set it in your .env file or export it:');
+  console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+  process.exit(1);
+}
 const PROGRAM_ID = new PublicKey('2LVtzKZ7DwoowxeKnwmia6JGKdZy9cjAzH62RrburWtq');
 const PROTOCOL_TOKEN_CONFIG = new PublicKey('tos6BKcSK6kMyHcaqStP3pUcQjq1mXgdDqTBPj7s8MH');
 const KEDOLOG_USDC_POOL = new PublicKey('H3dg1Je7wA4tGmtLxrQcsFUBnVKth2dNUGPceC1Jiuus');

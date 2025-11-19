@@ -3,7 +3,15 @@ import * as anchor from '@coral-xyz/anchor';
 import IDL from '../kedolik_cp_swap.json';
 
 const PROGRAM_ID = '4QQN6R5AbhrUEBCLHxpJrGEmq4DHXxbcVC6eWxRh6bUR';
-const RPC_URL = 'https://api.devnet.solana.com';
+
+// Get RPC from environment variable (REQUIRED)
+const RPC_URL = process.env.VITE_RPC_ENDPOINT;
+if (!RPC_URL) {
+  console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+  console.error('💡 Please set it in your .env file or export it:');
+  console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+  process.exit(1);
+}
 
 async function getPoolInfo(poolAddress: string) {
   const connection = new Connection(RPC_URL);

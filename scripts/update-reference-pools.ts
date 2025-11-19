@@ -21,8 +21,15 @@ async function main() {
   const SOL_USDC_POOL = new PublicKey('4pS9NNCmuSxCeE2KStwnVLujouoAPRuFjnmKd12fjs1U');
   const KEDOLOG_SOL_POOL = new PublicKey('DLUJbJopAcZXvu7a2g8sY2CrqJyjtRx48G6M1WbFGiBn');
 
-  // RPC connection
-  const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+  // RPC connection - Get from environment variable (REQUIRED)
+  const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+  if (!RPC_ENDPOINT) {
+    console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+    console.error('💡 Please set it in your .env file or export it:');
+    console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+    process.exit(1);
+  }
+  const connection = new Connection(RPC_ENDPOINT, 'confirmed');
   
   // Load admin keypair
   const keypairPath = path.join(process.env.HOME || '', '.config/solana/id.json');

@@ -17,8 +17,15 @@ async function main() {
   const SOL_MINT = new PublicKey('So11111111111111111111111111111111111111112'); // Wrapped SOL
   const AMM_CONFIG = new PublicKey('BvNxXvJbJLgEhSCuoVyHwsTWZeFMLfwdzqP1ynuimVRW');
 
-  // RPC connection
-  const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+  // RPC connection - Get from environment variable (REQUIRED)
+  const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+  if (!RPC_ENDPOINT) {
+    console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+    console.error('💡 Please set it in your .env file or export it:');
+    console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+    process.exit(1);
+  }
+  const connection = new Connection(RPC_ENDPOINT, 'confirmed');
   
   // Load admin keypair
   const keypairPath = path.join(process.env.HOME || '', '.config/solana/id.json');

@@ -408,10 +408,14 @@ export const ensureAmmConfig030 = async (connection: Connection, wallet: any) =>
 };
 
 // Expose a dev helper for quick init from browser console (optional)
+// Uses RPC from .env file
 if (typeof window !== 'undefined') {
   (window as any).kedolikInitAmm030 = async () => {
-    // Devnet helper; change RPC if needed
-    const rpc = 'https://api.devnet.solana.com';
+    // Use RPC from environment variable
+    const rpc = import.meta.env.VITE_RPC_ENDPOINT;
+    if (!rpc) {
+      throw new Error('VITE_RPC_ENDPOINT is not set in .env file');
+    }
     const conn = new (await import('@solana/web3.js')).Connection(rpc, 'confirmed');
     const wallet = (window as any).solana;
     if (!wallet?.publicKey) throw new Error('Connect wallet first');

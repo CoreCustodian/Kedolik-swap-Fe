@@ -23,7 +23,14 @@ import * as path from 'path';
  */
 
 // --- Configuration ---
-const RPC_ENDPOINT = 'https://api.devnet.solana.com';
+// Get RPC from environment variable (REQUIRED)
+const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+if (!RPC_ENDPOINT) {
+  console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+  console.error('💡 Please set it in your .env file or export it:');
+  console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+  process.exit(1);
+}
 const FEE_RECEIVER_WALLET = new PublicKey('67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa');
 const FEE_RECEIVER_WSOL_ACCOUNT = new PublicKey('FRX2thfNDB3MhHYHhcGZFiVK7NbuY2HzGn9WQDtAGBvX');
 

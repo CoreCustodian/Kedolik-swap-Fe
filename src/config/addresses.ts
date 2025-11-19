@@ -160,12 +160,30 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('EGX4XLHooJ8vtMeyu6JRzudPM
 export const NETWORK = 'mainnet-beta' as const;
 
 /**
- * RPC endpoint
- * Default: PublicNode (https://solana-rpc.publicnode.com) - free, reliable, no API key needed
- * For production with high traffic, consider using a private RPC provider (Helius, Quicknode, etc.)
- * Set VITE_RPC_ENDPOINT in .env file to override this default
+ * RPC endpoint - SINGLE SOURCE OF TRUTH
+ * ⚠️ IMPORTANT: This MUST be set in your .env file as VITE_RPC_ENDPOINT
+ * 
+ * Example for QuickNode:
+ * VITE_RPC_ENDPOINT=https://your-endpoint.solana-mainnet.quiknode.pro/your-key/
+ * 
+ * This is the ONLY place where RPC endpoint should be referenced.
+ * All other parts of the codebase use the connection from WalletProvider context.
  */
-export const RPC_ENDPOINT = 'https://solana-rpc.publicnode.com';
+export const getRpcEndpoint = (): string => {
+  const endpoint = import.meta.env.VITE_RPC_ENDPOINT;
+  if (!endpoint) {
+    throw new Error(
+      'VITE_RPC_ENDPOINT is not set in .env file. ' +
+      'Please create a .env file with your QuickNode RPC endpoint: ' +
+      'VITE_RPC_ENDPOINT=https://your-endpoint.solana-mainnet.quiknode.pro/your-key/'
+    );
+  }
+  return endpoint;
+};
+
+// For backward compatibility - lazy-loaded to avoid errors at module load time
+// Prefer using getRpcEndpoint() or connection from WalletProvider context
+export const RPC_ENDPOINT = getRpcEndpoint();
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -301,7 +319,8 @@ export default {
   PROTOCOL_TOKEN_CONFIG,
   CREATE_POOL_FEE_RECEIVER,
   NETWORK,
-  RPC_ENDPOINT,
+  // RPC_ENDPOINT removed from default export - use getRpcEndpoint() or connection from WalletProvider context
+  getRpcEndpoint,
   KEDOLOG_DISCOUNT_CONFIG,
   FEE_RATES,
 };

@@ -8,7 +8,16 @@ async function main() {
   const PROGRAM_ID = new PublicKey('4LyaQt2uNYX7zJABAVa56th8U68brWHWLioAYZSbCeEf');
   const PROTOCOL_TOKEN_CONFIG = new PublicKey('3TLoGQXLQyyExNUekdtjinSig9uBnrwLZXHbJ4ECBrq3');
   
-  const connection = new Connection('https://api.devnet.solana.com', 'confirmed');
+  // Get RPC from environment variable (REQUIRED)
+  const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+  if (!RPC_ENDPOINT) {
+    console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+    console.error('💡 Please set it in your .env file or export it:');
+    console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+    process.exit(1);
+  }
+  
+  const connection = new Connection(RPC_ENDPOINT, 'confirmed');
   
   console.log('🔍 Checking ProtocolTokenConfig account...');
   console.log('Config:', PROTOCOL_TOKEN_CONFIG.toString());

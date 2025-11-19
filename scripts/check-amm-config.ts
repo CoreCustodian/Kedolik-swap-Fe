@@ -4,7 +4,15 @@ import IDL from '../kedolik_cp_swap.json';
 
 const PROGRAM_ID = '2LVtzKZ7DwoowxeKnwmia6JGKdZy9cjAzH62RrburWtq';
 const AMM_CONFIG = 'GQfc8j8R1xDR9aTV68YwYWHoprVkzvWDfDg5FCPLToqD';
-const RPC_URL = 'https://api.devnet.solana.com';
+
+// Get RPC from environment variable (REQUIRED)
+const RPC_URL = process.env.VITE_RPC_ENDPOINT;
+if (!RPC_URL) {
+  console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+  console.error('💡 Please set it in your .env file or export it:');
+  console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+  process.exit(1);
+}
 
 async function checkAmmConfig() {
   const connection = new Connection(RPC_URL);

@@ -1,5 +1,5 @@
-import { FC, ReactNode, useMemo, useCallback } from 'react';
-import { ConnectionProvider, WalletProvider as SolanaWalletProvider, useWallet } from '@solana/wallet-adapter-react';
+import { FC, ReactNode, useMemo } from 'react';
+import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 
@@ -10,44 +10,24 @@ interface WalletProviderProps {
   children: ReactNode;
 }
 
-// Inner component that has access to wallet context
-const ConnectionProviderWithWalletRPC: FC<{ children: ReactNode }> = ({ children }) => {
-  const { wallet } = useWallet();
-
-  // Function to get RPC endpoint - tries wallet's RPC first, then falls back
-  const getEndpoint = useCallback(() => {
-    // 1. Check for custom RPC in environment variable (highest priority)
-    const customEndpoint = import.meta.env.VITE_RPC_ENDPOINT;
-    if (customEndpoint) {
-      console.log('🌐 Using custom RPC endpoint from .env');
-      return customEndpoint;
+// Inner component that provides connection with RPC from .env
+const ConnectionProviderWithRPC: FC<{ children: ReactNode }> = ({ children }) => {
+  // Get RPC endpoint from environment variable - SINGLE SOURCE OF TRUTH
+  const endpoint = useMemo(() => {
+    const rpcEndpoint = import.meta.env.VITE_RPC_ENDPOINT;
+    
+    if (!rpcEndpoint) {
+      console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in .env file!');
+      console.error('💡 Please create a .env file with: VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+      throw new Error('VITE_RPC_ENDPOINT environment variable is required. Please set it in your .env file.');
     }
-
-    // 2. Try to use wallet's RPC endpoint if available
-    // Some wallets like Phantom expose their RPC endpoint
-    if (wallet?.adapter) {
-      // Check if wallet adapter has an RPC endpoint property
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const walletAdapter = wallet.adapter as any;
-      if (walletAdapter.rpcEndpoint) {
-        console.log('🌐 Using wallet RPC endpoint:', walletAdapter.rpcEndpoint);
-        return walletAdapter.rpcEndpoint;
-      }
-      
-      // Phantom wallet sometimes exposes RPC through a different property
-      if (walletAdapter._rpcEndpoint) {
-        console.log('🌐 Using wallet RPC endpoint (internal):', walletAdapter._rpcEndpoint);
-        return walletAdapter._rpcEndpoint;
-      }
-    }
-
-    // 3. Fallback to PublicNode (free, reliable, no API key needed)
-    console.log('🌐 Using PublicNode RPC (free, no API key required)');
-    console.log('💡 Tip: Wallets like Phantom use their own RPC when connected');
-    return 'https://solana-rpc.publicnode.com';
-  }, [wallet]);
-
-  const endpoint = useMemo(() => getEndpoint(), [getEndpoint]);
+    
+    // Log that we're using the configured RPC (but don't log the full URL to avoid exposing it)
+    const maskedUrl = rpcEndpoint.replace(/\/\/[^/]+@/, '//***@').replace(/\/[^/]+\/[^/]+\//, '/***/***/');
+    console.log('🌐 Using RPC endpoint from .env:', maskedUrl);
+    
+    return rpcEndpoint;
+  }, []);
 
   return (
     <ConnectionProvider endpoint={endpoint}>
@@ -67,11 +47,11 @@ export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
 
   return (
     <SolanaWalletProvider wallets={wallets} autoConnect>
-      <ConnectionProviderWithWalletRPC>
+      <ConnectionProviderWithRPC>
         <WalletModalProvider>
           {children}
         </WalletModalProvider>
-      </ConnectionProviderWithWalletRPC>
+      </ConnectionProviderWithRPC>
     </SolanaWalletProvider>
   );
 };

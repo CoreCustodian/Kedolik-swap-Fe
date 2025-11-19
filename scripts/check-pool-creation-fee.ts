@@ -15,8 +15,14 @@ import { Connection, PublicKey } from '@solana/web3.js';
 const DEFAULT_AMM_CONFIG = new PublicKey('ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ');
 const PROGRAM_ID = new PublicKey('EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL');
 
-// Use environment variable or default to mainnet
-const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com';
+// Get RPC endpoint from environment variable - REQUIRED
+const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+if (!RPC_ENDPOINT) {
+  console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+  console.error('💡 Please set it in your .env file or export it:');
+  console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+  process.exit(1);
+}
 
 async function checkPoolCreationFee() {
   console.log('🔍 Checking Pool Creation Fee on-chain...\n');

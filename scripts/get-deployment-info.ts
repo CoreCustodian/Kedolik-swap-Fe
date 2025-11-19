@@ -19,11 +19,18 @@ async function main() {
   }
   
   const programId = new PublicKey(args[0]);
-  const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT || 'https://api.devnet.solana.com';
+  const RPC_ENDPOINT = process.env.VITE_RPC_ENDPOINT;
+  
+  if (!RPC_ENDPOINT) {
+    console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+    console.error('💡 Please set it in your .env file or export it:');
+    console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+    process.exit(1);
+  }
   
   console.log('🔍 Fetching deployment info...\n');
   console.log('📋 Program ID:', programId.toString());
-  console.log('🌐 RPC:', RPC_ENDPOINT, '\n');
+  console.log('🌐 RPC:', RPC_ENDPOINT.replace(/\/\/[^/]+@/, '//***@').replace(/\/[^/]+\/[^/]+\//, '/***/***/'), '\n');
   
   try {
     const connection = new Connection(RPC_ENDPOINT, 'confirmed');

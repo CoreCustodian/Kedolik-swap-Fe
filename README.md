@@ -102,22 +102,23 @@ The project is configured with:
 
 The app is configured for Solana Mainnet. 
 
-### 🌐 RPC Endpoint Configuration
+### ⚠️ RPC Endpoint Configuration (REQUIRED)
 
-**Default**: The app uses [PublicNode](https://solana-rpc.publicnode.com) as the default RPC endpoint - it's free, reliable, and requires no API key.
+**IMPORTANT**: You MUST set your RPC endpoint in a `.env` file. The app will not work without it.
 
-**Optional**: To use a custom RPC provider (for higher rate limits), create a `.env` file:
+1. Create a `.env` file in the project root:
+```bash
+VITE_RPC_ENDPOINT=https://your-endpoint.solana-mainnet.quiknode.pro/your-api-key/
 ```
-VITE_RPC_ENDPOINT=https://mainnet.helius-rpc.com/?api-key=YOUR_API_KEY
-```
 
-See [RPC_SETUP.md](./RPC_SETUP.md) for detailed instructions and provider options.
+2. Get your QuickNode endpoint from: https://www.quicknode.com/
 
-**Recommended RPC Providers for Production:**
-- **PublicNode** (Default - Free, no API key) - https://solana-rpc.publicnode.com
-- **Helius** (Free tier: 100k requests/day) - https://helius.dev
-- **Quicknode** (Enterprise-grade) - https://quicknode.com
-- **Alchemy** (Good free tier) - https://alchemy.com
+**⚠️ Security Note**: 
+- The `.env` file is already in `.gitignore` - never commit it to git
+- Vite exposes `VITE_*` variables in the client bundle, so your RPC endpoint will be visible in the browser
+- This is normal for frontend apps, but ensure your QuickNode account has proper rate limiting and security settings
+
+**Single Source of Truth**: All RPC references in the codebase use `VITE_RPC_ENDPOINT` from your `.env` file.
 
 ## 📄 License
 

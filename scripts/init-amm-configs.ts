@@ -17,7 +17,16 @@ import idl from '../kedolik_cp_swap.json';
 import { FEE_TIER_CONFIGS } from '../src/config/fees';
 
 const PROGRAM_ID = new PublicKey('GCm8bqvSuJ4nwj3SN3pk2eSJWTwcRjkU6KhXE96AnBod');
-const RPC_URL = 'https://api.devnet.solana.com';
+
+// Get RPC from environment variable (REQUIRED)
+const RPC_URL = process.env.VITE_RPC_ENDPOINT;
+if (!RPC_URL) {
+  console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in environment!');
+  console.error('💡 Please set it in your .env file or export it:');
+  console.error('   export VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
+  process.exit(1);
+}
+
 const ADMIN_PUBKEY = new PublicKey('GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ');
  
 interface AmmConfigParams {
