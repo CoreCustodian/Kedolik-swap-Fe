@@ -81,37 +81,38 @@ export const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8Ben
 
 /**
  * REFERENCE POOLS
- * These pools are used for dynamic pricing
- * The contract reads these pools to calculate KEDOLOG discount fees
+ * These pools are used for dynamic pricing and KEDOLOG discount calculations
+ * The contract reads these pools from the protocol token config on-chain
  * 
- * NOTE: Create these pools first, then update addresses here:
- * 1. KEDOLOG/USDC pool - for KEDOLOG pricing
- * 2. SOL/USDC pool - for SOL pricing (if not already exists)
+ * NOTE: These addresses are kept as fallbacks/references.
+ * The actual pool addresses are fetched dynamically from the protocol token config
+ * in swapWithKedologDiscount and fetchKedologPrice functions.
  * 
- * After creating pools, get the vault addresses using:
- * - Pool state account contains vault references
- * - Or use: anchor account pool_state <POOL_ADDRESS>
+ * Vault addresses are also fetched dynamically from pool data at runtime.
  * 
- * TODO: UPDATE THESE WITH ACTUAL POOL ADDRESSES (currently placeholders)
+ * Updated: Reference pools configured in protocol token config
  */
 
 // KEDOLOG/USDC Pool (Mainnet)
-// TODO: Update with actual mainnet pool address after creating the pool
-export const KEDOLOG_USDC_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
-export const KEDOLOG_VAULT = new PublicKey('11111111111111111111111111111111'); // Placeholder
-export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+// Pool Address: 8KYfYHmPyzpzqYQzVzHR3uv94E1UX8TsaEFLqBWzenRJ
+export const KEDOLOG_USDC_POOL = new PublicKey('8KYfYHmPyzpzqYQzVzHR3uv94E1UX8TsaEFLqBWzenRJ');
+// Vault addresses are fetched dynamically from pool data
+export const KEDOLOG_VAULT = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
+export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // SOL/USDC Pool (Mainnet)
-// TODO: Update with actual mainnet pool address after creating the pool
-export const SOL_USDC_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
-export const SOL_VAULT = new PublicKey('11111111111111111111111111111111'); // Placeholder
-export const USDC_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+// Pool Address: 3ZXK4N8Hf1uZjYqndX3bRPXf71wS6gj3DSiSjPTveE1L
+export const SOL_USDC_POOL = new PublicKey('3ZXK4N8Hf1uZjYqndX3bRPXf71wS6gj3DSiSjPTveE1L');
+// Vault addresses are fetched dynamically from pool data
+export const SOL_VAULT = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
+export const USDC_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // KEDOLOG/SOL Pool (Mainnet)
-// TODO: Update with actual mainnet pool address after creating the pool
-export const KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
-export const KEDOLOG_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
-export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Placeholder
+// Pool Address: 9zbYdushUHfJ67SJCDAYCMtaHdg5UMnJwmGWWGuXgh3
+export const KEDOLOG_SOL_POOL = new PublicKey('9zbYdushUHfJ67SJCDAYCMtaHdg5UMnJwmGWWGuXgh3');
+// Vault addresses are fetched dynamically from pool data
+export const KEDOLOG_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
+export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // ============================================================================
 // DYNAMIC POOL DISCOVERY
