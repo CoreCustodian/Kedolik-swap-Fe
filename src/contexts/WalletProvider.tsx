@@ -1,6 +1,5 @@
-import { FC, ReactNode, useMemo } from 'react';
-import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
-import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
+import { FC, ReactNode, useMemo, useCallback } from 'react';
+import { ConnectionProvider, WalletProvider as SolanaWalletProvider, useWallet } from '@solana/wallet-adapter-react';
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 
@@ -11,29 +10,53 @@ interface WalletProviderProps {
   children: ReactNode;
 }
 
-export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
-  // The network can be set to 'devnet', 'testnet', or 'mainnet-beta'
-  const network = WalletAdapterNetwork.Mainnet;
+// Inner component that has access to wallet context
+const ConnectionProviderWithWalletRPC: FC<{ children: ReactNode }> = ({ children }) => {
+  const { wallet } = useWallet();
 
-  // Custom RPC endpoint - supports environment variable or defaults to PublicNode
-  // To use a custom RPC, set VITE_RPC_ENDPOINT in .env file
-  // Example: VITE_RPC_ENDPOINT=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
-  // Default: PublicNode (https://solana-rpc.publicnode.com) - free, reliable, no API key needed
-  const endpoint = useMemo(() => {
-    // Check for custom RPC in environment variable
+  // Function to get RPC endpoint - tries wallet's RPC first, then falls back
+  const getEndpoint = useCallback(() => {
+    // 1. Check for custom RPC in environment variable (highest priority)
     const customEndpoint = import.meta.env.VITE_RPC_ENDPOINT;
-    
     if (customEndpoint) {
-      console.log('🌐 Using custom RPC endpoint');
+      console.log('🌐 Using custom RPC endpoint from .env');
       return customEndpoint;
     }
-    
-    // Fallback to PublicNode (free, reliable alternative to rate-limited public RPC)
-    console.log('🌐 Using PublicNode RPC (free, no API key required)');
-    console.log('💡 For production with high traffic, consider: Helius, Quicknode, or Alchemy');
-    return 'https://solana-rpc.publicnode.com';
-  }, [network]);
 
+    // 2. Try to use wallet's RPC endpoint if available
+    // Some wallets like Phantom expose their RPC endpoint
+    if (wallet?.adapter) {
+      // Check if wallet adapter has an RPC endpoint property
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const walletAdapter = wallet.adapter as any;
+      if (walletAdapter.rpcEndpoint) {
+        console.log('🌐 Using wallet RPC endpoint:', walletAdapter.rpcEndpoint);
+        return walletAdapter.rpcEndpoint;
+      }
+      
+      // Phantom wallet sometimes exposes RPC through a different property
+      if (walletAdapter._rpcEndpoint) {
+        console.log('🌐 Using wallet RPC endpoint (internal):', walletAdapter._rpcEndpoint);
+        return walletAdapter._rpcEndpoint;
+      }
+    }
+
+    // 3. Fallback to PublicNode (free, reliable, no API key needed)
+    console.log('🌐 Using PublicNode RPC (free, no API key required)');
+    console.log('💡 Tip: Wallets like Phantom use their own RPC when connected');
+    return 'https://solana-rpc.publicnode.com';
+  }, [wallet]);
+
+  const endpoint = useMemo(() => getEndpoint(), [getEndpoint]);
+
+  return (
+    <ConnectionProvider endpoint={endpoint}>
+      {children}
+    </ConnectionProvider>
+  );
+};
+
+export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
   const wallets = useMemo(
     () => [
       new PhantomWalletAdapter(),
@@ -43,13 +66,13 @@ export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
   );
 
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <SolanaWalletProvider wallets={wallets} autoConnect>
+    <SolanaWalletProvider wallets={wallets} autoConnect>
+      <ConnectionProviderWithWalletRPC>
         <WalletModalProvider>
           {children}
         </WalletModalProvider>
-      </SolanaWalletProvider>
-    </ConnectionProvider>
+      </ConnectionProviderWithWalletRPC>
+    </SolanaWalletProvider>
   );
 };
 

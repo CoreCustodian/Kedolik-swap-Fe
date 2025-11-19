@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { getTokenAccounts, getSolBalance, getTransactionHistory } from '../utils/solana';
 import { getTokenPrices, getTokenMetadata } from '../utils/prices';
 import { SOL_MINT } from '../config/addresses';
@@ -51,6 +51,7 @@ export const useUser = () => {
 
 export const UserProvider = ({ children }: { children: ReactNode }) => {
   const { publicKey, connected } = useWallet();
+  const { connection } = useConnection();
   const [userData, setUserData] = useState<UserData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -63,12 +64,13 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(true);
     try {
       // Fetch data directly from blockchain - NO SERVER NEEDED!
+      // Uses connection from wallet context (which can use wallet's RPC endpoint)
       
       // 1. Get SOL balance
-      const solBalance = await getSolBalance(publicKey);
+      const solBalance = await getSolBalance(connection, publicKey);
       
       // 2. Get all SPL token accounts
-      const tokenAccounts = await getTokenAccounts(publicKey);
+      const tokenAccounts = await getTokenAccounts(connection, publicKey);
       
       // 3. Get prices for all tokens (Jupiter API - free!)
       const allMints = [SOL_MINT.toString(), ...tokenAccounts.map(t => t.mint)];
@@ -115,7 +117,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       }, 0);
       
       // 6. Get transaction history (directly from blockchain!)
-      const signatures = await getTransactionHistory(publicKey, 20);
+      const signatures = await getTransactionHistory(connection, publicKey, 20);
       const recentTransactions: Transaction[] = signatures.map((sig) => ({
         id: sig.signature,
         type: 'swap', // You can parse this from transaction details
@@ -154,7 +156,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     fetchUserData();
-  }, [publicKey, connected]);
+  }, [publicKey, connected, connection]);
 
   const refreshUserData = async () => {
     await fetchUserData();

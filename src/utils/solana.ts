@@ -1,15 +1,9 @@
 import { Connection, PublicKey, ParsedTransactionWithMeta } from '@solana/web3.js';
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
-// RPC endpoint - use VITE_RPC_ENDPOINT from .env or fallback to PublicNode (free, reliable)
-// PublicNode: https://solana-rpc.publicnode.com (free, no API key required)
-// For production with high traffic, consider: Helius, Quicknode, or Alchemy
-const RPC_ENDPOINT = import.meta.env.VITE_RPC_ENDPOINT || import.meta.env.VITE_RPC_URL || 'https://solana-rpc.publicnode.com';
-
-export const connection = new Connection(RPC_ENDPOINT, 'confirmed');
-
 // Get all token accounts for a wallet
-export const getTokenAccounts = async (walletAddress: PublicKey) => {
+// Uses the connection from wallet context (which can use wallet's RPC endpoint)
+export const getTokenAccounts = async (connection: Connection, walletAddress: PublicKey) => {
   try {
     const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
       walletAddress,
@@ -31,7 +25,8 @@ export const getTokenAccounts = async (walletAddress: PublicKey) => {
 };
 
 // Get SOL balance
-export const getSolBalance = async (walletAddress: PublicKey) => {
+// Uses the connection from wallet context (which can use wallet's RPC endpoint)
+export const getSolBalance = async (connection: Connection, walletAddress: PublicKey) => {
   try {
     const balance = await connection.getBalance(walletAddress);
     return balance / 1e9; // Convert lamports to SOL
@@ -42,7 +37,9 @@ export const getSolBalance = async (walletAddress: PublicKey) => {
 };
 
 // Get transaction signatures for a wallet
+// Uses the connection from wallet context (which can use wallet's RPC endpoint)
 export const getTransactionHistory = async (
+  connection: Connection,
   walletAddress: PublicKey,
   limit: number = 50
 ) => {
@@ -59,7 +56,8 @@ export const getTransactionHistory = async (
 };
 
 // Get detailed transaction info
-export const getTransactionDetails = async (signature: string) => {
+// Uses the connection from wallet context (which can use wallet's RPC endpoint)
+export const getTransactionDetails = async (connection: Connection, signature: string) => {
   try {
     const tx = await connection.getParsedTransaction(signature, {
       maxSupportedTransactionVersion: 0,

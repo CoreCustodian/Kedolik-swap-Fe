@@ -1,6 +1,8 @@
 // Jupiter API for token prices - NO SERVER NEEDED!
 // Free to use, no API key required for basic usage
 
+import { Connection } from '@solana/web3.js';
+
 interface JupiterPriceResponse {
   data: {
     [key: string]: {
@@ -123,7 +125,7 @@ const SOL_PRICE_CACHE_TTL = 30000; // 30 seconds cache
  * Reads actual reserves from the pool vaults
  * Cached for 30 seconds to improve performance
  */
-export const getSolPrice = async (connection: any, forceRefresh: boolean = false): Promise<number> => {
+export const getSolPrice = async (connection: Connection, forceRefresh: boolean = false): Promise<number> => {
   // Return cached price if still valid
   const now = Date.now();
   if (!forceRefresh && solPriceCache && (now - solPriceCache.timestamp) < SOL_PRICE_CACHE_TTL) {
