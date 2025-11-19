@@ -28,6 +28,7 @@ import IDLJson from '../../kedolik_cp_swap.json';
 import { getTokenByMint } from '../config/tokens';
 import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddress, KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 import * as ADDRESSES from '../config/addresses';
+import { confirmTransactionWithBlockhash, smartConfirmTransaction } from './transactionConfirmation';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
@@ -345,8 +346,8 @@ export const unwrapSOL = async (
       preflightCommitment: 'processed',
     });
 
-    // Confirm
-    await connection.confirmTransaction({
+    // Confirm (using polling for Alchemy RPC compatibility)
+    await confirmTransactionWithBlockhash(connection, {
       signature,
       blockhash,
       lastValidBlockHeight,
@@ -619,7 +620,7 @@ export const collectCreatorFees = async (
 
     // Send transaction
     const signature = await wallet.sendTransaction(tx, connection);
-    await connection.confirmTransaction(signature, 'confirmed');
+    await smartConfirmTransaction(connection, signature, 'confirmed');
 
     console.log('✅ Creator fees collected:', signature);
     return signature;
@@ -1198,13 +1199,13 @@ export const swapBaseInput = async (
     console.log(`🔗 Transaction sent: ${signature}`);
 
     console.log('⏳ Confirming transaction...');
-    const confirmation = await connection.confirmTransaction({
+    const confirmation = await confirmTransactionWithBlockhash(connection, {
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'confirmed');
 
-    if (confirmation.value.err) {
+    if (confirmation.value && confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
 
@@ -1738,7 +1739,7 @@ export const swapWithKedologDiscount = async (
 
     console.log('⏳ Confirming transaction...');
     try {
-      await connection.confirmTransaction({
+      await confirmTransactionWithBlockhash(connection, {
         signature,
         blockhash,
         lastValidBlockHeight,
@@ -2412,13 +2413,13 @@ export const addLiquidity = async (
     console.log(`🔗 Transaction sent: ${signature}`);
 
     console.log('⏳ Confirming transaction...');
-    const confirmation = await connection.confirmTransaction({
+    const confirmation = await confirmTransactionWithBlockhash(connection, {
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'processed');
 
-    if (confirmation.value.err) {
+    if (confirmation.value && confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
 
@@ -2652,13 +2653,13 @@ export const removeLiquidity = async (
 
     // Confirm transaction
     console.log('⏳ Confirming transaction...');
-    const confirmation = await connection.confirmTransaction({
+    const confirmation = await confirmTransactionWithBlockhash(connection, {
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'processed');
 
-    if (confirmation.value.err) {
+    if (confirmation.value && confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
 
@@ -3179,13 +3180,13 @@ export const createPool = async (
     console.log('⏳ Confirming transaction...');
 
     try {
-      const confirmation = await connection.confirmTransaction({
+      const confirmation = await confirmTransactionWithBlockhash(connection, {
         signature,
         blockhash,
         lastValidBlockHeight,
       }, 'confirmed'); // Use 'confirmed' for better reliability
 
-      if (confirmation.value.err) {
+      if (confirmation.value && confirmation.value.err) {
         console.error('❌ Transaction confirmation error:', confirmation.value.err);
 
         // Even with error, check if pool was created

@@ -479,13 +479,14 @@ export const executeMultiHopSwap = async (
   console.log('🔗 Explorer:', `https://solscan.io/tx/${signature}?cluster=devnet`);
     
     console.log('⏳ Confirming transaction...');
-    const confirmation = await connection.confirmTransaction({
+    const { confirmTransactionWithBlockhash } = await import('./transactionConfirmation');
+    const confirmation = await confirmTransactionWithBlockhash(connection, {
       signature,
       blockhash,
       lastValidBlockHeight,
     }, 'confirmed');
     
-    if (confirmation.value.err) {
+    if (confirmation.value && confirmation.value.err) {
       throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
     }
     

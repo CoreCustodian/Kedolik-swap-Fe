@@ -338,13 +338,14 @@ export default function Admin() {
       
       showToast('Confirming transaction...', 'info');
       
-      const confirmation = await connection.confirmTransaction({
+      const { confirmTransactionWithBlockhash } = await import('../utils/transactionConfirmation');
+      const confirmation = await confirmTransactionWithBlockhash(connection, {
         signature,
         blockhash,
         lastValidBlockHeight,
       }, 'confirmed');
       
-      if (confirmation.value.err) {
+      if (confirmation.value && confirmation.value.err) {
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
       
@@ -425,8 +426,9 @@ export default function Admin() {
           .remainingAccounts([{ pubkey: newReceiverPubkey, isSigner: false, isWritable: false }])
           .rpc();
 
-        // Wait for confirmation before proceeding
-        await connection.confirmTransaction(tx, 'confirmed');
+        // Wait for confirmation before proceeding (using polling for Alchemy RPC compatibility)
+        const { smartConfirmTransaction } = await import('../utils/transactionConfirmation');
+        await smartConfirmTransaction(connection, tx, 'confirmed');
         showToast(`✅ Unified fee receiver updated on ${cfg.toString().slice(0, 8)}…`, 'success', tx);
         
         // Add small delay to avoid RPC rate limiting before next config
@@ -487,8 +489,9 @@ export default function Admin() {
           .remainingAccounts([{ pubkey: newAdminPubkey, isSigner: false, isWritable: false }])
           .rpc();
 
-        // Wait for confirmation before proceeding
-        await connection.confirmTransaction(tx, 'confirmed');
+        // Wait for confirmation before proceeding (using polling for Alchemy RPC compatibility)
+        const { smartConfirmTransaction } = await import('../utils/transactionConfirmation');
+        await smartConfirmTransaction(connection, tx, 'confirmed');
         showToast(`✅ Admin updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx);
         
         // Add delay before next config (if any)
