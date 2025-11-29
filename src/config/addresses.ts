@@ -14,22 +14,13 @@ import { PublicKey } from '@solana/web3.js';
 // ============================================================================
 
 /**
- * Main AMM program ID
- * This is the deployed Kedolik CP Swap program
+ * Kedolik CP Swap program ID
  * 
- * DEPLOYMENT: Mainnet (November 15, 2025)
- * - NO MORE ORACLE ACCOUNTS NEEDED! 🎉
- * - Uses reference liquidity pools for automatic price discovery
- * - Supports multi-hop pricing paths (Token → SOL → USDC)
- * - Contract auto-detects token ordering in pools
- * - Simpler frontend integration, no Pyth oracle management
- * - Admin can ONLY change admin and fee receiver
- * - UNIFIED fee_receiver gets ALL fees (pool creation, protocol, fund, KEDOLOG discount)
- * - Only fee receiver can claim pool fees
- * - Pool Creation Fee: 0.15 SOL
- * - KEDOLOG Discount: 25%
+ * DEVNET (current): 7YFNCjaQ6374CBUZr5H2n822fzffE7BBqQc4uJnH7dY5
+ * MAINNET (commented for reference): EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL
  */
-export const PROGRAM_ID = new PublicKey('EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL');
+export const PROGRAM_ID = new PublicKey('7YFNCjaQ6374CBUZr5H2n822fzffE7BBqQc4uJnH7dY5');
+// export const PROGRAM_ID_MAINNET = new PublicKey('EvUXjxz9pc4mdUPePwF8RQUr4RG8Qk9aP9PmGXn15PVL');
 
 /**
  * Authority seed for deriving PDAs
@@ -51,19 +42,21 @@ export const SOL_MINT = new PublicKey('So111111111111111111111111111111111111111
  * KEDOLOG token mint address
  * The protocol's native token used for fee discounts
  * 
- * MAINNET: FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN
- * DEVNET: 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
+ * DEVNET (current): 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
+ * MAINNET (reference): FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN
  */
-export const KEDOLOG_MINT = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN');
+export const KEDOLOG_MINT = new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx');
+// export const KEDOLOG_MINT_MAINNET = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN');
 
 /**
  * USDC token mint address
  * Used as the base pair for pool-based pricing oracles
  * 
- * Mainnet: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
- * Devnet: 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
+ * DEVNET (current): 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
+ * MAINNET (reference): EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
  */
-export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
+export const USDC_MINT = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32');
+// export const USDC_MINT_MAINNET = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
 /**
  * USDT token mint address
@@ -128,20 +121,22 @@ export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111
  * Default AMM Config (index 0)
  * Used for KEDOLOG discount feature
  * Contains unified fee_receiver for all fee types
- * MAINNET: ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ
- * DEVNET: TsWSDkAJ9TfkspGLkpVEPtCsvGx8NRVurAfabPyRu9C
- * Pool Creation Fee: 0.15 SOL
+ * 
+ * DEVNET (current): 4TsUqQ22nYi6HEXqh6HZJSVrC9YfbmfBwgehoNary6up
+ * MAINNET (reference): ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ
  */
-export const DEFAULT_AMM_CONFIG = new PublicKey('ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ');
+export const DEFAULT_AMM_CONFIG = new PublicKey('4TsUqQ22nYi6HEXqh6HZJSVrC9YfbmfBwgehoNary6up');
+// export const DEFAULT_AMM_CONFIG_MAINNET = new PublicKey('ENDftP3K19BX29PnyQ6sAwHFGyjtuzAYW6bnnTfZzZRQ');
 
 /**
- * Protocol Token Config (KEDOLOG Config)
- * Stores KEDOLOG discount configuration (discount rate: 25%, treasury, etc.)
- * NOW ALSO STORES: Reference pool addresses (KEDOLOG/USDC, SOL/USDC, KEDOLOG/SOL)
+ * Protocol Token Config (KEDOLIK Config)
+ * Stores KEDOLIK discount configuration (discount rate: 25%, treasury, etc.)
+ * NOW ALSO STORES: Reference pool addresses (KEDOLIK/USDC, SOL/USDC, KEDOLIK/SOL)
  * MAINNET: pVRUHo1ecQA5QjyoCJzBSdPTi4hSgjW2ErK8huNYB51
- * DEVNET: EprKag9DAdRhMekcHzHzC64ZBmrbECeytd5uL1G9cXP9
+ * DEVNET (current): J3GNAysKh1ViPhEpBhkL3wALHaZWnoPa8awZmocVgyN1
  */
-export const PROTOCOL_TOKEN_CONFIG = new PublicKey('pVRUHo1ecQA5QjyoCJzBSdPTi4hSgjW2ErK8huNYB51');
+export const PROTOCOL_TOKEN_CONFIG = new PublicKey('J3GNAysKh1ViPhEpBhkL3wALHaZWnoPa8awZmocVgyN1');
+// export const PROTOCOL_TOKEN_CONFIG_MAINNET = new PublicKey('pVRUHo1ecQA5QjyoCJzBSdPTi4hSgjW2ErK8huNYB51');
 
 // ============================================================================
 // POOL CREATION
@@ -171,7 +166,7 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('EGX4XLHooJ8vtMeyu6JRzudPM
  * Current network environment
  * Set to 'devnet' for testing, 'mainnet-beta' for production
  */
-export const NETWORK = 'mainnet-beta' as const;
+export const NETWORK = 'devnet' as const;
 
 /**
  * Get Solscan explorer URL for a transaction signature

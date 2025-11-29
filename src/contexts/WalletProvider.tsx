@@ -73,13 +73,13 @@ export const WalletProvider: FC<WalletProviderProps> = ({ children }) => {
   );
 
   return (
-    <SolanaWalletProvider wallets={wallets} autoConnect>
+      <SolanaWalletProvider wallets={wallets} autoConnect>
       <ConnectionProviderWithRPC>
         <WalletModalProvider>
           {children}
         </WalletModalProvider>
       </ConnectionProviderWithRPC>
-    </SolanaWalletProvider>
+      </SolanaWalletProvider>
   );
 };
 

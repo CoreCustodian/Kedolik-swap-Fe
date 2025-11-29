@@ -36,6 +36,6 @@ export function getRestrictionMessage(
   inputSymbol: string,
   outputSymbol: string
 ): string {
-  return `⚠️ ${inputSymbol} → ${outputSymbol} swaps with KEDOLOG discount are temporarily unavailable due to a contract limitation.\n\nYou can:\n• Swap without KEDOLOG discount\n• Use 2-step swap: ${inputSymbol} → USDC → ${outputSymbol}`;
+  return `⚠️ ${inputSymbol} → ${outputSymbol} swaps with KEDOL discount are temporarily unavailable due to a contract limitation.\n\nYou can:\n• Swap without KEDOL discount\n• Use 2-step swap: ${inputSymbol} → USDC → ${outputSymbol}`;
 }
 

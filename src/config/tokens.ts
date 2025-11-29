@@ -28,7 +28,7 @@ export const getLocalTokenLogo = (mint: PublicKey): string => {
  * 
  * Core tokens supported by Kedolik DEX:
  * - SOL (Native Solana)
- * - KEDOLOG (Protocol Token)
+ * - KEDOL (Protocol Token)
  * - USDC (Stablecoin)
  * 
  * Users can import additional tokens using the custom token import feature.
@@ -84,9 +84,9 @@ export const getTokenBySymbol = (symbol: string): TokenInfo | undefined => {
 
 // Default token pairs for quick access
 export const DEFAULT_TOKEN_PAIRS = [
-  { from: 'KEDOLOG', to: 'USDC' },
+  { from: 'KEDOL', to: 'USDC' },
   { from: 'SOL', to: 'USDC' },
-  { from: 'KEDOLOG', to: 'SOL' },
+  { from: 'KEDOL', to: 'SOL' },
 ];
 
 

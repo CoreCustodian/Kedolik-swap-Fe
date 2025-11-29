@@ -33,6 +33,12 @@ import { confirmTransactionWithBlockhash, smartConfirmTransaction } from './tran
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
 
+// Token Metadata Program ID (Metaplex)
+const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+
+// BPF Loader Upgradeable Program ID (for deriving program data account)
+const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
+
 // Debug: Log the IDL address on module load
 console.log('🔧 IDL loaded with address:', (IDLJson as any).address);
 console.log('🔧 Centralized PROGRAM_ID:', ADDRESSES.PROGRAM_ID.toString());
@@ -2807,6 +2813,26 @@ export const createPool = async (
     const token1Vault = getTokenVault(poolState, token1);
     const observationState = getObservationState(poolState);
 
+    // Derive LP metadata account (PDA from Metaplex Token Metadata program)
+    // Seeds: ["metadata", TOKEN_METADATA_PROGRAM_ID, lp_mint]
+    const [lpMetadataAccount] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from('metadata'),
+        TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+        lpMint.toBuffer(),
+      ],
+      TOKEN_METADATA_PROGRAM_ID
+    );
+    console.log('📝 LP Metadata Account:', lpMetadataAccount.toString());
+
+    // Derive program data account (for upgradeable programs)
+    // Seeds: [program_id] with BPF Loader Upgradeable program
+    const [programDataAccount] = PublicKey.findProgramAddressSync(
+      [PROGRAM_ID.toBuffer()],
+      BPF_LOADER_UPGRADEABLE_PROGRAM_ID
+    );
+    console.log('📝 Program Data Account:', programDataAccount.toString());
+
     // Fetch the fee receiver from AMM config (dynamically, not hardcoded!)
     console.log('🔍 Fetching fee receiver from AMM config...');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2959,6 +2985,7 @@ export const createPool = async (
       token0Mint: token0.toString(),
       token1Mint: token1.toString(),
       lpMint: lpMint.toString(),
+      lpMetadataAccount: lpMetadataAccount.toString(),
       creatorToken0: userToken0Account.toString(),
       creatorToken1: userToken1Account.toString(),
       creatorLpToken: userLpAccount.toString(),
@@ -2972,7 +2999,8 @@ export const createPool = async (
 
     let initializeInstruction;
     try {
-      initializeInstruction = await program.methods
+      // Build the instruction with standard accounts
+      const instructionBuilder = program.methods
         .initialize(initAmount0BN, initAmount1BN, openTime)
         .accounts({
           creator: walletPublicKey,
@@ -2995,7 +3023,29 @@ export const createPool = async (
           associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
           rent: SYSVAR_RENT_PUBKEY,
-        })
+        });
+
+      // Add lp_metadata_account, token_metadata_program, and program_data via remainingAccounts
+      // since they're optional in the program but needed for automatic metadata creation
+      // The program will use these to automatically set LP token metadata
+      initializeInstruction = await instructionBuilder
+        .remainingAccounts([
+          {
+            pubkey: lpMetadataAccount,
+            isWritable: true,
+            isSigner: false,
+          },
+          {
+            pubkey: TOKEN_METADATA_PROGRAM_ID,
+            isWritable: false,
+            isSigner: false,
+          },
+          {
+            pubkey: programDataAccount,
+            isWritable: false,
+            isSigner: false,
+          },
+        ])
         .instruction();
       console.log('✅ Initialize instruction built successfully');
     } catch (instructionError: any) {

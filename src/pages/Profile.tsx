@@ -32,13 +32,13 @@ const Profile = () => {
   
   // Fetch balances (debounced and cached)
   useEffect(() => {
-    if (!publicKey || !connected) {
-      setBalances([]);
-      setSolBalance(0);
-      setIsLoading(false);
-      return;
-    }
-    
+      if (!publicKey || !connected) {
+        setBalances([]);
+        setSolBalance(0);
+        setIsLoading(false);
+        return;
+      }
+      
     let isInitialLoad = true;
     
     // Debounced balance fetcher to prevent excessive RPC calls
@@ -94,12 +94,12 @@ const Profile = () => {
   
   // Fetch LP tokens (optimized with cached balance fetcher)
   useEffect(() => {
-    if (!publicKey || !connected || !wallet) {
-      setLpTokens([]);
-      setIsLoadingLp(false);
-      return;
-    }
-    
+      if (!publicKey || !connected || !wallet) {
+        setLpTokens([]);
+        setIsLoadingLp(false);
+        return;
+      }
+      
     let isInitialLoad = true;
     
     // Debounced LP token fetcher to prevent excessive RPC calls
@@ -432,8 +432,8 @@ const Profile = () => {
                                 />
                               ) : null}
                               <div className={`w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand ${token0Logo ? 'hidden' : ''}`}>
-                                {lp.token0Symbol[0]}
-                              </div>
+                          {lp.token0Symbol[0]}
+                        </div>
                               {token1Logo ? (
                                 <img 
                                   src={token1Logo} 
@@ -449,8 +449,8 @@ const Profile = () => {
                                 />
                               ) : null}
                               <div className={`w-12 h-12 rounded-full bg-gradient-brand flex items-center justify-center text-base font-bold shadow-glow-brand -ml-4 border-2 border-dark-800 ${token1Logo ? 'hidden' : ''}`}>
-                                {lp.token1Symbol[0]}
-                              </div>
+                          {lp.token1Symbol[0]}
+                        </div>
                             </>
                           );
                         })()}
