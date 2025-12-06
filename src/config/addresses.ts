@@ -16,11 +16,11 @@ import { PublicKey } from '@solana/web3.js';
 /**
  * Kedolik CP Swap program ID
  * 
- * MAINNET (current): 7y9dM6Pdm335oBn8nho7tMWeHdv1z6oy2iGkAUDbrW9s
- * DEVNET (commented for reference): 7YFNCjaQ6374CBUZr5H2n822fzffE7BBqQc4uJnH7dY5
+ * DEVNET (current): B515QSTbQJ9zUVnFGKegZZCTwYgUnYJ8T9kUWrpXKLzC
+ * MAINNET (commented for reference): 7y9dM6Pdm335oBn8nho7tMWeHdv1z6oy2iGkAUDbrW9s
  */
-export const PROGRAM_ID = new PublicKey('7y9dM6Pdm335oBn8nho7tMWeHdv1z6oy2iGkAUDbrW9s');
-// export const PROGRAM_ID_DEVNET = new PublicKey('7YFNCjaQ6374CBUZr5H2n822fzffE7BBqQc4uJnH7dY5');
+export const PROGRAM_ID = new PublicKey('2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX');
+// export const PROGRAM_ID_MAINNET = new PublicKey('7y9dM6Pdm335oBn8nho7tMWeHdv1z6oy2iGkAUDbrW9s');
 
 /**
  * Authority seed for deriving PDAs
@@ -42,21 +42,21 @@ export const SOL_MINT = new PublicKey('So111111111111111111111111111111111111111
  * KEDOLOG token mint address
  * The protocol's native token used for fee discounts
  * 
- * MAINNET (current): FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN
- * DEVNET (commented for reference): 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
+ * DEVNET (current): 22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx
+ * MAINNET (commented for reference): FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN
  */
-export const KEDOLOG_MINT = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN');
-// export const KEDOLOG_MINT_DEVNET = new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx');
+export const KEDOLOG_MINT = new PublicKey('22NataEERKBqvBt3SFYJj5oE1fqiTx4HbsxU1FuSNWbx');
+// export const KEDOLOG_MINT_MAINNET = new PublicKey('FUHwFRWE52FJXC4KoySzy9h6nNmRrppUg5unS4mKEDQN');
 
 /**
  * USDC token mint address
  * Used as the base pair for pool-based pricing oracles
  * 
- * MAINNET (current): EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
- * DEVNET (commented for reference): 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
+ * DEVNET (current): 2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32
+ * MAINNET (commented for reference): EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
  */
-export const USDC_MINT = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
-// export const USDC_MINT_DEVNET = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32');
+export const USDC_MINT = new PublicKey('2YAPUKzhzPDnV3gxHew5kUUt1L157Tdrdbv7Gbbg3i32');
+// export const USDC_MINT_MAINNET = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
 
 /**
  * USDT token mint address
@@ -88,21 +88,21 @@ export const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8Ben
 
 // KEDOLOG/USDC Pool (Mainnet)
 // Pool Address: 8KYfYHmPyzpzqYQzVzHR3uv94E1UX8TsaEFLqBWzenRJ
-export const KEDOLOG_USDC_POOL = new PublicKey('11111111111111111111111111111111');
+export const KEDOLOG_USDC_POOL = new PublicKey('571SxkfmnfvcgcrM8zXw7TzZFpn5aATEo6TgPYjCALWq');
 // Vault addresses are fetched dynamically from pool data
 export const KEDOLOG_VAULT = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // SOL/USDC Pool (Mainnet)
 // Pool Address: 3ZXK4N8Hf1uZjYqndX3bRPXf71wS6gj3DSiSjPTveE1L
-export const SOL_USDC_POOL = new PublicKey('11111111111111111111111111111111');
+export const SOL_USDC_POOL = new PublicKey('CSHWU8yZTa35EnDea31CvaFXuNNPsxRC5F4QqE1VPg7Q');
 // Vault addresses are fetched dynamically from pool data
 export const SOL_VAULT = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 export const USDC_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // KEDOLOG/SOL Pool (Mainnet)
 // Pool Address: 9zbYdushUHfJ67SJCDAYCMtaHdg5UMnJwmGWWGuXgh3
-export const KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111');
+export const KEDOLOG_SOL_POOL = new PublicKey('5Gcyz3QqKjjFcucJMxN7rXfZCQpBaCjgHp617H5efNAz');
 // Vault addresses are fetched dynamically from pool data
 export const KEDOLOG_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
@@ -122,21 +122,21 @@ export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111
  * Used for KEDOLOG discount feature
  * Contains unified fee_receiver for all fee types
  * 
- * MAINNET (current): DoG8fzHt5UrPfZFRsQ7FRC2X6H5NAFVD6TTP3DVYyera
- * DEVNET (commented for reference): 4TsUqQ22nYi6HEXqh6HZJSVrC9YfbmfBwgehoNary6up
+ * DEVNET (current): FtDVZjwrYLN5yuXGGDrAKVDAYkkeDGdb1xvNnwHf5eyf
+ * MAINNET (commented for reference): DoG8fzHt5UrPfZFRsQ7FRC2X6H5NAFVD6TTP3DVYyera
  */
-export const DEFAULT_AMM_CONFIG = new PublicKey('DoG8fzHt5UrPfZFRsQ7FRC2X6H5NAFVD6TTP3DVYyera');
-// export const DEFAULT_AMM_CONFIG_DEVNET = new PublicKey('4TsUqQ22nYi6HEXqh6HZJSVrC9YfbmfBwgehoNary6up');
+export const DEFAULT_AMM_CONFIG = new PublicKey('BY5RrGvCuSUtuJwPjrkCTjNWTfUqfkbNYNPB6uv6vUpd');
+// export const DEFAULT_AMM_CONFIG_MAINNET = new PublicKey('DoG8fzHt5UrPfZFRsQ7FRC2X6H5NAFVD6TTP3DVYyera');
 
 /**
  * Protocol Token Config (KEDOLIK Config)
  * Stores KEDOLIK discount configuration (discount rate: 25%, treasury, etc.)
  * NOW ALSO STORES: Reference pool addresses (KEDOLIK/USDC, SOL/USDC, KEDOLIK/SOL)
- * MAINNET (current): DmWrnD75wW6r1Tpy93bcs3tbNkHQoFMqeqtRAw53bKFh
- * DEVNET (commented for reference): J3GNAysKh1ViPhEpBhkL3wALHaZWnoPa8awZmocVgyN1
+ * DEVNET (current): 5VGKz2m1PghuJGGfFmdenVz5UxwP2VxhYvEVaJRDefbw
+ * MAINNET (commented for reference): DmWrnD75wW6r1Tpy93bcs3tbNkHQoFMqeqtRAw53bKFh
  */
-export const PROTOCOL_TOKEN_CONFIG = new PublicKey('DmWrnD75wW6r1Tpy93bcs3tbNkHQoFMqeqtRAw53bKFh');
-// export const PROTOCOL_TOKEN_CONFIG_DEVNET = new PublicKey('J3GNAysKh1ViPhEpBhkL3wALHaZWnoPa8awZmocVgyN1');
+export const PROTOCOL_TOKEN_CONFIG = new PublicKey('9qTqDHQTnp91Mkp1thoxL9b818JFRRJy1LYLunBvZA6d');
+// export const PROTOCOL_TOKEN_CONFIG_MAINNET = new PublicKey('DmWrnD75wW6r1Tpy93bcs3tbNkHQoFMqeqtRAw53bKFh');
 
 // ============================================================================
 // POOL CREATION
@@ -154,10 +154,11 @@ export const PROTOCOL_TOKEN_CONFIG = new PublicKey('DmWrnD75wW6r1Tpy93bcs3tbNkHQ
  * to avoid address constraint mismatches. This constant is kept
  * for backward compatibility only.
  * 
- * MAINNET (current): 68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot
+ * DEVNET (current): JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa
+ * MAINNET (commented for reference): 68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot
  * Treasury address: EGX4XLHooJ8vtMeyu6JRzudPMv39Cy91bJV49oaHqHom
  */
-export const CREATE_POOL_FEE_RECEIVER = new PublicKey('68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot');
+export const CREATE_POOL_FEE_RECEIVER = new PublicKey('JAaHqf4p14eNij84tygdF1nQkKV8MU3h7Pi4VCtDYiqa');
 
 // ============================================================================
 // NETWORK CONFIGURATION
@@ -167,7 +168,7 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('68ntKmiyhSdRT448Hj1VPW19a
  * Current network environment
  * Set to 'devnet' for testing, 'mainnet-beta' for production
  */
-export const NETWORK = 'mainnet-beta' as const;
+export const NETWORK = 'devnet' as const;
 
 /**
  * Get Solscan explorer URL for a transaction signature

@@ -1,5 +1,5 @@
 {
-  "address": "7YFNCjaQ6374CBUZr5H2n822fzffE7BBqQc4uJnH7dY5",
+  "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX",
   "metadata": {
     "name": "kedolik_cp_swap",
     "version": "0.2.0",
@@ -71,7 +71,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": []
@@ -320,14 +320,14 @@
           "docs": [
             "Program to create an ATA for receiving position NFT"
           ],
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "system_program",
           "docs": [
             "To create a new program account"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": []
@@ -459,14 +459,14 @@
           "docs": [
             "The SPL program to perform token transfers"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "The SPL program 2022 to perform token transfers"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -607,14 +607,14 @@
           "docs": [
             "The SPL program to perform token transfers"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "The SPL program 2022 to perform token transfers"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -691,7 +691,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -789,7 +789,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": []
@@ -802,7 +802,7 @@
         "# Arguments",
         "",
         "* `ctx`- The context of accounts",
-        "* `protocol_token_mint` - The mint address of the protocol token (e.g., KEDOLOG)",
+        "* `protocol_token_mint` - The mint address of the protocol token (e.g., KEDOL)",
         "* `discount_rate` - The discount rate when paying with protocol token (e.g., 2000 = 20% discount)",
         "* `authority` - The authority that can update this config later",
         "* `treasury` - The treasury account to receive protocol token fees",
@@ -867,7 +867,7 @@
         },
         {
           "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -1019,14 +1019,14 @@
           "docs": [
             "token Program"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "Token program 2022"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "vault_0_mint",
@@ -1074,6 +1074,9 @@
         "* `init_amount_0` - the initial amount_0 to deposit",
         "* `init_amount_1` - the initial amount_1 to deposit",
         "* `open_time` - the timestamp allowed for swap",
+        "* `lp_token_name` - Optional name for LP token metadata",
+        "* `lp_token_symbol` - Optional symbol for LP token metadata",
+        "* `lp_token_uri` - Optional URI for LP token metadata",
         ""
       ],
       "discriminator": [
@@ -1414,7 +1417,7 @@
           "docs": [
             "Program to create mint account and mint tokens"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "token_0_program",
@@ -1433,21 +1436,36 @@
           "docs": [
             "Program to create an ATA for receiving position NFT"
           ],
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "system_program",
           "docs": [
             "To create a new program account"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "rent",
           "docs": [
             "Sysvar for program account"
           ],
-          "address": "SysvarRent111111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
+        },
+        {
+          "name": "metadata_account",
+          "docs": [
+            "If provided, metadata will be created for the LP token",
+            "This account is optional - if not provided, metadata will not be created"
+          ],
+          "writable": true
+        },
+        {
+          "name": "token_metadata_program",
+          "docs": [
+            "Required if metadata_account is provided",
+            "This account is optional - if not provided, metadata will not be created"
+          ]
         }
       ],
       "args": [
@@ -1462,6 +1480,24 @@
         {
           "name": "open_time",
           "type": "u64"
+        },
+        {
+          "name": "lp_token_name",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "lp_token_symbol",
+          "type": {
+            "option": "string"
+          }
+        },
+        {
+          "name": "lp_token_uri",
+          "type": {
+            "option": "string"
+          }
         }
       ]
     },
@@ -1783,7 +1819,7 @@
             "create pool fee account"
           ],
           "writable": true,
-          "address": "67D6TM8PTsuv8nU5PnUP3dV6j8kW3rmTD9KNufcEUPCa"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "observation_state",
@@ -1847,7 +1883,7 @@
           "docs": [
             "Program to create mint account and mint tokens"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "token_0_program",
@@ -1866,14 +1902,14 @@
           "docs": [
             "Program to create an ATA for receiving position NFT"
           ],
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "system_program",
           "docs": [
             "To create a new program account"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -2033,21 +2069,21 @@
           "docs": [
             "The token metadata program"
           ],
-          "address": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "system_program",
           "docs": [
             "System program"
           ],
-          "address": "11111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "rent",
           "docs": [
             "Rent sysvar"
           ],
-          "address": "SysvarRent111111111111111111111111111111111"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -2360,7 +2396,7 @@
         {
           "name": "protocol_token_treasury",
           "docs": [
-            "The fee receiver account to receive protocol token (KEDOLOG) discount fees",
+            "The fee receiver account to receive protocol token (KEDOL) discount fees",
             "This uses the unified fee_receiver from AmmConfig",
             "CRITICAL: Must be owned by the fee_receiver wallet from amm_config"
           ],
@@ -2916,14 +2952,14 @@
           "docs": [
             "token Program"
           ],
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "token_program_2022",
           "docs": [
             "Token program 2022"
           ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         },
         {
           "name": "vault_0_mint",
@@ -2949,7 +2985,7 @@
           "docs": [
             "memo program"
           ],
-          "address": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+          "address": "2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX"
         }
       ],
       "args": [
@@ -3158,6 +3194,11 @@
       "code": 6018,
       "name": "InvalidAuthority",
       "msg": "Invalid authority"
+    },
+    {
+      "code": 6019,
+      "name": "InvalidMetadataAccount",
+      "msg": "Invalid metadata account"
     }
   ],
   "types": [
@@ -3228,7 +3269,7 @@
           {
             "name": "fee_receiver",
             "docs": [
-              "UNIFIED FEE RECEIVER - receives ALL fees (pool creation, protocol, fund, KEDOLOG discount)"
+              "UNIFIED FEE RECEIVER - receives ALL fees (pool creation, protocol, fund, KEDOL discount)"
             ],
             "type": "pubkey"
           },
@@ -3670,7 +3711,7 @@
           {
             "name": "protocol_token_mint",
             "docs": [
-              "Protocol token mint address (e.g., KEDOLOG token)"
+              "Protocol token mint address (e.g., KEDOL token)"
             ],
             "type": "pubkey"
           },
@@ -3698,7 +3739,7 @@
           {
             "name": "kedolog_usdc_pool",
             "docs": [
-              "KEDOLOG/USDC pool - primary price reference for KEDOLOG"
+              "KEDOL/USDC pool - primary price reference for KEDOL"
             ],
             "type": "pubkey"
           },
@@ -3712,7 +3753,7 @@
           {
             "name": "kedolog_sol_pool",
             "docs": [
-              "KEDOLOG/SOL pool - alternative price path for KEDOLOG"
+              "KEDOL/SOL pool - alternative price path for KEDOL"
             ],
             "type": "pubkey"
           },

@@ -36,12 +36,17 @@ const IDL = IDLJson as unknown as Idl;
 // Token Metadata Program ID (Metaplex)
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
 
-// BPF Loader Upgradeable Program ID (for deriving program data account)
-const BPF_LOADER_UPGRADEABLE_PROGRAM_ID = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
-
 // Debug: Log the IDL address on module load
 console.log('🔧 IDL loaded with address:', (IDLJson as any).address);
 console.log('🔧 Centralized PROGRAM_ID:', ADDRESSES.PROGRAM_ID.toString());
+
+// Verify IDL program ID matches
+if ((IDLJson as any).address !== ADDRESSES.PROGRAM_ID.toString()) {
+  console.warn('⚠️ WARNING: IDL program ID does not match centralized PROGRAM_ID!');
+  console.warn('IDL address:', (IDLJson as any).address);
+  console.warn('PROGRAM_ID:', ADDRESSES.PROGRAM_ID.toString());
+  console.warn('This may cause issues with account validation.');
+}
 
 // Program and Config - Import from centralized config
 export const PROGRAM_ID = ADDRESSES.PROGRAM_ID;
@@ -1244,6 +1249,11 @@ export const swapWithKedologDiscount = async (
       minimumAmountOut,
     });
 
+    // Validate swap amount is not zero or negative
+    if (amountIn <= 0) {
+      throw new Error('Swap amount must be greater than 0');
+    }
+
     // Get protocol token config
     const protocolTokenConfig = getProtocolTokenConfigAddress(PROGRAM_ID);
     console.log('📊 Protocol Token Config:', protocolTokenConfig.toString());
@@ -1277,15 +1287,69 @@ export const swapWithKedologDiscount = async (
     const outputTokenProgram = outputTokenInfo?.owner || TOKEN_PROGRAM_ID;
     const protocolTokenProgram = TOKEN_PROGRAM_ID; // KEDOLOG is standard SPL token
 
-    // Convert amounts to BN
+    // Get token decimals
     const inputTokenData = getTokenByMint(inputMint);
     const outputTokenData = getTokenByMint(outputMint);
     const inputDecimals = inputTokenData?.decimals || 9;
     const outputDecimals = outputTokenData?.decimals || 9;
 
+    // Get vault PDAs (needed for both validation and swap)
+    const [inputVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool_vault'), poolState.toBuffer(), inputMint.toBuffer()],
+      PROGRAM_ID
+    );
+    const [outputVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from('pool_vault'), poolState.toBuffer(), outputMint.toBuffer()],
+      PROGRAM_ID
+    );
+
+    // Fetch pool data (needed for validation and swap)
+    const poolData = await (program.account as any).poolState.fetch(poolState);
+
+    // Validate minimumAmountOut - it cannot be 0
+    if (minimumAmountOut <= 0) {
+      console.warn('⚠️ minimumAmountOut is 0 or negative, calculating from pool reserves...');
+      
+      // Get vault balances
+      const inputVaultInfo = await connection.getTokenAccountBalance(inputVault);
+      const outputVaultInfo = await connection.getTokenAccountBalance(outputVault);
+      
+      const reserveIn = parseFloat(inputVaultInfo.value.uiAmount?.toString() || '0');
+      const reserveOut = parseFloat(outputVaultInfo.value.uiAmount?.toString() || '0');
+      
+      if (reserveIn === 0 || reserveOut === 0) {
+        throw new Error('Pool has zero liquidity. Cannot calculate minimum output.');
+      }
+      
+      // Calculate expected output using constant product formula
+      const tradeFeeRate = poolData.tradeFeeRate ? Number(poolData.tradeFeeRate) : 100; // Default 0.01%
+      const fee = (amountIn * tradeFeeRate) / 1000000;
+      const amountInAfterFee = amountIn - fee;
+      const expectedOut = (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
+      
+      // Apply slippage tolerance (default 0.5% if not provided)
+      const slippageTolerance = _slippage || 0.5;
+      minimumAmountOut = expectedOut * (1 - slippageTolerance / 100);
+      
+      console.log('✅ Calculated minimumAmountOut from pool:', {
+        reserveIn,
+        reserveOut,
+        amountIn,
+        expectedOut,
+        minimumAmountOut,
+        slippageTolerance,
+      });
+    }
+
     // Use Math.floor and toFixed(0) to avoid BN assertion errors and scientific notation
     const amountInScaled = Math.floor(amountIn * Math.pow(10, inputDecimals));
     const minAmountOutScaled = Math.floor(minimumAmountOut * Math.pow(10, outputDecimals));
+    
+    // Ensure minimum amount out is at least 1 base unit
+    if (minAmountOutScaled <= 0) {
+      throw new Error(`Calculated minimum amount out is too small: ${minimumAmountOut}. Cannot proceed with swap.`);
+    }
+    
     // Use toFixed(0) to prevent scientific notation for large numbers
     const amountInBN = new BN(amountInScaled.toFixed(0));
     const minAmountOutBN = new BN(minAmountOutScaled.toFixed(0));
@@ -1300,23 +1364,13 @@ export const swapWithKedologDiscount = async (
       amountIn,
       amountInBN: amountInBN.toString(),
       minAmountOutBN: minAmountOutBN.toString(),
+      minimumAmountOut,
       protocolFeeUsd: protocolFeeAmount.toFixed(6),
       kedologPerUsd,
       estimatedKedologFee: estimatedKedologFee.toFixed(6),
     });
 
-    // Get vault PDAs
-    const [inputVault] = PublicKey.findProgramAddressSync(
-      [Buffer.from('pool_vault'), poolState.toBuffer(), inputMint.toBuffer()],
-      PROGRAM_ID
-    );
-    const [outputVault] = PublicKey.findProgramAddressSync(
-      [Buffer.from('pool_vault'), poolState.toBuffer(), outputMint.toBuffer()],
-      PROGRAM_ID
-    );
-
-    // Get observation state
-    const poolData = await (program.account as any).poolState.fetch(poolState);
+    // Get observation state (poolData already fetched above)
     const observationState = poolData.observationKey;
 
     // Create transaction
@@ -2806,6 +2860,23 @@ export const createPool = async (
     console.log('🔑 Using PDA for Pool State:', poolState.toString());
     console.log('🔑 Using AMM Config:', selectedAmmConfig.toString());
 
+    // Check if pool already exists
+    try {
+      const poolStateInfo = await connection.getAccountInfo(poolState);
+      if (poolStateInfo) {
+        const token0Symbol = getTokenSymbol(token0);
+        const token1Symbol = getTokenSymbol(token1);
+        throw new Error(`Pool ${token0Symbol}/${token1Symbol} already exists! Please check the Pools page to add liquidity to the existing pool instead.`);
+      }
+    } catch (checkError: any) {
+      // If it's our custom error, re-throw it
+      if (checkError.message && checkError.message.includes('already exists')) {
+        throw checkError;
+      }
+      // Otherwise, continue (account doesn't exist, which is what we want)
+      console.log('✅ Pool state does not exist - ready to create new pool');
+    }
+
     // Get PDAs derived from pool state
     const authority = getAuthority();
     const lpMint = getLpMint(poolState);
@@ -2815,6 +2886,7 @@ export const createPool = async (
 
     // Derive LP metadata account (PDA from Metaplex Token Metadata program)
     // Seeds: ["metadata", TOKEN_METADATA_PROGRAM_ID, lp_mint]
+    // REQUIRED: Metadata account must be provided for automatic metadata creation
     const [lpMetadataAccount] = PublicKey.findProgramAddressSync(
       [
         Buffer.from('metadata'),
@@ -2824,14 +2896,6 @@ export const createPool = async (
       TOKEN_METADATA_PROGRAM_ID
     );
     console.log('📝 LP Metadata Account:', lpMetadataAccount.toString());
-
-    // Derive program data account (for upgradeable programs)
-    // Seeds: [program_id] with BPF Loader Upgradeable program
-    const [programDataAccount] = PublicKey.findProgramAddressSync(
-      [PROGRAM_ID.toBuffer()],
-      BPF_LOADER_UPGRADEABLE_PROGRAM_ID
-    );
-    console.log('📝 Program Data Account:', programDataAccount.toString());
 
     // Fetch the fee receiver from AMM config (dynamically, not hardcoded!)
     console.log('🔍 Fetching fee receiver from AMM config...');
@@ -2879,6 +2943,18 @@ export const createPool = async (
     const initAmount0BN = new BN(amount0Scaled.toFixed(0));
     const initAmount1BN = new BN(amount1Scaled.toFixed(0));
     const openTime = new BN(Math.floor(Date.now() / 1000)); // Open immediately
+
+    // LP token metadata - pass explicit default values to avoid null serialization issues
+    // Using Kedolik LP standard metadata defaults
+    const lpTokenName = "Kedolik LP";
+    const lpTokenSymbol = "KLP";
+    const lpTokenUri = "https://raw.githubusercontent.com/KedolikSwap/metadata/refs/heads/main/klp.json";
+    
+    console.log('📝 LP Token Metadata:', {
+      name: lpTokenName,
+      symbol: lpTokenSymbol,
+      uri: lpTokenUri,
+    });
 
     // Check if we need to handle native SOL
     const needsWrapToken0 = isNativeSOL(token0);
@@ -2999,55 +3075,147 @@ export const createPool = async (
 
     let initializeInstruction;
     try {
-      // Build the instruction with standard accounts
-      const instructionBuilder = program.methods
-        .initialize(initAmount0BN, initAmount1BN, openTime)
-        .accounts({
-          creator: walletPublicKey,
-          ammConfig: selectedAmmConfig,
-          authority,
-          poolState: poolState,
-          token0Mint: token0,
-          token1Mint: token1,
-          lpMint,
-          creatorToken0: userToken0Account,
-          creatorToken1: userToken1Account,
-          creatorLpToken: userLpAccount,
-          token0Vault,
-          token1Vault,
-          createPoolFee,
-          observationState,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          token0Program,
-          token1Program,
-          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          rent: SYSVAR_RENT_PUBKEY,
+      // Build the instruction with all accounts including metadata accounts
+      // REQUIRED: lpMetadataAccount and tokenMetadataProgram must be in .accounts()
+      // Pool creation will fail if these are missing
+      
+      // DEBUG: Verify IDL has metadata accounts
+      const idlInstruction = (IDL as any).instructions?.find((ix: any) => ix.name === 'initialize');
+      if (idlInstruction) {
+        // Note: IDL uses 'metadata_account' (snake_case), Anchor converts to 'metadataAccount' (camelCase) in .accounts()
+        const hasMetadataAccountInIdl = idlInstruction.accounts?.some((acc: any) => acc.name === 'metadata_account');
+        const hasTokenMetadataProgramInIdl = idlInstruction.accounts?.some((acc: any) => acc.name === 'token_metadata_program');
+        console.log('🔍 DEBUG: IDL account verification:', {
+          hasMetadataAccountInIdl,
+          hasTokenMetadataProgramInIdl,
+          totalAccountsInIdl: idlInstruction.accounts?.length || 0,
+          accountNames: idlInstruction.accounts?.map((acc: any) => acc.name),
         });
-
-      // Add lp_metadata_account, token_metadata_program, and program_data via remainingAccounts
-      // since they're optional in the program but needed for automatic metadata creation
-      // The program will use these to automatically set LP token metadata
-      initializeInstruction = await instructionBuilder
-        .remainingAccounts([
-          {
-            pubkey: lpMetadataAccount,
-            isWritable: true,
-            isSigner: false,
-          },
-          {
-            pubkey: TOKEN_METADATA_PROGRAM_ID,
-            isWritable: false,
-            isSigner: false,
-          },
-          {
-            pubkey: programDataAccount,
-            isWritable: false,
-            isSigner: false,
-          },
-        ])
-        .instruction();
-      console.log('✅ Initialize instruction built successfully');
+        
+        if (!hasMetadataAccountInIdl || !hasTokenMetadataProgramInIdl) {
+          console.error('❌ CRITICAL: IDL is missing metadata accounts!');
+          console.error('IDL accounts:', idlInstruction.accounts?.map((acc: any) => acc.name));
+          throw new Error('IDL does not include required metadata accounts. Please update the IDL file.');
+        }
+      }
+      
+      // Build initialize instruction with metadata parameters
+      // Check if IDL has the new metadata parameters
+      const idlArgs = idlInstruction?.args || [];
+      const hasMetadataParams = idlArgs.some((arg: any) => 
+        arg.name === 'lp_token_name' || arg.name === 'lp_token_symbol' || arg.name === 'lp_token_uri'
+      );
+      
+      let initializeMethod;
+      if (hasMetadataParams) {
+        console.log('✅ IDL includes metadata parameters - passing them to initialize');
+        initializeMethod = program.methods.initialize(
+          initAmount0BN, 
+          initAmount1BN, 
+          openTime,
+          lpTokenName,    // lp_token_name: Option<String>
+          lpTokenSymbol,  // lp_token_symbol: Option<String>
+          lpTokenUri      // lp_token_uri: Option<String>
+        );
+      } else {
+        console.warn('⚠️ IDL does not include metadata parameters yet - calling initialize without them');
+        console.warn('⚠️ Metadata will not be created automatically. Update the IDL after program rebuild.');
+        initializeMethod = program.methods.initialize(
+          initAmount0BN, 
+          initAmount1BN, 
+          openTime
+        );
+      }
+      
+      try {
+        initializeInstruction = await initializeMethod
+          .accounts({
+            creator: walletPublicKey,
+            ammConfig: selectedAmmConfig,
+            authority,
+            poolState: poolState,
+            token0Mint: token0,
+            token1Mint: token1,
+            lpMint,
+            creatorToken0: userToken0Account,
+            creatorToken1: userToken1Account,
+            creatorLpToken: userLpAccount,
+            token0Vault,
+            token1Vault,
+            createPoolFee,
+            observationState,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            token0Program,
+            token1Program,
+            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+            rent: SYSVAR_RENT_PUBKEY,
+            // REQUIRED: Metadata accounts for automatic LP token metadata creation
+            // Note: IDL uses 'metadata_account' (snake_case), Anchor converts to 'metadataAccount' (camelCase)
+            metadataAccount: lpMetadataAccount,
+            tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID,
+          })
+          .instruction();
+        console.log('✅ Initialize instruction built successfully');
+        
+        // Check instruction size
+        const instructionSize = initializeInstruction.data.length;
+        console.log('📏 Instruction data size:', instructionSize, 'bytes');
+        if (instructionSize > 1232) {
+          console.warn('⚠️ WARNING: Instruction data is very large:', instructionSize, 'bytes');
+        }
+      } catch (instructionError: any) {
+        console.error('❌ Error building initialize instruction:', instructionError);
+        console.error('Error details:', {
+          message: instructionError?.message,
+          name: instructionError?.name,
+          stack: instructionError?.stack,
+        });
+        throw new Error(`Failed to build initialize instruction: ${instructionError?.message || 'Unknown error'}`);
+      }
+      
+      // DEBUG: Log the actual accounts being passed
+      console.log('🔍 DEBUG: Metadata accounts being passed:', {
+        lpMetadataAccount: lpMetadataAccount.toString(),
+        tokenMetadataProgram: TOKEN_METADATA_PROGRAM_ID.toString(),
+        lpMint: lpMint.toString(),
+      });
+      
+      // DEBUG: Inspect the instruction keys to verify accounts are included
+      console.log('🔍 DEBUG: Instruction account keys:', {
+        totalAccounts: initializeInstruction.keys.length,
+        accountKeys: initializeInstruction.keys.map((key, idx) => ({
+          index: idx,
+          pubkey: key.pubkey.toString(),
+          isWritable: key.isWritable,
+          isSigner: key.isSigner,
+        })),
+      });
+      
+      // Check if metadata accounts are in the instruction
+      const hasMetadataAccount = initializeInstruction.keys.some(
+        key => key.pubkey.equals(lpMetadataAccount)
+      );
+      const hasTokenMetadataProgram = initializeInstruction.keys.some(
+        key => key.pubkey.equals(TOKEN_METADATA_PROGRAM_ID)
+      );
+      
+      console.log('🔍 DEBUG: Metadata accounts verification:', {
+        hasMetadataAccount,
+        hasTokenMetadataProgram,
+        metadataAccountIndex: initializeInstruction.keys.findIndex(
+          key => key.pubkey.equals(lpMetadataAccount)
+        ),
+        tokenMetadataProgramIndex: initializeInstruction.keys.findIndex(
+          key => key.pubkey.equals(TOKEN_METADATA_PROGRAM_ID)
+        ),
+      });
+      
+      if (!hasMetadataAccount || !hasTokenMetadataProgram) {
+        console.error('❌ CRITICAL: Metadata accounts are MISSING from instruction!');
+        console.error('This means Anchor is not recognizing the accounts in the IDL.');
+        throw new Error('Metadata accounts are missing from instruction - check IDL account names');
+      }
     } catch (instructionError: any) {
       console.error('❌ Error building initialize instruction:', instructionError);
       console.error('Error details:', {
@@ -3110,9 +3278,206 @@ export const createPool = async (
 
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
 
-    // Sign with user's wallet immediately
+    // Check transaction serialization before signing
+    console.log('🔍 Verifying transaction serialization...');
+    try {
+      const serialized = transaction.serialize({ 
+        requireAllSignatures: false, 
+        verifySignatures: false 
+      });
+      console.log('✅ Transaction serializes successfully, size:', serialized.length, 'bytes');
+      
+      // Try to deserialize and check structure
+      const deserialized = Transaction.from(serialized);
+      console.log('✅ Transaction deserializes successfully');
+      console.log('   Instructions:', deserialized.instructions.length);
+      console.log('   Fee payer:', deserialized.feePayer?.toString());
+    } catch (serializeError: any) {
+      console.error('❌ Transaction serialization failed:', serializeError);
+      throw new Error(`Transaction serialization failed: ${serializeError?.message || 'Unknown error'}`);
+    }
+
+    // Simulate transaction before signing to catch program errors early
+    console.log('🔍 Simulating transaction before signing...');
+    try {
+      // Create a copy for simulation
+      const simTx = Transaction.from(transaction.serialize({ 
+        requireAllSignatures: false, 
+        verifySignatures: false 
+      }));
+      simTx.recentBlockhash = blockhash;
+      simTx.feePayer = walletPublicKey;
+      
+      const simulation = await connection.simulateTransaction(simTx);
+      
+      if (simulation.value.err) {
+        console.error('❌ Simulation failed:', simulation.value.err);
+        console.error('📊 Simulation logs:', simulation.value.logs);
+        
+        // Try to decode custom error code
+        const error = simulation.value.err;
+        if (error && typeof error === 'object' && 'InstructionError' in error) {
+          const instructionError = (error as any).InstructionError;
+          if (Array.isArray(instructionError) && instructionError.length >= 2) {
+            const [instructionIndex, errorDetails] = instructionError;
+            if (errorDetails && typeof errorDetails === 'object' && 'Custom' in errorDetails) {
+              const customErrorCode = errorDetails.Custom;
+              console.error('🔍 Custom Error Code:', customErrorCode);
+              console.error('📋 Instruction Index:', instructionIndex);
+              
+              // Common error codes (you may need to check your program's error codes)
+              const errorCodeMap: { [key: number]: string } = {
+                0: 'InsufficientFunds',
+                1: 'InvalidAccount',
+                2: 'InvalidMint',
+                3: 'InvalidOwner',
+                4: 'InvalidAmount',
+                5: 'InvalidPool',
+                6: 'InvalidConfig',
+                7: 'InvalidAuthority',
+                8: 'InvalidTokenAccount',
+                9: 'InvalidVault',
+                10: 'InvalidLpMint',
+                11: 'InvalidObservation',
+                12: 'InvalidFeeReceiver',
+                13: 'InvalidTime',
+                14: 'InvalidAmounts',
+                15: 'InvalidSlippage',
+                16: 'PoolAlreadyExists',
+                17: 'PoolNotFound',
+                18: 'InsufficientLiquidity',
+                19: 'InvalidSwap',
+                20: 'InvalidRoute',
+                50: 'InvalidMetadataAccount',
+                51: 'InvalidMetadataProgram',
+                52: 'MetadataCreationFailed',
+                53: 'InvalidMetadataParams',
+                54: 'MetadataAccountAlreadyExists', // Likely this one
+                55: 'InvalidMetadataUpdateAuthority',
+              };
+              
+              const errorName = errorCodeMap[customErrorCode] || `UnknownError(${customErrorCode})`;
+              console.error('🔍 Decoded Error:', errorName);
+              
+              // If it's error 54 (likely metadata account already exists), provide helpful message
+              if (customErrorCode === 54) {
+                console.error('⚠️ Error 54: Metadata account may already exist for this LP mint.');
+                console.error('💡 This could mean:');
+                console.error('   1. The pool was partially created before');
+                console.error('   2. Metadata account already exists on-chain');
+                console.error('   3. Need to check if pool state already exists');
+              }
+            }
+          }
+        }
+        
+        throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
+      }
+      
+      console.log('✅ Simulation successful:', {
+        unitsConsumed: simulation.value.unitsConsumed,
+        logs: simulation.value.logs?.slice(0, 5),
+      });
+    } catch (simError: any) {
+      console.error('❌ Simulation error:', simError);
+      // Don't throw - continue to try signing anyway, but log the error
+      console.warn('⚠️ Continuing despite simulation error...');
+    }
+
+    // Sign with user's wallet
     console.log('✍️ Signing transaction...');
-    const signedTx = await wallet.signTransaction(transaction);
+    console.log('📊 Transaction details:', {
+      numInstructions: transaction.instructions.length,
+      feePayer: transaction.feePayer?.toString(),
+      recentBlockhash: transaction.recentBlockhash?.slice(0, 8) + '...',
+    });
+    
+    // Additional debugging: Check instruction data size
+    if (transaction.instructions.length > 0) {
+      const firstInstruction = transaction.instructions[0];
+      console.log('📏 First instruction details:', {
+        programId: firstInstruction.programId.toString(),
+        keys: firstInstruction.keys.length,
+        dataLength: firstInstruction.data.length,
+        dataSize: `${firstInstruction.data.length} bytes`,
+      });
+      
+      // Check if instruction data is too large (max is 1232 bytes for account data, but instruction data can be larger)
+      if (firstInstruction.data.length > 1000) {
+        console.warn('⚠️ WARNING: Instruction data is very large:', firstInstruction.data.length, 'bytes');
+      }
+    }
+    
+    // Try to serialize the transaction one more time before signing to ensure it's valid
+    try {
+      const preSignSerialized = transaction.serialize({
+        requireAllSignatures: false,
+        verifySignatures: false,
+      });
+      console.log('✅ Transaction serializes correctly before signing, size:', preSignSerialized.length, 'bytes');
+    } catch (preSignError: any) {
+      console.error('❌ Transaction serialization failed before signing:', preSignError);
+      throw new Error(`Transaction is invalid: ${preSignError?.message || 'Serialization failed'}`);
+    }
+    
+    let signedTx;
+    try {
+      // Some wallet adapters need the transaction to be a fresh copy
+      // Create a new transaction instance to avoid any potential issues
+      const transactionForSigning = Transaction.from(transaction.serialize({
+        requireAllSignatures: false,
+        verifySignatures: false,
+      }));
+      transactionForSigning.recentBlockhash = transaction.recentBlockhash!;
+      transactionForSigning.feePayer = transaction.feePayer!;
+      
+      console.log('🔐 Attempting to sign transaction with wallet...');
+      signedTx = await wallet.signTransaction(transactionForSigning);
+      console.log('✅ Transaction signed successfully');
+    } catch (signError: any) {
+      console.error('❌ Wallet signing error details:', {
+        error: signError,
+        message: signError?.message,
+        name: signError?.name,
+        stack: signError?.stack,
+        // Check if it's a specific wallet error
+        code: signError?.code,
+        cause: signError?.cause,
+        // Try to get inner error
+        innerError: (signError as any)?.error,
+        originalError: (signError as any)?.originalError,
+      });
+      
+      // Try to get more details from the error
+      if (signError?.message) {
+        const errorMsg = signError.message.toLowerCase();
+        if (errorMsg.includes('user rejected') || errorMsg.includes('user declined')) {
+          throw new Error('Transaction was rejected by user');
+        } else if (errorMsg.includes('insufficient')) {
+          throw new Error('Insufficient balance for transaction fees');
+        } else if (errorMsg.includes('unexpected error')) {
+          // Try to get more details from the wallet adapter
+          console.error('⚠️ Generic "Unexpected error" from wallet adapter');
+          console.error('💡 This might be due to:');
+          console.error('   1. Transaction size too large');
+          console.error('   2. Wallet adapter issue');
+          console.error('   3. Network connectivity issue');
+          console.error('   4. Wallet not properly connected');
+          
+          // Check wallet connection
+          if (wallet && typeof wallet.publicKey === 'function') {
+            try {
+              const pubkey = wallet.publicKey;
+              console.log('🔍 Wallet public key:', pubkey?.toString());
+            } catch (e) {
+              console.error('❌ Cannot get wallet public key:', e);
+            }
+          }
+        }
+      }
+      
+      throw signError;
+    }
 
     // Send transaction with proper error handling
     let signature: string;
@@ -3167,6 +3532,24 @@ export const createPool = async (
           unitsConsumed: simulation.value.unitsConsumed,
           logs: simulation.value.logs?.slice(0, 10), // First 10 logs
         });
+        
+        // Check if metadata creation log appears in simulation
+        const allLogs = simulation.value.logs || [];
+        const hasMetadataLog = allLogs.some((log: string) => 
+          typeof log === 'string' && (
+            log.includes('STARTING MANDATORY LP TOKEN METADATA') ||
+            log.includes('METADATA ACCOUNT CREATED') ||
+            log.includes('Creating metadata')
+          )
+        );
+        
+        if (hasMetadataLog) {
+          console.log('✅ Metadata creation log found in simulation!');
+        } else {
+          console.warn('⚠️ WARNING: Metadata creation log NOT found in simulation logs.');
+          console.warn('This suggests the program may not be processing metadata accounts.');
+          console.warn('Full simulation logs:', allLogs);
+        }
       } catch (simError: any) {
         console.error('❌ Simulation error:', simError);
         console.error('Error type:', simError.constructor?.name);
@@ -3259,6 +3642,49 @@ export const createPool = async (
       console.log('📍 Pool State PDA:', poolState.toString());
       const { getExplorerUrl } = await import('../config/addresses');
       console.log('🔗 View on Explorer:', getExplorerUrl(signature));
+
+      // Verify metadata was created
+      console.log('🔍 Verifying LP token metadata was created...');
+      await new Promise(resolve => setTimeout(resolve, 2000)); // Wait for transaction to settle
+      
+      try {
+        const metadataAccountInfo = await connection.getAccountInfo(lpMetadataAccount);
+        if (metadataAccountInfo && metadataAccountInfo.data.length > 0) {
+          console.log('✅ LP Token Metadata Account EXISTS!', {
+            address: lpMetadataAccount.toString(),
+            dataLength: metadataAccountInfo.data.length,
+            owner: metadataAccountInfo.owner.toString(),
+          });
+          
+          // Try to parse metadata
+          try {
+            const data = Buffer.from(metadataAccountInfo.data);
+            const key = data[0];
+            if (key === 4) { // MetadataV1 key
+              const nameStart = 1 + 32 + 32 + 4; // key + update_authority + mint + name_length
+              const nameLength = data.readUInt32LE(1 + 32 + 32);
+              const name = data.slice(nameStart, nameStart + nameLength).toString('utf-8').replace(/\0/g, '');
+              
+              const symbolStart = nameStart + nameLength + 4;
+              const symbolLength = data.readUInt32LE(nameStart + nameLength);
+              const symbol = data.slice(symbolStart, symbolStart + symbolLength).toString('utf-8').replace(/\0/g, '');
+              
+              console.log('✅ Metadata parsed successfully:', { name, symbol });
+            }
+          } catch (parseError) {
+            console.warn('⚠️ Could not parse metadata, but account exists:', parseError);
+          }
+        } else {
+          console.error('❌ LP Token Metadata Account DOES NOT EXIST!', {
+            address: lpMetadataAccount.toString(),
+            expectedAddress: lpMetadataAccount.toString(),
+            lpMint: lpMint.toString(),
+          });
+          console.error('This means the program did not create metadata during pool initialization.');
+        }
+      } catch (metadataError) {
+        console.error('❌ Error checking metadata account:', metadataError);
+      }
 
       return { tx: signature, poolState: poolState };
 
