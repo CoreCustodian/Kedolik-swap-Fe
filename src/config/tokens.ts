@@ -66,34 +66,34 @@ export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
     logoURI: getLocalTokenLogo(USDT_MINT),
   },
   // Test tokens for localhost/devnet testing
-  TEST1: {
-    mint: new PublicKey('DhdP3Fgjfa5MCkxzESPmChC4bt8r8PZQDvgdxBKBNfei'),
-    symbol: 'TEST1',
-    name: 'Test Token 1',
-    decimals: 9,
-    logoURI: getLocalTokenLogo(new PublicKey('DhdP3Fgjfa5MCkxzESPmChC4bt8r8PZQDvgdxBKBNfei')),
-  },
-  TEST2: {
-    mint: new PublicKey('7XLSRi41pqz6jUpXJPsXQaxtGtAznQdf9mSoy1K2df53'),
-    symbol: 'TEST2',
-    name: 'Test Token 2',
-    decimals: 9,
-    logoURI: getLocalTokenLogo(new PublicKey('7XLSRi41pqz6jUpXJPsXQaxtGtAznQdf9mSoy1K2df53')),
-  },
-  TEST3: {
-    mint: new PublicKey('GzaGvGkv1JzYBQnhigvaRo88WofYLaozjuuisPrwreKP'),
-    symbol: 'TEST3',
-    name: 'Test Token 3',
-    decimals: 9,
-    logoURI: getLocalTokenLogo(new PublicKey('GzaGvGkv1JzYBQnhigvaRo88WofYLaozjuuisPrwreKP')),
-  },
-  TEST4: {
-    mint: new PublicKey('3mLjunWAwdRsxS7SgKC77VMKj72LdqN95n599CQo2NYs'),
-    symbol: 'TEST4',
-    name: 'Test Token 4',
-    decimals: 9,
-    logoURI: getLocalTokenLogo(new PublicKey('3mLjunWAwdRsxS7SgKC77VMKj72LdqN95n599CQo2NYs')),
-  },
+  // TEST1: {
+  //   mint: new PublicKey('DhdP3Fgjfa5MCkxzESPmChC4bt8r8PZQDvgdxBKBNfei'),
+  //   symbol: 'TEST1',
+  //   name: 'Test Token 1',
+  //   decimals: 9,
+  //   logoURI: getLocalTokenLogo(new PublicKey('DhdP3Fgjfa5MCkxzESPmChC4bt8r8PZQDvgdxBKBNfei')),
+  // },
+  // TEST2: {
+  //   mint: new PublicKey('7XLSRi41pqz6jUpXJPsXQaxtGtAznQdf9mSoy1K2df53'),
+  //   symbol: 'TEST2',
+  //   name: 'Test Token 2',
+  //   decimals: 9,
+  //   logoURI: getLocalTokenLogo(new PublicKey('7XLSRi41pqz6jUpXJPsXQaxtGtAznQdf9mSoy1K2df53')),
+  // },
+  // TEST3: {
+  //   mint: new PublicKey('GzaGvGkv1JzYBQnhigvaRo88WofYLaozjuuisPrwreKP'),
+  //   symbol: 'TEST3',
+  //   name: 'Test Token 3',
+  //   decimals: 9,
+  //   logoURI: getLocalTokenLogo(new PublicKey('GzaGvGkv1JzYBQnhigvaRo88WofYLaozjuuisPrwreKP')),
+  // },
+  // TEST4: {
+  //   mint: new PublicKey('3mLjunWAwdRsxS7SgKC77VMKj72LdqN95n599CQo2NYs'),
+  //   symbol: 'TEST4',
+  //   name: 'Test Token 4',
+  //   decimals: 9,
+  //   logoURI: getLocalTokenLogo(new PublicKey('3mLjunWAwdRsxS7SgKC77VMKj72LdqN95n599CQo2NYs')),
+  // },
 };
 
 // Get token list as array

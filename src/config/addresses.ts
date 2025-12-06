@@ -19,7 +19,7 @@ import { PublicKey } from '@solana/web3.js';
  * DEVNET (current): B515QSTbQJ9zUVnFGKegZZCTwYgUnYJ8T9kUWrpXKLzC
  * MAINNET (commented for reference): 7y9dM6Pdm335oBn8nho7tMWeHdv1z6oy2iGkAUDbrW9s
  */
-export const PROGRAM_ID = new PublicKey('2CskEEg1Kc4tR7iEznMS3Jk5F41PgkphDouacn75enbX');
+export const PROGRAM_ID = new PublicKey('Hr4iqmE5wiStSiHGgzgUSryNG4hyqkSHUT7PDyAsE6Li');
 // export const PROGRAM_ID_MAINNET = new PublicKey('7y9dM6Pdm335oBn8nho7tMWeHdv1z6oy2iGkAUDbrW9s');
 
 /**
@@ -88,21 +88,21 @@ export const USDT_MINT = new PublicKey('Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8Ben
 
 // KEDOLOG/USDC Pool (Mainnet)
 // Pool Address: 8KYfYHmPyzpzqYQzVzHR3uv94E1UX8TsaEFLqBWzenRJ
-export const KEDOLOG_USDC_POOL = new PublicKey('571SxkfmnfvcgcrM8zXw7TzZFpn5aATEo6TgPYjCALWq');
+export const KEDOLOG_USDC_POOL = new PublicKey('11111111111111111111111111111111');
 // Vault addresses are fetched dynamically from pool data
 export const KEDOLOG_VAULT = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 export const USDC_VAULT_IN_KEDOLOG_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // SOL/USDC Pool (Mainnet)
 // Pool Address: 3ZXK4N8Hf1uZjYqndX3bRPXf71wS6gj3DSiSjPTveE1L
-export const SOL_USDC_POOL = new PublicKey('CSHWU8yZTa35EnDea31CvaFXuNNPsxRC5F4QqE1VPg7Q');
+export const SOL_USDC_POOL = new PublicKey('11111111111111111111111111111111');
 // Vault addresses are fetched dynamically from pool data
 export const SOL_VAULT = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 export const USDC_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 
 // KEDOLOG/SOL Pool (Mainnet)
 // Pool Address: 9zbYdushUHfJ67SJCDAYCMtaHdg5UMnJwmGWWGuXgh3
-export const KEDOLOG_SOL_POOL = new PublicKey('5Gcyz3QqKjjFcucJMxN7rXfZCQpBaCjgHp617H5efNAz');
+export const KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111');
 // Vault addresses are fetched dynamically from pool data
 export const KEDOLOG_VAULT_IN_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
 export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111111111111111'); // Fetched dynamically
@@ -125,7 +125,7 @@ export const SOL_VAULT_IN_KEDOLOG_SOL_POOL = new PublicKey('11111111111111111111
  * DEVNET (current): FtDVZjwrYLN5yuXGGDrAKVDAYkkeDGdb1xvNnwHf5eyf
  * MAINNET (commented for reference): DoG8fzHt5UrPfZFRsQ7FRC2X6H5NAFVD6TTP3DVYyera
  */
-export const DEFAULT_AMM_CONFIG = new PublicKey('BY5RrGvCuSUtuJwPjrkCTjNWTfUqfkbNYNPB6uv6vUpd');
+export const DEFAULT_AMM_CONFIG = new PublicKey('8G6uY2b6wMLiuu5rpCAfYoNHbbfhXuqcdMdUGDU5u82E');
 // export const DEFAULT_AMM_CONFIG_MAINNET = new PublicKey('DoG8fzHt5UrPfZFRsQ7FRC2X6H5NAFVD6TTP3DVYyera');
 
 /**
@@ -135,7 +135,7 @@ export const DEFAULT_AMM_CONFIG = new PublicKey('BY5RrGvCuSUtuJwPjrkCTjNWTfUqfkb
  * DEVNET (current): 5VGKz2m1PghuJGGfFmdenVz5UxwP2VxhYvEVaJRDefbw
  * MAINNET (commented for reference): DmWrnD75wW6r1Tpy93bcs3tbNkHQoFMqeqtRAw53bKFh
  */
-export const PROTOCOL_TOKEN_CONFIG = new PublicKey('9qTqDHQTnp91Mkp1thoxL9b818JFRRJy1LYLunBvZA6d');
+export const PROTOCOL_TOKEN_CONFIG = new PublicKey('8cdqhJuzKiRvwkh5vv9zYSEfRh4ddbhYySz1EFQvY5mn');
 // export const PROTOCOL_TOKEN_CONFIG_MAINNET = new PublicKey('DmWrnD75wW6r1Tpy93bcs3tbNkHQoFMqeqtRAw53bKFh');
 
 // ============================================================================
