@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
-import { DEVNET_TOKENS, TokenInfo, getTokenList } from '../config/tokens';
+import { DEVNET_TOKENS, TokenInfo, getTokenList, getTokenByMint } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
@@ -32,6 +33,8 @@ const Swap = () => {
   const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   
   const [slippage, setSlippage] = useState('0.5');
   const [showSettings, setShowSettings] = useState(false);
@@ -43,6 +46,71 @@ const Swap = () => {
   const [toToken, setToToken] = useState<TokenInfo>(DEVNET_TOKENS.KEDOLOG);
   const [showFromTokenModal, setShowFromTokenModal] = useState(false);
   const [showToTokenModal, setShowToTokenModal] = useState(false);
+  
+  // Track if we've initialized from URL to prevent update loop
+  const isInitializedRef = useRef(false);
+  
+  // Initialize tokens from URL parameters on mount
+  useEffect(() => {
+    if (isInitializedRef.current) return;
+    
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
+    
+    let newFromToken = DEVNET_TOKENS.SOL;
+    let newToToken = DEVNET_TOKENS.KEDOLOG;
+    
+    if (fromParam) {
+      try {
+        const fromMint = new PublicKey(fromParam);
+        const token = getTokenByMint(fromMint);
+        if (token) {
+          newFromToken = token;
+        }
+      } catch (error) {
+        console.warn('Invalid from token address in URL:', fromParam);
+      }
+    }
+    
+    if (toParam) {
+      try {
+        const toMint = new PublicKey(toParam);
+        const token = getTokenByMint(toMint);
+        if (token) {
+          newToToken = token;
+        }
+      } catch (error) {
+        console.warn('Invalid to token address in URL:', toParam);
+      }
+    }
+    
+    // Only update if tokens are different to avoid unnecessary re-renders
+    if (!fromToken.mint.equals(newFromToken.mint) || !toToken.mint.equals(newToToken.mint)) {
+      setFromToken(newFromToken);
+      setToToken(newToToken);
+    }
+    
+    isInitializedRef.current = true;
+  }, []); // Only run on mount
+  
+  // Update URL when tokens change (but not during initialization)
+  useEffect(() => {
+    if (!isInitializedRef.current) return;
+    
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
+    
+    const currentFrom = fromToken.mint.toString();
+    const currentTo = toToken.mint.toString();
+    
+    // Only update URL if tokens have actually changed
+    if (fromParam !== currentFrom || toParam !== currentTo) {
+      const newParams = new URLSearchParams();
+      newParams.set('from', currentFrom);
+      newParams.set('to', currentTo);
+      navigate(`/swap?${newParams.toString()}`, { replace: true });
+    }
+  }, [fromToken.mint, toToken.mint, navigate]);
   
   // Balances
   const [fromBalance, setFromBalance] = useState<number>(0);

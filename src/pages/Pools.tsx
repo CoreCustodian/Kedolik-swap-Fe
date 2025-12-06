@@ -713,8 +713,8 @@ const CreatePoolModal = ({
   };
   
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="card max-w-md w-full max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4 pt-24">
+      <div className="card max-w-md w-full max-h-[calc(100vh-8rem)] flex flex-col">
         {/* Fixed Header */}
         <div className="flex justify-between items-center p-4 sm:p-6 pb-4 border-b border-white/10">
           <h2 className="text-xl sm:text-2xl font-bold gradient-text">Create Pool</h2>
@@ -1088,8 +1088,8 @@ const AddLiquidityModal = ({
   };
   
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="card max-w-md w-full max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4 pt-24">
+      <div className="card max-w-md w-full max-h-[calc(100vh-8rem)] flex flex-col">
         {/* Fixed Header */}
         <div className="flex justify-between items-center p-4 sm:p-6 pb-4 border-b border-white/10">
           <h2 className="text-xl sm:text-2xl font-bold gradient-text">Add Liquidity</h2>
@@ -1327,8 +1327,8 @@ const RemoveLiquidityModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="bg-dark-800 rounded-2xl border border-white/20 max-w-md w-full max-h-[90vh] flex flex-col shadow-2xl animate-scale-in">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 pt-24 bg-black/70 backdrop-blur-sm animate-fade-in">
+      <div className="bg-dark-800 rounded-2xl border border-white/20 max-w-md w-full max-h-[calc(100vh-8rem)] flex flex-col shadow-2xl animate-scale-in">
         {/* Fixed Header */}
         <div className="flex items-center justify-between p-6 pb-4 border-b border-white/10">
           <h3 className="text-2xl font-bold gradient-text">Remove Liquidity</h3>
