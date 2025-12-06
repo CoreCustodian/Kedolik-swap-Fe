@@ -168,7 +168,7 @@ export const CREATE_POOL_FEE_RECEIVER = new PublicKey('JAaHqf4p14eNij84tygdF1nQk
  * Current network environment
  * Set to 'devnet' for testing, 'mainnet-beta' for production
  */
-export const NETWORK = 'devnet' as const;
+export const NETWORK = 'mainnet-beta' as const;
 
 /**
  * Get Solscan explorer URL for a transaction signature
