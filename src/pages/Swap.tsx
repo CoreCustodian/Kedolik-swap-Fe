@@ -33,7 +33,7 @@ const Swap = () => {
   const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
   const [slippage, setSlippage] = useState('0.5');
