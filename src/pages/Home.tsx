@@ -300,7 +300,7 @@ const Home = () => {
               Ready to Join the DeFi Revolution?
             </h2>
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-              <Link to="/swap" className="btn-primary bg-white text-brand-pink hover:bg-gray-100">
+              <Link to="/swap" className="btn-primary bg-white text-gray-900 hover:bg-gray-100">
                 Buy $KEDOL
               </Link>
               <a href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/" target="_blank" rel="noopener noreferrer" className="btn-secondary">
