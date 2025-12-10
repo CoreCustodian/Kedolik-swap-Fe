@@ -1,6 +1,6 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
-import { getTokenList } from '../config/tokens';
+import { TokenInfo } from '../config/tokens';
 
 export interface TokenBalance {
   mint: string;
@@ -12,13 +12,16 @@ export interface TokenBalance {
 
 /**
  * Fetch all token balances for a wallet including native SOL
+ * @param connection - Solana connection
+ * @param walletAddress - Wallet public key
+ * @param tokenList - List of tokens to fetch balances for (from remote config)
  */
 export const fetchAllBalances = async (
   connection: Connection,
-  walletAddress: PublicKey
+  walletAddress: PublicKey,
+  tokenList: TokenInfo[] = []
 ): Promise<TokenBalance[]> => {
   const balances: TokenBalance[] = [];
-  const tokenList = getTokenList();
   
   try {
     // Fetch native SOL balance

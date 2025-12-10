@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
-import { DEVNET_TOKENS, TokenInfo, getTokenList, getTokenByMint } from '../config/tokens';
+import { TokenInfo } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
@@ -28,6 +28,8 @@ import {
   calculateRouteOutput 
 } from '../utils/routing';
 import { isKedologDiscountAvailable, KedologAvailability } from '../utils/swapRestrictions';
+import { useRemoteTokens } from '../hooks/useRemoteTokens';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 const Swap = () => {
   const { connected, publicKey } = useWallet();
@@ -36,29 +38,46 @@ const Swap = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
+  // Remote config hooks
+  const { tokens, isLoading: isLoadingTokens, getTokenByMint } = useRemoteTokens();
+  const { swapEnabled, maintenanceMode } = useFeatureFlags();
+  
+  // Create placeholder token for initial state
+  const placeholderToken: TokenInfo = {
+    mint: new PublicKey('So11111111111111111111111111111111111111112'),
+    symbol: 'SOL',
+    name: 'Solana',
+    decimals: 9,
+  };
+  
   const [slippage, setSlippage] = useState('0.5');
   const [showSettings, setShowSettings] = useState(false);
   const [fromAmount, setFromAmount] = useState('');
   const [toAmount, setToAmount] = useState('');
   
   // Token selection
-  const [fromToken, setFromToken] = useState<TokenInfo>(DEVNET_TOKENS.SOL);
-  const [toToken, setToToken] = useState<TokenInfo>(DEVNET_TOKENS.KEDOLOG);
+  const [fromToken, setFromToken] = useState<TokenInfo>(placeholderToken);
+  const [toToken, setToToken] = useState<TokenInfo>(placeholderToken);
+  const [tokensInitialized, setTokensInitialized] = useState(false);
   const [showFromTokenModal, setShowFromTokenModal] = useState(false);
   const [showToTokenModal, setShowToTokenModal] = useState(false);
   
   // Track if we've initialized from URL to prevent update loop
   const isInitializedRef = useRef(false);
   
-  // Initialize tokens from URL parameters on mount
+  // Initialize tokens from URL parameters or defaults when tokens are loaded
   useEffect(() => {
-    if (isInitializedRef.current) return;
+    if (isInitializedRef.current || tokens.length === 0) return;
     
     const fromParam = searchParams.get('from');
     const toParam = searchParams.get('to');
     
-    let newFromToken = DEVNET_TOKENS.SOL;
-    let newToToken = DEVNET_TOKENS.KEDOLOG;
+    // Get default tokens (SOL and KEDOL)
+    const defaultFromToken = tokens.find(t => t.symbol === 'SOL') || tokens[0];
+    const defaultToToken = tokens.find(t => t.symbol === 'KEDOL') || tokens[1] || tokens[0];
+    
+    let newFromToken = defaultFromToken;
+    let newToToken = defaultToToken;
     
     if (fromParam) {
       try {
@@ -84,14 +103,12 @@ const Swap = () => {
       }
     }
     
-    // Only update if tokens are different to avoid unnecessary re-renders
-    if (!fromToken.mint.equals(newFromToken.mint) || !toToken.mint.equals(newToToken.mint)) {
-      setFromToken(newFromToken);
-      setToToken(newToToken);
-    }
+    setFromToken(newFromToken);
+    setToToken(newToToken);
+    setTokensInitialized(true);
     
     isInitializedRef.current = true;
-  }, []); // Only run on mount
+  }, [tokens, searchParams, getTokenByMint]); // Re-run when tokens load
   
   // Update URL when tokens change (but not during initialization)
   useEffect(() => {
@@ -1092,6 +1109,21 @@ const Swap = () => {
   // Percentage quick-fill handled inline with buttons
   
 
+  // Show loading state while tokens are loading
+  if (isLoadingTokens || !tokensInitialized) {
+    return (
+      <div className="relative min-h-screen overflow-hidden">
+        <div className="fixed inset-0 bg-gradient-mesh opacity-50"></div>
+        <div className="relative max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-20">
+          <div className="card p-8 text-center">
+            <div className="animate-spin w-12 h-12 border-4 border-brand-cyan border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-gray-400">Loading tokens...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="relative min-h-screen overflow-hidden">
@@ -1593,7 +1625,7 @@ const Swap = () => {
                       <div className="flex flex-col items-end gap-1">
                         <span className="font-semibold text-brand-cyan text-xs">
                           {swapRoute.path.map((mint) => {
-                            const token = getTokenList().find(t => t.mint.equals(mint));
+                            const token = tokens.find(t => t.mint.equals(mint));
                             return token?.symbol || '?';
                           }).join(' → ')}
                         </span>
@@ -1628,6 +1660,8 @@ const Swap = () => {
             <button 
               onClick={handleSwap}
               disabled={
+                !swapEnabled ||
+                maintenanceMode ||
                 !connected || 
                 (!poolReserves && !swapRoute) || 
                 !fromAmount || 
@@ -1640,7 +1674,17 @@ const Swap = () => {
               }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
-              {!connected ? (
+              {maintenanceMode ? (
+                <>
+                  <span>🔧</span>
+                  Maintenance Mode
+                </>
+              ) : !swapEnabled ? (
+                <>
+                  <span>⚠️</span>
+                  Swap Disabled
+                </>
+              ) : !connected ? (
                 <>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
@@ -1710,6 +1754,7 @@ const Swap = () => {
         }}
         excludeToken={toToken}
         connection={connection}
+        tokens={tokens}
       />
       
       <TokenSelectModal
@@ -1721,6 +1766,7 @@ const Swap = () => {
         }}
         excludeToken={fromToken}
         connection={connection}
+        tokens={tokens}
       />
     </>
   );

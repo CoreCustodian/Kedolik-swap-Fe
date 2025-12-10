@@ -6,6 +6,16 @@ import {
   USDT_MINT
 } from './addresses';
 
+// Re-export remote config utilities
+export { 
+  fetchRemoteTokenList, 
+  fetchFeatureFlags,
+  clearRemoteConfigCache,
+  REMOTE_URLS,
+  DEFAULT_FEATURE_FLAGS
+} from './remoteConfig';
+export type { RemoteTokenInfo, TokenListResponse, FeatureFlags } from './remoteConfig';
+
 export interface TokenInfo {
   mint: PublicKey;
   symbol: string;
@@ -24,14 +34,19 @@ export const getLocalTokenLogo = (mint: PublicKey): string => {
 };
 
 /**
- * Mainnet Token List
+ * Local Token List (Fallback)
  * 
- * Core tokens supported by Kedolik DEX:
- * - SOL (Native Solana)
- * - KEDOL (Protocol Token)
- * - USDC (Stablecoin)
+ * This is the fallback token list used when the remote GitHub config is unavailable.
  * 
- * Users can import additional tokens using the custom token import feature.
+ * IMPORTANT: The primary token list is now fetched from GitHub!
+ * Update the remote token list at:
+ * https://github.com/KedolikSwap/config/blob/main/tokens.json
+ * 
+ * To use the remote token list in components, use the useRemoteTokens hook:
+ * ```tsx
+ * import { useRemoteTokens } from '../hooks/useRemoteTokens';
+ * const { tokens, isLoading, getTokenByMint } = useRemoteTokens();
+ * ```
  */
 export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
   SOL: {

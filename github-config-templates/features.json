@@ -1,0 +1,13 @@
+{
+  "swapEnabled": true,
+  "poolsEnabled": true,
+  "liquidityEnabled": true,
+  "maintenanceMode": false,
+  "maintenanceMessage": "Kedolik Swap is currently undergoing maintenance. Please check back shortly.",
+  "announcementBanner": {
+    "enabled": false,
+    "message": "🎉 Welcome to Kedolik Swap! Trade with reduced fees using $KEDOL tokens.",
+    "type": "info"
+  }
+}
+

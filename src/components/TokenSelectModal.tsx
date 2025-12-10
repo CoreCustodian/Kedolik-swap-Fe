@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PublicKey } from '@solana/web3.js';
-import { TokenInfo, getTokenList } from '../config/tokens';
+import { TokenInfo } from '../config/tokens';
 import { TokenImportModal } from './TokenImportModal';
 
 interface TokenSelectModalProps {
@@ -9,6 +9,7 @@ interface TokenSelectModalProps {
   onSelect: (token: TokenInfo) => void;
   excludeToken?: TokenInfo;
   connection: any;
+  tokens: TokenInfo[]; // Remote tokens passed as prop
 }
 
 export const TokenSelectModal = ({
@@ -17,6 +18,7 @@ export const TokenSelectModal = ({
   onSelect,
   excludeToken,
   connection,
+  tokens, // Use tokens from props (remote config)
 }: TokenSelectModalProps) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showImportModal, setShowImportModal] = useState(false);
@@ -71,9 +73,9 @@ export const TokenSelectModal = ({
     onClose();
   };
 
-  // Get all available tokens (default + custom)
+  // Get all available tokens (remote + custom)
   const getAllTokens = (): TokenInfo[] => {
-    return [...getTokenList(), ...customTokens];
+    return [...tokens, ...customTokens];
   };
 
   // Filter tokens based on search

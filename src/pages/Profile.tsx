@@ -3,16 +3,18 @@ import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useState, useEffect, useRef } from 'react';
 import { fetchAllBalances, TokenBalance } from '../utils/balances';
 import { fetchPools, getLpMint } from '../utils/amm';
-import { getTokenList, getTokenByMint, getLocalTokenLogo } from '../config/tokens';
+import { getLocalTokenLogo } from '../config/tokens';
 import { getExplorerUrl, getExplorerAccountUrl } from '../config/addresses';
 import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
 import { PublicKey } from '@solana/web3.js';
+import { useRemoteTokens } from '../hooks/useRemoteTokens';
 
 const Profile = () => {
   const { connected, publicKey, disconnect } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
+  const { tokens, getTokenByMint } = useRemoteTokens();
   
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [solBalance, setSolBalance] = useState(0);
@@ -51,7 +53,7 @@ const Profile = () => {
       
       try {
         console.log('💰 Profile: Fetching all token balances...');
-        const allBalances = await fetchAllBalances(connection, publicKey);
+        const allBalances = await fetchAllBalances(connection, publicKey, tokens);
         const solBal = allBalances.find(b => b.symbol === 'SOL' && b.mint === 'native');
         
         if (solBal) {
@@ -116,7 +118,6 @@ const Profile = () => {
         const pools = await fetchPools(connection, wallet);
         console.log(`📦 Profile: Found ${pools.length} pools, checking LP balances...`);
         
-        const tokenList = getTokenList();
         const lpBalances: Array<{
           poolAddress: string;
           lpMint: string;
@@ -136,8 +137,8 @@ const Profile = () => {
             const lpBalance = await getCachedBalance(connection, lpMint, publicKey);
             
             if (lpBalance > 0) {
-              const token0 = tokenList.find(t => t.mint.equals(pool.token0Mint));
-              const token1 = tokenList.find(t => t.mint.equals(pool.token1Mint));
+              const token0 = tokens.find(t => t.mint.equals(pool.token0Mint));
+              const token1 = tokens.find(t => t.mint.equals(pool.token1Mint));
               
               const token0Info = getTokenByMint(pool.token0Mint);
               const token1Info = getTokenByMint(pool.token1Mint);

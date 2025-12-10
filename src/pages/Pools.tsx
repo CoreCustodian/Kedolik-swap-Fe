@@ -2,15 +2,21 @@ import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getPoolCreationFee } from '../utils/amm';
 import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
-import { DEVNET_TOKENS, TokenInfo, getTokenByMint } from '../config/tokens';
+import { TokenInfo } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
+import { useRemoteTokens } from '../hooks/useRemoteTokens';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 const Pools = () => {
   const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
+  
+  // Remote config hooks
+  const { tokens, isLoading: isLoadingTokens, getTokenByMint } = useRemoteTokens();
+  const { poolsEnabled, maintenanceMode } = useFeatureFlags();
   
   const [activeTab, setActiveTab] = useState<'all' | 'my'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -134,6 +140,23 @@ const Pools = () => {
     return matchesSearch && matchesTab;
   });
 
+  // Show loading state while tokens are loading
+  if (isLoadingTokens) {
+    return (
+      <div className="min-h-screen pt-20 px-4 sm:px-6 lg:px-8 pb-20">
+        <div className="max-w-2xl mx-auto">
+          <div className="card p-8 text-center">
+            <div className="animate-spin w-12 h-12 border-4 border-brand-cyan border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-gray-400">Loading...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  // Feature flags control button states, not full-page blocking
+  const isPoolsDisabled = !poolsEnabled || maintenanceMode;
+
   return (
     <>
       <div className="min-h-screen pt-20 px-4 sm:px-6 lg:px-8 pb-20">
@@ -204,10 +227,16 @@ const Pools = () => {
               </button>
               {connected && (
                 <button
-                  onClick={() => setShowCreatePool(true)}
-                  className="px-4 sm:px-6 py-3 bg-gradient-brand rounded-xl font-semibold hover:brightness-110 transition-all text-sm sm:text-base whitespace-nowrap"
+                  onClick={() => !isPoolsDisabled && setShowCreatePool(true)}
+                  disabled={isPoolsDisabled}
+                  className={`px-4 sm:px-6 py-3 rounded-xl font-semibold transition-all text-sm sm:text-base whitespace-nowrap ${
+                    isPoolsDisabled 
+                      ? 'bg-gray-700 cursor-not-allowed opacity-50' 
+                      : 'bg-gradient-brand hover:brightness-110'
+                  }`}
+                  title={maintenanceMode ? 'Maintenance Mode' : !poolsEnabled ? 'Pools Disabled' : 'Create a new pool'}
                 >
-                  + Create Pool
+                  {maintenanceMode ? '🔧 Maintenance' : !poolsEnabled ? '⚠️ Disabled' : '+ Create Pool'}
                 </button>
               )}
             </div>
@@ -232,10 +261,12 @@ const Pools = () => {
                 <PoolCard
                   key={index}
                   pool={pool}
-                  onAddLiquidity={() => setShowAddLiquidity(pool)}
-                  onRemoveLiquidity={() => setShowRemoveLiquidity(pool)}
+                  onAddLiquidity={() => !isPoolsDisabled && setShowAddLiquidity(pool)}
+                  onRemoveLiquidity={() => !isPoolsDisabled && setShowRemoveLiquidity(pool)}
                   connected={connected}
                   userLpBalance={userLpBalances.get(pool.address.toString()) || 0}
+                  getTokenByMint={getTokenByMint}
+                  isDisabled={isPoolsDisabled}
                 />
               ))}
             </div>
@@ -264,6 +295,7 @@ const Pools = () => {
           showToast={showToast}
           setTxModal={setTxModal}
           existingPools={pools}
+          tokens={tokens}
         />
       )}
       
@@ -304,6 +336,7 @@ const Pools = () => {
           }}
           showToast={showToast}
           setTxModal={setTxModal}
+          getTokenByMint={getTokenByMint}
         />
       )}
       
@@ -333,13 +366,17 @@ const PoolCard = ({
   onAddLiquidity,
   onRemoveLiquidity,
   connected,
-  userLpBalance
+  userLpBalance,
+  getTokenByMint,
+  isDisabled = false
 }: {
   pool: PoolInfo;
   onAddLiquidity: () => void;
   onRemoveLiquidity: () => void;
   connected: boolean;
   userLpBalance: number;
+  getTokenByMint: (mint: import('@solana/web3.js').PublicKey) => TokenInfo | undefined;
+  isDisabled?: boolean;
 }) => {
   // Detect dust pool
   const isDustPool = (pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || 
@@ -481,25 +518,25 @@ const PoolCard = ({
       <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-auto">
         <button
           onClick={onAddLiquidity}
-          disabled={!connected}
+          disabled={!connected || isDisabled}
           className={`py-2 sm:py-3 rounded-xl font-semibold transition-all text-xs sm:text-sm ${
-            connected
-              ? 'bg-gradient-brand hover:brightness-110'
-              : 'bg-gray-700 cursor-not-allowed'
+            !connected || isDisabled
+              ? 'bg-gray-700 cursor-not-allowed opacity-50'
+              : 'bg-gradient-brand hover:brightness-110'
           }`}
         >
-          {connected ? '+ Add' : 'Connect'}
+          {isDisabled ? 'Disabled' : connected ? '+ Add' : 'Connect'}
         </button>
         <button
           onClick={onRemoveLiquidity}
-          disabled={!connected}
+          disabled={!connected || isDisabled}
           className={`py-2 sm:py-3 rounded-xl font-semibold transition-all text-xs sm:text-sm ${
-            connected
-              ? 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
-              : 'bg-gray-700 cursor-not-allowed'
+            !connected || isDisabled
+              ? 'bg-gray-700 cursor-not-allowed opacity-50'
+              : 'bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500/30'
           }`}
         >
-          {connected ? '- Remove' : 'Connect'}
+          {isDisabled ? 'Disabled' : connected ? '- Remove' : 'Connect'}
               </button>
             </div>
     </div>
@@ -512,7 +549,8 @@ const CreatePoolModal = ({
   onSuccess,
   showToast,
   setTxModal,
-  existingPools
+  existingPools,
+  tokens
 }: {
   onClose: () => void;
   onSuccess: () => void;
@@ -524,13 +562,18 @@ const CreatePoolModal = ({
     txSignature?: string;
   }>>;
   existingPools: PoolInfo[];
+  tokens: TokenInfo[];
 }) => {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
   const wallet = useAnchorWallet();
   
-  const [token0, setToken0] = useState<TokenInfo>(DEVNET_TOKENS.SOL);
-  const [token1, setToken1] = useState<TokenInfo>(DEVNET_TOKENS.USDC);
+  // Get default tokens from remote config
+  const defaultToken0 = tokens.find(t => t.symbol === 'SOL') || tokens[0];
+  const defaultToken1 = tokens.find(t => t.symbol === 'USDC') || tokens[1] || tokens[0];
+  
+  const [token0, setToken0] = useState<TokenInfo>(defaultToken0);
+  const [token1, setToken1] = useState<TokenInfo>(defaultToken1);
   const [amount0, setAmount0] = useState('');
   const [amount1, setAmount1] = useState('');
   const [token0Balance, setToken0Balance] = useState<number>(0);
@@ -919,6 +962,7 @@ const CreatePoolModal = ({
         }}
         excludeToken={token1}
         connection={connection}
+        tokens={tokens}
       />
       
       <TokenSelectModal
@@ -930,6 +974,7 @@ const CreatePoolModal = ({
         }}
         excludeToken={token0}
         connection={connection}
+        tokens={tokens}
       />
     </div>
   );
@@ -1206,13 +1251,15 @@ const RemoveLiquidityModal = ({
   onClose,
   onSuccess,
   showToast,
-  setTxModal
+  setTxModal,
+  getTokenByMint
 }: {
   pool: PoolInfo;
   onClose: () => void;
   onSuccess: () => void;
   showToast: (message: string, type: 'success' | 'error' | 'info' | 'warning', txSignature?: string) => void;
   setTxModal: (modal: { isOpen: boolean; status: 'pending' | 'success' | 'error'; message: string; txSignature?: string }) => void;
+  getTokenByMint: (mint: import('@solana/web3.js').PublicKey) => TokenInfo | undefined;
 }) => {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
