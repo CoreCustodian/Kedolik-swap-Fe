@@ -125,7 +125,7 @@ const Pools = () => {
   
   // Calculate stats
   const totalTVL = pools.reduce((sum, pool) => sum + (pool.token0Reserve + pool.token1Reserve), 0);
-  const totalVolume = totalTVL * 0.5; // Simplified
+  // const totalVolume = totalTVL * 0.5; // Simplified
   
   // Filter pools
   const filteredPools = pools.filter(pool => {
@@ -182,7 +182,7 @@ const Pools = () => {
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">24h Volume</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-cyan">
-                ${(totalVolume / 1e6).toFixed(2)}M
+                ${0}M
               </p>
           </div>
             <div className="card p-4 sm:p-6">
