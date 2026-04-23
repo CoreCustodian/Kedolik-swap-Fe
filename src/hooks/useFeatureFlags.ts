@@ -66,6 +66,7 @@ export function useFeatureFlags() {
     poolsEnabled: flags.poolsEnabled,
     liquidityEnabled: flags.liquidityEnabled,
     maintenanceMode: flags.maintenanceMode,
+    kedolikDevnetEnabled: flags.kedolikDevnetEnabled ?? DEFAULT_FEATURE_FLAGS.kedolikDevnetEnabled,
     maintenanceMessage: flags.maintenanceMessage,
     announcementBanner: flags.announcementBanner,
   };

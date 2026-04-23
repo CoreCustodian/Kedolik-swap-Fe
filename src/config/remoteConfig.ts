@@ -52,6 +52,7 @@ export interface FeatureFlags {
   poolsEnabled: boolean;
   liquidityEnabled: boolean;
   maintenanceMode: boolean;
+  kedolikDevnetEnabled?: boolean;
   maintenanceMessage?: string;
   announcementBanner?: {
     enabled: boolean;
@@ -91,6 +92,7 @@ export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {
   poolsEnabled: true,
   liquidityEnabled: true,
   maintenanceMode: false,
+  kedolikDevnetEnabled: true,
 };
 
 // ============================================================================
@@ -158,7 +160,10 @@ export async function fetchFeatureFlags(): Promise<FeatureFlags> {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const data: FeatureFlags = await response.json();
+    const data: FeatureFlags = {
+      ...DEFAULT_FEATURE_FLAGS,
+      ...(await response.json()),
+    };
 
     // Cache the result
     cache.features = {

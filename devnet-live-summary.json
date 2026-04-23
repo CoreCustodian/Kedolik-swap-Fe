@@ -1,0 +1,17 @@
+{
+  "status": "live",
+  "network": "devnet",
+  "programs_live": true,
+  "deployer_wallet": "68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot",
+  "fee_receiver_wallet": "68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot",
+  "programs": {
+    "locker": "9mtTTmx6ncn7FKfE9oyeiURctm2fZUN6kPLAbPLoXuvU",
+    "quarry_mine": "3dAuLSedbDtzha2uV7K8Mf63ottPCYyMJwRuvouiZ85J",
+    "quarry_mint_wrapper": "EzMFbFNvJMFmts6LchtweBq1VKTsfpDpJknGu4kLiH85"
+  },
+  "notes": [
+    "Kedolik Staking is live on devnet.",
+    "Kedolik Locker is live on devnet.",
+    "Devnet test pool and sample vesting escrow are available."
+  ]
+}

@@ -1,22 +1,62 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useConfig } from '../contexts/ConfigContext';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
   const location = useLocation();
   const { publicKey, connected } = useWallet();
   const { connection } = useConnection();
   const wallet = useWallet();
   const { adminAddress } = useConfig();
+  const { kedolikDevnetEnabled } = useFeatureFlags();
   const [feeReceiverAddress, setFeeReceiverAddress] = useState<string | null>(null);
 
   const isActive = (path: string) => location.pathname === path;
   const isAdmin = publicKey && adminAddress ? publicKey.toString() === adminAddress : false;
   const isFeeReceiver = publicKey && feeReceiverAddress ? publicKey.toString() === feeReceiverAddress : false;
   const canAccessAdmin = isAdmin || isFeeReceiver;
+  const isMoreActive = [
+    '/kedolik-locker',
+    '/kedolik-staking',
+    '/kedolikfun',
+    '/kedolikpad',
+  ].includes(location.pathname);
+
+  useEffect(() => {
+    setIsMoreOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!isMoreOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setIsMoreOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMoreOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isMoreOpen]);
 
   // Fetch fee receiver address when wallet connects
   useEffect(() => {
@@ -121,36 +161,81 @@ const Navbar = () => {
               </Link>
             )}
 
-            
+            <div className="relative" ref={moreMenuRef}>
+              <button
+                type="button"
+                onClick={() => setIsMoreOpen((current) => !current)}
+                aria-expanded={isMoreOpen}
+                className={`relative px-4 py-2 rounded-lg font-medium transition-all duration-300 group ${
+                  isMoreActive
+                    ? 'text-white'
+                    : 'text-gray-300 hover:text-white'
+                }`}
+              >
+                More
+                <svg className={`w-4 h-4 ml-1 inline-block transition-transform duration-300 ${isMoreOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+                {isMoreActive && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-brand"></div>
+                )}
+              </button>
 
-            <button className="relative px-4 py-2 rounded-lg font-medium text-gray-300 hover:text-white transition-all duration-300 group">
-              More
-              <svg className="w-4 h-4 ml-1 inline-block group-hover:rotate-180 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-              </svg>
-            </button>
+              {isMoreOpen && (
+                <div className="absolute right-0 top-full mt-3 w-72 rounded-3xl border border-white/10 bg-dark-900/95 p-3 shadow-2xl backdrop-blur-xl">
+                  <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">
+                    Earn
+                  </div>
+
+                  {kedolikDevnetEnabled && (
+                    <>
+                      <Link
+                        to="/kedolik-locker"
+                        className="flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-gray-200 transition-all duration-300 hover:bg-white/5 hover:text-white"
+                      >
+                        <span>Kedolik Locker</span>
+                        <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-2 py-0.5 text-[10px] font-bold text-brand-cyan">
+                          DEVNET
+                        </span>
+                      </Link>
+                      <Link
+                        to="/kedolik-staking"
+                        className="flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-gray-200 transition-all duration-300 hover:bg-white/5 hover:text-white"
+                      >
+                        <span>Kedolik Staking</span>
+                        <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-2 py-0.5 text-[10px] font-bold text-brand-cyan">
+                          DEVNET
+                        </span>
+                      </Link>
+                    </>
+                  )}
+
+                  <div className="mt-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">
+                    Launch
+                  </div>
+                  <Link
+                    to="/kedolikfun"
+                    className="flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-gray-200 transition-all duration-300 hover:bg-white/5 hover:text-white"
+                  >
+                    <span>KedolikFun</span>
+                    <span className="rounded-full border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
+                      PREVIEW
+                    </span>
+                  </Link>
+                  <Link
+                    to="/kedolikpad"
+                    className="flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-gray-200 transition-all duration-300 hover:bg-white/5 hover:text-white"
+                  >
+                    <span>KedolikPad</span>
+                    <span className="rounded-full border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
+                      PREVIEW
+                    </span>
+                  </Link>
+                </div>
+              )}
+            </div>
 
             <div className="w-px h-6 bg-white/10 mx-2"></div>
-
-            <Link 
-              to="/kedolikfun" 
-              className="relative px-4 py-2 rounded-lg font-medium text-gray-300 hover:text-white transition-all duration-300 group flex items-center gap-2"
-            >
-              KedolikFun
-              <span className="px-2 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded-full border border-red-500/30 font-bold animate-pulse">
-                SOON
-              </span>
-            </Link>
-
-            <Link 
-              to="/kedolikpad" 
-              className="relative px-4 py-2 rounded-lg font-medium text-gray-300 hover:text-white transition-all duration-300 group flex items-center gap-2"
-            >
-              KedolikPad
-              <span className="px-2 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded-full border border-red-500/30 font-bold animate-pulse">
-                SOON
-              </span>
-            </Link>
           </div>
 
           {/* Wallet Button & Profile */}
@@ -219,6 +304,32 @@ const Navbar = () => {
             >
               Pools
             </Link>
+            {kedolikDevnetEnabled && (
+              <>
+                <Link
+                  to="/kedolik-locker"
+                  className={`block px-4 py-3 rounded-xl font-medium transition-all duration-300 ${
+                    isActive('/kedolik-locker')
+                      ? 'bg-gradient-brand text-white shadow-glow-brand'
+                      : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                  }`}
+                  onClick={() => setIsOpen(false)}
+                >
+                  Kedolik Locker
+                </Link>
+                <Link
+                  to="/kedolik-staking"
+                  className={`block px-4 py-3 rounded-xl font-medium transition-all duration-300 ${
+                    isActive('/kedolik-staking')
+                      ? 'bg-gradient-brand text-white shadow-glow-brand'
+                      : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                  }`}
+                  onClick={() => setIsOpen(false)}
+                >
+                  Kedolik Staking
+                </Link>
+              </>
+            )}
             <Link 
               to="/profile" 
               className="flex items-center gap-2 px-4 py-3 rounded-xl font-medium text-gray-300 hover:bg-white/5 hover:text-white transition-all duration-300"
@@ -246,6 +357,10 @@ const Navbar = () => {
             )}
             
             <div className="h-px bg-white/10 my-4"></div>
+
+            <div className="px-4 pb-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-500">
+              Launch
+            </div>
             
             <Link 
               to="/kedolikfun" 

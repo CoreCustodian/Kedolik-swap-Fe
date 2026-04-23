@@ -1,0 +1,13 @@
+{
+  "status": "live",
+  "type": "vesting_escrow",
+  "escrow": "9msyBhDx6TUN8wSvxBrQwfq1UN1vFtphVMjZhduh99KJ",
+  "escrow_token_account": "3sPDLoBWZkKEEfiBj4dSumkWBXy2p4F12HvW9DNqQuRk",
+  "token_mint": "3uSQheD8cTnWQxzBn334PMQJHHYUHs6ReYube7gAGiSX",
+  "recipient": "68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot",
+  "notes": [
+    "The current locker backend is a vesting escrow.",
+    "Use escrow schedule fields and claimable calculations in the frontend.",
+    "Global aggregate locker metrics require indexing or an API."
+  ]
+}

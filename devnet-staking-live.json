@@ -1,0 +1,18 @@
+{
+  "status": "live",
+  "type": "quarry_style_staking",
+  "mint_wrapper": "JDZA277vy1eZhPsQrZdxZatKPVKPAhNS8H6hFfdPb9tw",
+  "rewarder": "2LoDeTSddNRFDda7pqtWhtPGJzR3DRnztwpzSQ6PtgxG",
+  "quarry": "4EuEpZAzddBmGDctuQsFza4WZMifH8q4egby53L2JJfs",
+  "minter": "BPL62zj831pdRBPSEJuCNtAeXF2mhmdK2Jvb6h5yn16o",
+  "miner": "F4osQmEEZ9QVqXAcrpe5q4FM2cLmij8TSDbkHN8ndQqF",
+  "stake_token_mint": "3uSQheD8cTnWQxzBn334PMQJHHYUHs6ReYube7gAGiSX",
+  "reward_token_mint": "ACEkFGhT9C1ypsZR2nyrvLGMsZ1288CFckujMMpjwZNv",
+  "user_stake_token_account": "6ATeYdpAdnzB9FjckR9ZfVzER29tfMxzRfqeyEdJX1hZ",
+  "user_reward_token_account": "9PPegT8hZe3ecdoEWdhMQyafieFyZRHDdYwWBkvX9gXM",
+  "notes": [
+    "The current staking backend is Quarry-style staking.",
+    "Use Rewarder, Quarry, and Miner terminology in the frontend.",
+    "Do not label this as a fixed reward pool contract."
+  ]
+}

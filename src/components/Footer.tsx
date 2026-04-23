@@ -1,6 +1,9 @@
 import { Link } from 'react-router-dom';
+import { useFeatureFlags } from '../hooks/useFeatureFlags';
 
 const Footer = () => {
+  const { kedolikDevnetEnabled } = useFeatureFlags();
+
   return (
     <footer className="relative border-t border-white/10 bg-dark-900/80 backdrop-blur-lg">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
@@ -29,7 +32,12 @@ const Footer = () => {
             <div className="text-left">
               <h4 className="font-bold mb-3 font-heading text-sm text-brand-pink">Earn</h4>
               <ul className="space-y-2 text-gray-400 text-xs">
-                <li><Link to="/pools" className="hover:text-brand-cyan transition-colors">Staking</Link></li>
+                {kedolikDevnetEnabled && (
+                  <>
+                    <li><Link to="/kedolik-locker" className="hover:text-brand-cyan transition-colors">Kedolik Locker</Link></li>
+                    <li><Link to="/kedolik-staking" className="hover:text-brand-cyan transition-colors">Kedolik Staking</Link></li>
+                  </>
+                )}
                 <li>
                   <a href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/" target="_blank" rel="noopener noreferrer" className="hover:text-brand-cyan transition-colors">Guide</a>
                 </li>
@@ -92,7 +100,12 @@ const Footer = () => {
           <div className="text-left">
             <h4 className="font-bold mb-4 font-heading text-base">Earn</h4>
             <ul className="space-y-2 text-gray-400 text-sm">
-              <li><Link to="/pools" className="hover:text-brand-cyan transition-colors">Staking</Link></li>
+              {kedolikDevnetEnabled && (
+                <>
+                  <li><Link to="/kedolik-locker" className="hover:text-brand-cyan transition-colors">Kedolik Locker</Link></li>
+                  <li><Link to="/kedolik-staking" className="hover:text-brand-cyan transition-colors">Kedolik Staking</Link></li>
+                </>
+              )}
               <li>
                 <a href="https://kedolik-swap.gitbook.io/kedolik-swap-docs/" target="_blank" rel="noopener noreferrer" className="hover:text-brand-cyan transition-colors">Guide</a>
               </li>

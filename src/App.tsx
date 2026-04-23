@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { WalletProvider } from './contexts/WalletProvider';
 import { UserProvider } from './contexts/UserContext';
@@ -9,6 +9,10 @@ import Swap from './pages/Swap';
 import Pools from './pages/Pools';
 import Profile from './pages/Profile';
 import Admin from './pages/Admin';
+import KedolikLocker from './pages/KedolikLocker';
+import KedolikStaking from './pages/KedolikStaking';
+import KedolikFun from './pages/KedolikFun';
+import KedolikPad from './pages/KedolikPad';
 import Footer from './components/Footer';
 
 function App() {
@@ -26,6 +30,11 @@ function App() {
                 <Route path="/pools" element={<Pools />} />
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/admin" element={<Admin />} />
+                <Route path="/kedolik" element={<Navigate to="/kedolik-locker" replace />} />
+                <Route path="/kedolik-locker" element={<KedolikLocker />} />
+                <Route path="/kedolik-staking" element={<KedolikStaking />} />
+                <Route path="/kedolikfun" element={<KedolikFun />} />
+                <Route path="/kedolikpad" element={<KedolikPad />} />
               </Routes>
             </div>
             <Footer />

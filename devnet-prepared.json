@@ -1,0 +1,27 @@
+{
+  "status": "build-ready-awaiting-wallet-funding",
+  "network": "devnet",
+  "deployer_wallet": "68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot",
+  "fee_receiver_wallet": "68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot",
+  "programs": {
+    "locker": {
+      "program_id": "9mtTTmx6ncn7FKfE9oyeiURctm2fZUN6kPLAbPLoXuvU",
+      "artifact": "/home/ubuntu/raydium-cp-swap/staking-locking/locker-workspace/target/deploy/locker.so",
+      "keypair": "/home/ubuntu/raydium-cp-swap/staking-locking/locker-workspace/target/deploy/locker-keypair.json"
+    },
+    "quarry_mint_wrapper": {
+      "program_id": "EzMFbFNvJMFmts6LchtweBq1VKTsfpDpJknGu4kLiH85",
+      "artifact": "/home/ubuntu/raydium-cp-swap/staking-locking/quarry-workspace/target/deploy/quarry_mint_wrapper.so",
+      "keypair": "/home/ubuntu/raydium-cp-swap/staking-locking/quarry-workspace/target/deploy/quarry_mint_wrapper-keypair.json"
+    },
+    "quarry_mine": {
+      "program_id": "3dAuLSedbDtzha2uV7K8Mf63ottPCYyMJwRuvouiZ85J",
+      "artifact": "/home/ubuntu/raydium-cp-swap/staking-locking/quarry-workspace/target/deploy/quarry_mine.so",
+      "keypair": "/home/ubuntu/raydium-cp-swap/staking-locking/quarry-workspace/target/deploy/quarry_mine-keypair.json"
+    }
+  },
+  "notes": [
+    "These program IDs are already wired into the deployable workspaces.",
+    "Actual devnet deployment is blocked until the deployer wallet has devnet SOL."
+  ]
+}
