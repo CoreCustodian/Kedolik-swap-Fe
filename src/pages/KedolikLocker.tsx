@@ -5,15 +5,13 @@ import { getMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
 import toast from 'react-hot-toast';
 import {
-  KEDOLIK_DEVNET_LIVE_MESSAGES,
   KEDOLIK_DEVNET_LOCKER_LIVE,
 } from '../config/kedolikDevnet';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { useKedolikLocker } from '../hooks/useKedolikLocker';
 import { useKedolikProgramStatus } from '../hooks/useKedolikProgramStatus';
-import { LockerEscrowSummary } from '../services/kedolikLocker';
+import { fetchAllLockerEscrows, LockerEscrowSummary } from '../services/kedolikLocker';
 import {
-  KedolikInfoRow,
   KedolikPageFrame,
   KedolikProgramStatusBadge,
   formatKedolikAddress,
@@ -22,6 +20,9 @@ import {
 } from '../components/kedolik/KedolikShared';
 
 type LockerAction = 'create' | 'lookup' | 'claim' | 'cancel' | 'close' | 'updateRecipient' | null;
+type LockListSort = 'newest' | 'unlockLatest' | 'unlockSoon' | 'amountHigh' | 'amountLow';
+
+const LEADERBOARD_PAGE_SIZE = 10;
 
 const DEFAULT_SIMPLE_LOCK_FORM = {
   recipient: '',
@@ -64,8 +65,7 @@ const modeAllows = (mode: number, actor: 'creator' | 'recipient') =>
 
 const isOneTimeLock = (escrow: LockerEscrowSummary) => toBigInt(escrow.amountPerPeriod) === 0n;
 
-const formatLockHolder = (address: string, connectedWalletAddress: string | null) =>
-  address === connectedWalletAddress ? 'You' : formatKedolikAddress(address);
+const formatLockHolder = (address: string) => formatKedolikAddress(address);
 
 const getLockHeadline = (escrow: LockerEscrowSummary) => {
   if (escrow.isCancelled) {
@@ -85,9 +85,6 @@ const getLockHeadline = (escrow: LockerEscrowSummary) => {
   )}.`;
 };
 
-const getLockScheduleLabel = (escrow: LockerEscrowSummary) =>
-  isOneTimeLock(escrow) ? 'One-time unlock' : `Gradual unlock every ${escrow.frequency} seconds`;
-
 const FieldCard = ({
   label,
   value,
@@ -95,9 +92,186 @@ const FieldCard = ({
   label: string;
   value: string;
 }) => (
-  <div className="rounded-3xl border border-white/10 bg-dark-900/60 p-5">
-    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">{label}</div>
-    <div className="mt-3 text-lg font-semibold text-white break-words">{value}</div>
+  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">{label}</div>
+    <div className="mt-2 text-base font-semibold text-white break-words">{value}</div>
+  </div>
+);
+
+const PreviewRow = ({ label, value }: { label: string; value: string }) => (
+  <div className="flex items-start justify-between gap-4 border-b border-white/10 py-3 last:border-b-0">
+    <span className="text-sm text-gray-400">{label}</span>
+    <span className="max-w-[62%] text-right text-sm font-semibold text-white break-words">{value}</span>
+  </div>
+);
+
+const getLockProgressPercent = (escrow: LockerEscrowSummary) => {
+  const total = toBigInt(escrow.scheduledTotalAmount);
+
+  if (total <= 0n) {
+    return 0;
+  }
+
+  const unlocked = toBigInt(escrow.unlockedAmount);
+  const basisPoints = (unlocked * 10000n) / total;
+  return Math.min(100, Number(basisPoints) / 100);
+};
+
+const compareBigIntDesc = (left: bigint, right: bigint) => {
+  if (left === right) {
+    return 0;
+  }
+
+  return left > right ? -1 : 1;
+};
+
+const compareBigIntAsc = (left: bigint, right: bigint) => {
+  if (left === right) {
+    return 0;
+  }
+
+  return left > right ? 1 : -1;
+};
+
+const getLockStatusLabel = (escrow: LockerEscrowSummary) => {
+  if (escrow.isCancelled) {
+    return 'Cancelled';
+  }
+
+  if (toBigInt(escrow.claimableAmount) > 0n) {
+    return 'Claimable';
+  }
+
+  return 'Locked';
+};
+
+const getLockStatusClass = (escrow: LockerEscrowSummary) => {
+  if (escrow.isCancelled) {
+    return 'border-red-400/30 bg-red-400/10 text-red-200';
+  }
+
+  if (toBigInt(escrow.claimableAmount) > 0n) {
+    return 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200';
+  }
+
+  return 'border-brand-cyan/30 bg-brand-cyan/10 text-brand-cyan';
+};
+
+const LockListItem = ({
+  escrow,
+  index,
+  isSelected,
+  onSelect,
+}: {
+  escrow: LockerEscrowSummary;
+  index: number;
+  isSelected: boolean;
+  onSelect: () => void;
+}) => (
+  <button
+    type="button"
+    onClick={onSelect}
+    className={`w-full rounded-2xl border px-4 py-4 text-left transition-all duration-300 ${
+      isSelected
+        ? 'border-brand-cyan/50 bg-brand-cyan/10 shadow-[0_16px_40px_rgba(98,192,235,0.12)]'
+        : 'border-white/10 bg-white/[0.03] hover:border-brand-cyan/40 hover:bg-white/[0.06]'
+    }`}
+  >
+    <div className="grid gap-4 md:grid-cols-[52px_1.1fr_0.9fr_0.9fr_0.85fr] md:items-center">
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-dark-900/80 text-sm font-bold text-white">
+        #{index + 1}
+      </div>
+
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Locked</div>
+        <div className="mt-1 text-base font-semibold text-white">
+          {formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}
+        </div>
+        <div className="mt-1 text-xs text-gray-400">
+          {getLockProgressPercent(escrow).toFixed(0)}% unlocked
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">From</div>
+        <div className="mt-1 font-mono text-xs font-medium text-white" title={escrow.creator}>
+          {formatLockHolder(escrow.creator)}
+        </div>
+      </div>
+
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Recipient</div>
+        <div className="mt-1 font-mono text-xs font-medium text-white" title={escrow.recipient}>
+          {formatLockHolder(escrow.recipient)}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+        <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getLockStatusClass(escrow)}`}>
+          {getLockStatusLabel(escrow)}
+        </span>
+        <div className="w-full text-xs text-gray-400 md:text-right">
+          {formatKedolikUnixTime(escrow.cliffTime)}
+        </div>
+      </div>
+    </div>
+  </button>
+);
+
+const ClaimableLockCard = ({
+  escrow,
+  onSelect,
+  onClaim,
+  disabled,
+  isClaiming,
+}: {
+  escrow: LockerEscrowSummary;
+  onSelect: () => void;
+  onClaim: () => void;
+  disabled: boolean;
+  isClaiming: boolean;
+}) => (
+  <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+    <div className="flex items-start justify-between gap-3">
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+          Claimable
+        </div>
+        <div className="mt-2 text-2xl font-bold text-white">
+          {formatKedolikTokenAmount(escrow.claimableAmount, escrow.tokenDecimals)}
+        </div>
+      </div>
+      <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
+        Ready
+      </span>
+    </div>
+
+    <div className="mt-4 grid gap-2 text-sm">
+      <PreviewRow
+        label="Locked"
+        value={formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}
+      />
+      <PreviewRow label="From" value={formatLockHolder(escrow.creator)} />
+      <PreviewRow label="Unlock" value={formatKedolikUnixTime(escrow.cliffTime)} />
+    </div>
+
+    <div className="mt-4 grid grid-cols-2 gap-2">
+      <button
+        type="button"
+        onClick={onSelect}
+        className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+      >
+        View
+      </button>
+      <button
+        type="button"
+        onClick={onClaim}
+        disabled={disabled}
+        className="rounded-full bg-emerald-400 px-4 py-2 text-xs font-bold text-dark-900 transition-colors hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {isClaiming ? 'Claiming...' : 'Claim'}
+      </button>
+    </div>
   </div>
 );
 
@@ -130,11 +304,54 @@ export default function KedolikLocker() {
   const [simpleLockMintDecimals, setSimpleLockMintDecimals] = useState<number | null>(null);
   const [hasManualSelection, setHasManualSelection] = useState(false);
   const [showUpdateRecipientForm, setShowUpdateRecipientForm] = useState(false);
+  const [recentEscrows, setRecentEscrows] = useState<LockerEscrowSummary[]>([]);
+  const [isLoadingRecentEscrows, setIsLoadingRecentEscrows] = useState(false);
+  const [recentEscrowsError, setRecentEscrowsError] = useState<string | null>(null);
+  const [lockListSort, setLockListSort] = useState<LockListSort>('newest');
+  const [leaderboardPage, setLeaderboardPage] = useState(1);
 
   const lockerProgramStatus = programs.kedolikLocker;
   const connectedWalletAddress = publicKey?.toString() ?? null;
   const sampleEscrowAddress = KEDOLIK_DEVNET_LOCKER_LIVE.escrow;
-  const preferredEscrowAddress = connected && escrows.length > 0 ? escrows[0].address : sampleEscrowAddress;
+  const preferredEscrowAddress =
+    connected && escrows.length > 0
+      ? escrows[0].address
+      : recentEscrows[0]?.address ?? sampleEscrowAddress;
+  const walletMatchCount = recentEscrows.filter(
+    (escrow) => escrow.creator === connectedWalletAddress || escrow.recipient === connectedWalletAddress
+  ).length;
+  const walletClaimableEscrows = recentEscrows.filter(
+    (escrow) => escrow.recipient === connectedWalletAddress && toBigInt(escrow.claimableAmount) > 0n
+  );
+  const claimableLockCount = walletClaimableEscrows.length;
+  const sortedRecentEscrows = [...recentEscrows].sort((left, right) => {
+    switch (lockListSort) {
+      case 'unlockLatest':
+        return right.cliffTime - left.cliffTime;
+      case 'unlockSoon':
+        return left.cliffTime - right.cliffTime;
+      case 'amountHigh':
+        return compareBigIntDesc(
+          toBigInt(left.scheduledTotalAmount),
+          toBigInt(right.scheduledTotalAmount)
+        );
+      case 'amountLow':
+        return compareBigIntAsc(
+          toBigInt(left.scheduledTotalAmount),
+          toBigInt(right.scheduledTotalAmount)
+        );
+      case 'newest':
+      default:
+        return right.vestingStartTime - left.vestingStartTime;
+    }
+  });
+  const leaderboardTotalPages = Math.max(1, Math.ceil(sortedRecentEscrows.length / LEADERBOARD_PAGE_SIZE));
+  const currentLeaderboardPage = Math.min(leaderboardPage, leaderboardTotalPages);
+  const leaderboardStartIndex = (currentLeaderboardPage - 1) * LEADERBOARD_PAGE_SIZE;
+  const paginatedRecentEscrows = sortedRecentEscrows.slice(
+    leaderboardStartIndex,
+    leaderboardStartIndex + LEADERBOARD_PAGE_SIZE
+  );
 
   useEffect(() => {
     setSelectedEscrowAddress(null);
@@ -200,6 +417,35 @@ export default function KedolikLocker() {
     setNewRecipientEmail('');
   }, [selectedEscrow?.address]);
 
+  const refreshRecentEscrows = async () => {
+    if (!lockerProgramStatus.live) {
+      setRecentEscrows([]);
+      setRecentEscrowsError(null);
+      return;
+    }
+
+    setIsLoadingRecentEscrows(true);
+    setRecentEscrowsError(null);
+
+    try {
+      const nextEscrows = await fetchAllLockerEscrows(connection);
+      setRecentEscrows(nextEscrows);
+    } catch (error) {
+      setRecentEscrows([]);
+      setRecentEscrowsError(getActionErrorMessage(error));
+    } finally {
+      setIsLoadingRecentEscrows(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshRecentEscrows();
+  }, [connection, lockerProgramStatus.live]);
+
+  useEffect(() => {
+    setLeaderboardPage(1);
+  }, [lockListSort, recentEscrows.length]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -235,7 +481,7 @@ export default function KedolikLocker() {
     }
 
     if (selectedEscrow.walletMatchesCreator || selectedEscrow.walletMatchesRecipient) {
-      return 'Your Lock';
+      return 'Wallet Match';
     }
 
     if (selectedEscrow.address === sampleEscrowAddress) {
@@ -300,11 +546,10 @@ export default function KedolikLocker() {
   );
 
   const selectedLockHeadline = selectedEscrow ? getLockHeadline(selectedEscrow) : '';
-  const selectedLockSchedule = selectedEscrow ? getLockScheduleLabel(selectedEscrow) : '';
   const minimumUnlockAt = useMemo(() => formatDateTimeLocalValue(Date.now() + 5 * 60 * 1000), []);
   const unlockPreviewLabel = simpleLockForm.unlockAt
     ? formatKedolikUnixTime(toUnixTimestamp(simpleLockForm.unlockAt))
-    : 'Choose an unlock date';
+    : 'Please specify an unlock date to generate the preview.';
 
   const connectWalletIfNeeded = () => {
     if (!connected) {
@@ -326,7 +571,7 @@ export default function KedolikLocker() {
     }
 
     if (!simpleLockForm.recipient.trim() || !simpleLockForm.tokenMint.trim()) {
-      toast.error('Recipient wallet and token mint are required to create a lock.');
+      toast.error('Recipient wallet and token CA are required to create a lock.');
       return;
     }
 
@@ -369,7 +614,7 @@ export default function KedolikLocker() {
         amount: '',
         unlockAt: '',
       });
-      await Promise.all([refreshEscrows(), refreshPrograms()]);
+      await Promise.all([refreshEscrows(), refreshPrograms(), refreshRecentEscrows()]);
       handleSelectEscrow(result.escrowAddress);
     } catch (error) {
       toast.error(getActionErrorMessage(error));
@@ -398,13 +643,34 @@ export default function KedolikLocker() {
     try {
       await callback();
       toast.success(successMessage);
-      await Promise.all([refreshEscrows(), refreshPrograms()]);
+      await Promise.all([refreshEscrows(), refreshPrograms(), refreshRecentEscrows()]);
 
       if (clearSelectionAfterSuccess) {
         setSelectedEscrow(null);
       } else {
         handleSelectEscrow(selectedEscrow.address, true);
       }
+    } catch (error) {
+      toast.error(getActionErrorMessage(error));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleClaimWalletEscrow = async (escrow: LockerEscrowSummary) => {
+    if (connectWalletIfNeeded()) {
+      return;
+    }
+
+    setSelectedEscrow(escrow);
+    handleSelectEscrow(escrow.address, true);
+    setActionLoading('claim');
+
+    try {
+      await claim(escrow.address);
+      toast.success('Claim transaction submitted.');
+      await Promise.all([refreshEscrows(), refreshPrograms(), refreshRecentEscrows()]);
+      handleSelectEscrow(escrow.address, true);
     } catch (error) {
       toast.error(getActionErrorMessage(error));
     } finally {
@@ -436,7 +702,7 @@ export default function KedolikLocker() {
         newRecipientEmail.trim() || undefined
       );
       toast.success('Recipient updated.');
-      await refreshEscrows();
+      await Promise.all([refreshEscrows(), refreshRecentEscrows()]);
       handleSelectEscrow(selectedEscrow.address, true);
       setShowUpdateRecipientForm(false);
     } catch (error) {
@@ -448,10 +714,10 @@ export default function KedolikLocker() {
 
   return (
     <KedolikPageFrame>
-      <div className="mx-auto max-w-5xl">
-        <section className="card p-8 sm:p-10">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="max-w-3xl">
+      <div className="mx-auto max-w-6xl">
+        <section className="card p-6 sm:p-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
                   Devnet
@@ -464,36 +730,34 @@ export default function KedolikLocker() {
                 )}
               </div>
 
-              <h1 className="text-4xl font-bold font-heading sm:text-5xl">Kedolik Locker</h1>
-              <p className="mt-4 max-w-3xl text-base leading-relaxed text-gray-300 sm:text-lg">
-                {KEDOLIK_DEVNET_LIVE_MESSAGES.locker} See what is locked, what is claimable, and
-                which actions are available for the selected lock.
+              <h1 className="text-3xl font-bold font-heading sm:text-4xl">Kedolik Locker</h1>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300 sm:text-base">
+                Kedolik Locker is now live. You can view locked assets, check what is available for
+                claiming, and explore the actions permitted for the selected lock.
               </p>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-dark-900/70 p-5 lg:max-w-xs">
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
-                Wallet
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[440px]">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Recent Locks
+                </div>
+                <div className="mt-2 text-2xl font-bold text-white">{recentEscrows.length}</div>
               </div>
-              <div className="mt-3 text-lg font-semibold text-white">
-                {connected && publicKey ? formatKedolikAddress(publicKey.toString()) : 'Not connected'}
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Your Claimable
+                </div>
+                <div className="mt-2 text-2xl font-bold text-emerald-300">{claimableLockCount}</div>
               </div>
-              <p className="mt-2 text-sm text-gray-400">
-                {connected
-                  ? escrows.length > 0
-                    ? `Your Locks: ${escrows.length}`
-                    : 'No lock found for this wallet yet.'
-                  : 'Connect wallet to load your own locks.'}
-              </p>
-              {!connected && (
-                <button
-                  type="button"
-                  className="btn-primary mt-4 w-full text-sm"
-                  onClick={() => setWalletModalVisible(true)}
-                >
-                  Connect Wallet
-                </button>
-              )}
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Wallet
+                </div>
+                <div className="mt-2 font-mono text-sm font-semibold text-white">
+                  {connected && publicKey ? formatKedolikAddress(publicKey.toString()) : 'Not connected'}
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -516,166 +780,191 @@ export default function KedolikLocker() {
 
             {noWalletEscrowMessage && (
               <div className="mt-6 rounded-3xl border border-white/10 bg-dark-900/60 px-6 py-4 text-sm text-gray-300">
-                {noWalletEscrowMessage} Showing a sample lock below.
+                {noWalletEscrowMessage} Recent locks are still listed below.
               </div>
             )}
 
-            <section className="card mt-6 p-6 sm:p-8">
-              <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-                <div className="rounded-[32px] border border-white/10 bg-gradient-to-br from-brand-cyan/10 via-dark-900/85 to-brand-pink/10 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <h2 className="text-2xl font-bold font-heading text-white">Create a Lock</h2>
-                      <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                        Pick a recipient, amount, and unlock date. Kedolik Locker will create a
-                        one-time lock and keep all technical IDs hidden from the main screen.
-                      </p>
-                    </div>
-                    <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold text-brand-cyan">
-                      One-time lock
-                    </span>
+            <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
+              <div className="card p-6 sm:p-8">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-2xl font-bold font-heading text-white">Create Lock</h2>
+                    <p className="mt-2 text-sm leading-relaxed text-gray-300">
+                      Specify the recipient wallet address, the token CA, the amount of tokens to
+                      lock, and the desired lock expiration date and time.
+                    </p>
                   </div>
+                  <span className="w-fit rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold text-brand-cyan">
+                    Single lock
+                  </span>
+                </div>
 
-                  <div className="mt-5 grid gap-4 md:grid-cols-2">
-                    <label className="rounded-[28px] border border-white/10 bg-dark-900/65 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Recipient
-                      </div>
-                      <input
-                        value={simpleLockForm.recipient}
-                        onChange={(event) =>
-                          setSimpleLockForm((current) => ({ ...current, recipient: event.target.value }))
-                        }
-                        placeholder="Recipient wallet"
-                        className="mt-3 w-full bg-transparent text-sm text-white outline-none placeholder:text-gray-500"
-                      />
-                    </label>
-
-                    <label className="rounded-[28px] border border-white/10 bg-dark-900/65 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Token Mint
-                      </div>
-                      <input
-                        value={simpleLockForm.tokenMint}
-                        onChange={(event) =>
-                          setSimpleLockForm((current) => ({ ...current, tokenMint: event.target.value }))
-                        }
-                        placeholder="Token mint"
-                        className="mt-3 w-full bg-transparent text-sm text-white outline-none placeholder:text-gray-500"
-                      />
-                    </label>
-
-                    <label className="rounded-[28px] border border-white/10 bg-dark-900/65 p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Amount To Lock
-                      </div>
-                      <input
-                        value={simpleLockForm.amount}
-                        onChange={(event) =>
-                          setSimpleLockForm((current) => ({ ...current, amount: event.target.value }))
-                        }
-                        placeholder="0.00"
-                        className="mt-3 w-full bg-transparent text-sm text-white outline-none placeholder:text-gray-500"
-                      />
-                    </label>
-
-                    <div className="rounded-[28px] border border-white/10 bg-dark-900/65 p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                            Unlock Date
-                          </div>
-                          <div className="mt-2 text-sm text-gray-300">
-                            Choose when the recipient can unlock the tokens.
-                          </div>
-                        </div>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-gray-200">
-                          Calendar
-                        </span>
-                      </div>
-
-                      <input
-                        type="datetime-local"
-                        value={simpleLockForm.unlockAt}
-                        min={minimumUnlockAt}
-                        step={60}
-                        onChange={(event) =>
-                          setSimpleLockForm((current) => ({ ...current, unlockAt: event.target.value }))
-                        }
-                        className="mt-4 min-h-[54px] w-full rounded-2xl border border-white/10 bg-dark-800/85 px-4 text-sm text-white outline-none transition-all duration-300 [color-scheme:dark] focus:border-brand-cyan/50"
-                      />
-
-                      <div className="mt-4 rounded-2xl border border-brand-cyan/20 bg-brand-cyan/10 px-4 py-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
-                          Unlock Preview
-                        </div>
-                        <div className="mt-2 text-base font-semibold text-white">{unlockPreviewLabel}</div>
-                        <div className="mt-1 text-xs text-gray-300">
-                          The recipient can claim once this time is reached on devnet.
-                        </div>
-                      </div>
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                      Recipient Wallet
                     </div>
-                  </div>
+                    <input
+                      value={simpleLockForm.recipient}
+                      onChange={(event) =>
+                        setSimpleLockForm((current) => ({ ...current, recipient: event.target.value }))
+                      }
+                      placeholder="Wallet address"
+                      className="mt-3 w-full bg-transparent font-mono text-sm text-white outline-none placeholder:text-gray-500"
+                    />
+                  </label>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                    <div className="rounded-2xl border border-white/10 bg-dark-900/55 px-4 py-3 text-sm text-gray-300">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Recipient
-                      </div>
-                      <div className="mt-2 font-semibold text-white">
-                        {simpleLockForm.recipient.trim()
-                          ? formatLockHolder(simpleLockForm.recipient.trim(), connectedWalletAddress)
-                          : 'Not set'}
-                      </div>
+                  <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                      Token CA
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-dark-900/55 px-4 py-3 text-sm text-gray-300">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Token Decimals
-                      </div>
-                      <div className="mt-2 font-semibold text-white">
-                        {simpleLockMintDecimals === null ? 'Loading...' : simpleLockMintDecimals}
-                      </div>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-dark-900/55 px-4 py-3 text-sm text-gray-300">
-                      <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">
-                        Lock Type
-                      </div>
-                      <div className="mt-2 font-semibold text-white">One-time unlock</div>
-                    </div>
-                  </div>
+                    <input
+                      value={simpleLockForm.tokenMint}
+                      onChange={(event) =>
+                        setSimpleLockForm((current) => ({ ...current, tokenMint: event.target.value }))
+                      }
+                      placeholder="Token contract address"
+                      className="mt-3 w-full bg-transparent font-mono text-sm text-white outline-none placeholder:text-gray-500"
+                    />
+                  </label>
 
+                  <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                      Amount To Lock
+                    </div>
+                    <input
+                      value={simpleLockForm.amount}
+                      onChange={(event) =>
+                        setSimpleLockForm((current) => ({ ...current, amount: event.target.value }))
+                      }
+                      placeholder="0.00"
+                      className="mt-3 w-full bg-transparent text-xl font-semibold text-white outline-none placeholder:text-gray-500"
+                    />
+                  </label>
+
+                  <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                      Unlock Date
+                    </div>
+                    <div className="mt-2 text-xs text-gray-400">
+                      Select the token release date for the recipient.
+                    </div>
+                    <input
+                      type="datetime-local"
+                      value={simpleLockForm.unlockAt}
+                      min={minimumUnlockAt}
+                      step={60}
+                      onChange={(event) =>
+                        setSimpleLockForm((current) => ({ ...current, unlockAt: event.target.value }))
+                      }
+                      className="mt-3 min-h-[42px] w-full rounded-xl border border-white/10 bg-dark-800/85 px-3 text-sm text-white outline-none [color-scheme:dark]"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
                   <button
                     type="button"
                     onClick={() => void handleCreateSimpleLock()}
                     disabled={!canCreateSimpleLock || actionLoading !== null}
-                    className="btn-primary mt-5 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
                   >
                     {actionLoading === 'create' ? 'Creating Lock...' : 'Create Lock'}
                   </button>
-                </div>
-
-                <div className="rounded-[32px] border border-white/10 bg-dark-900/60 p-6">
-                  <h2 className="text-2xl font-bold font-heading text-white">How It Works</h2>
-                  <div className="mt-4 space-y-3 text-sm leading-relaxed text-gray-300">
-                    <p className="rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
-                      1. Enter who should receive the tokens, how much to lock, and when the lock
-                      should end.
-                    </p>
-                    <p className="rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
-                      2. Kedolik Locker creates one on-chain lock for that setup.
-                    </p>
-                    <p className="rounded-2xl border border-white/5 bg-white/5 px-4 py-3">
-                      3. When the unlock time arrives, the recipient can claim the released tokens.
-                    </p>
-                  </div>
-
-                  <div className="mt-5 rounded-2xl border border-white/10 bg-dark-800/70 px-4 py-4 text-sm text-gray-300">
-                    Technical lock IDs stay hidden from the normal locker view, so users only focus
-                    on amount, unlock date, and claimable status.
-                  </div>
+                  {!connected && (
+                    <button
+                      type="button"
+                      className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+                      onClick={() => setWalletModalVisible(true)}
+                    >
+                      Connect Wallet
+                    </button>
+                  )}
                 </div>
               </div>
+
+              <aside className="card p-6 sm:p-8 xl:sticky xl:top-24 xl:self-start">
+                <div className="flex items-center justify-between gap-4">
+                  <h2 className="text-xl font-bold font-heading text-white">Unlock Preview</h2>
+                  <span
+                    className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${
+                      canCreateSimpleLock
+                        ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                        : 'border-white/10 bg-white/5 text-gray-300'
+                    }`}
+                  >
+                    {canCreateSimpleLock ? 'Ready' : 'Draft'}
+                  </span>
+                </div>
+
+                <div className="mt-5">
+                  <PreviewRow label="Amount" value={simpleLockForm.amount || '0.00'} />
+                  <PreviewRow
+                    label="Recipient"
+                    value={
+                      simpleLockForm.recipient.trim()
+                        ? formatLockHolder(simpleLockForm.recipient.trim())
+                        : 'Not set'
+                    }
+                  />
+                  <PreviewRow
+                    label="Token CA"
+                    value={
+                      simpleLockForm.tokenMint.trim()
+                        ? formatKedolikAddress(simpleLockForm.tokenMint.trim())
+                        : 'Not set'
+                    }
+                  />
+                  <PreviewRow label="Unlock" value={unlockPreviewLabel} />
+                </div>
+
+                <div className="mt-5 rounded-2xl border border-brand-cyan/20 bg-brand-cyan/10 px-4 py-4">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-brand-cyan">
+                    Claim Window
+                  </div>
+                  <div className="mt-2 text-sm leading-relaxed text-gray-200">
+                    Kedolik Locker creates a single on-chain lock based on the specified
+                    configuration. Once the unlock time is reached, the designated recipient can
+                    claim the released tokens.
+                  </div>
+                </div>
+              </aside>
             </section>
+
+            {connected && (
+              <section className="card mt-6 p-6 sm:p-8">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="text-2xl font-bold font-heading text-white">Your Claimable Locks</h2>
+                    <p className="mt-2 text-sm text-gray-300">
+                      Please select one of your claimable locks from the list below.
+                    </p>
+                  </div>
+                  <span className="w-fit rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-1 text-xs font-semibold text-emerald-200">
+                    {walletClaimableEscrows.length} claimable
+                  </span>
+                </div>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {walletClaimableEscrows.length > 0 ? (
+                    walletClaimableEscrows.map((escrow) => (
+                      <ClaimableLockCard
+                        key={escrow.address}
+                        escrow={escrow}
+                        onSelect={() => handleSelectEscrow(escrow.address)}
+                        onClaim={() => void handleClaimWalletEscrow(escrow)}
+                        disabled={actionLoading !== null}
+                        isClaiming={actionLoading === 'claim' && selectedEscrow?.address === escrow.address}
+                      />
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5 text-sm text-gray-300 md:col-span-2 xl:col-span-3">
+                      No claimable locks are available for this wallet yet.
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
 
             <section className="card mt-6 p-6 sm:p-8">
               {isLoadingPrograms || (isLoadingEscrows && !selectedEscrow) ? (
@@ -692,101 +981,81 @@ export default function KedolikLocker() {
                         <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
                           {selectedEscrowLabel}
                         </span>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
-                          {selectedEscrow.isCancelled ? 'Cancelled' : 'Active'}
+                        <span className={`rounded-full border px-4 py-1 text-xs font-semibold ${getLockStatusClass(selectedEscrow)}`}>
+                          {getLockStatusLabel(selectedEscrow)}
                         </span>
                       </div>
-                      <h2 className="mt-4 text-3xl font-bold font-heading text-white">
-                        Kedolik Locker
-                      </h2>
+                      <h2 className="mt-4 text-3xl font-bold font-heading text-white">Selected Lock</h2>
                       <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300">
                         {selectedLockHeadline}
                       </p>
                     </div>
 
-                    <div className="rounded-3xl border border-white/10 bg-dark-900/60 px-5 py-4 text-sm text-gray-300">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-gray-300">
                       {showingSampleEscrowForViewer
                         ? 'Sample lock loaded. This lock belongs to another wallet.'
                         : 'Live on Devnet'}
                     </div>
                   </div>
 
-                  <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <FieldCard
-                      label="Status"
-                      value={selectedEscrow.isCancelled ? 'Cancelled' : 'Active'}
-                    />
-                    <FieldCard
-                      label="Total Locked"
-                      value={formatKedolikTokenAmount(
-                        selectedEscrow.scheduledTotalAmount,
-                        selectedEscrow.tokenDecimals
-                      )}
-                    />
-                    <FieldCard
-                      label="Still Locked"
-                      value={formatKedolikTokenAmount(
-                        selectedEscrow.lockedAmount,
-                        selectedEscrow.tokenDecimals
-                      )}
-                    />
-                    <FieldCard
-                      label="Claimable Now"
-                      value={formatKedolikTokenAmount(
-                        selectedEscrow.claimableAmount,
-                        selectedEscrow.tokenDecimals
-                      )}
-                    />
-                    <FieldCard
-                      label="Total Claimed"
-                      value={formatKedolikTokenAmount(
-                        selectedEscrow.totalClaimedAmount,
-                        selectedEscrow.tokenDecimals
-                      )}
-                    />
-                  </div>
+                  <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                        <div>
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                            Total Locked
+                          </div>
+                          <div className="mt-2 text-3xl font-bold text-white">
+                            {formatKedolikTokenAmount(
+                              selectedEscrow.scheduledTotalAmount,
+                              selectedEscrow.tokenDecimals
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-sm text-gray-300">
+                          {getLockProgressPercent(selectedEscrow).toFixed(0)}% unlocked
+                        </div>
+                      </div>
 
-                  <div className="mt-6 grid gap-3 md:grid-cols-2">
-                    <KedolikInfoRow
-                      label="Recipient"
-                      value={formatLockHolder(selectedEscrow.recipient, connectedWalletAddress)}
-                    />
-                    <KedolikInfoRow
-                      label="Creator"
-                      value={formatLockHolder(selectedEscrow.creator, connectedWalletAddress)}
-                    />
-                    <KedolikInfoRow label="Token" value={formatKedolikAddress(selectedEscrow.tokenMint)} />
-                    <KedolikInfoRow label="Release Style" value={selectedLockSchedule} />
-                    <KedolikInfoRow
-                      label="Start"
-                      value={formatKedolikUnixTime(selectedEscrow.vestingStartTime)}
-                    />
-                    <KedolikInfoRow
-                      label={isOneTimeLock(selectedEscrow) ? 'Unlock Date' : 'Cliff'}
-                      value={formatKedolikUnixTime(selectedEscrow.cliffTime)}
-                    />
-                    <KedolikInfoRow
-                      label="Frequency"
-                      value={isOneTimeLock(selectedEscrow) ? 'One-time release' : `${selectedEscrow.frequency} seconds`}
-                    />
-                    <KedolikInfoRow
-                      label="Amount Per Period"
-                      value={formatKedolikTokenAmount(
-                        selectedEscrow.amountPerPeriod,
-                        selectedEscrow.tokenDecimals
-                      )}
-                    />
-                    <KedolikInfoRow
-                      label="Number of Periods"
-                      value={selectedEscrow.numberOfPeriod.toString()}
-                    />
-                    <KedolikInfoRow
-                      label="Unlocked So Far"
-                      value={formatKedolikTokenAmount(
-                        selectedEscrow.unlockedAmount,
-                        selectedEscrow.tokenDecimals
-                      )}
-                    />
+                      <div className="mt-5 h-3 overflow-hidden rounded-full bg-dark-900">
+                        <div
+                          className="h-full rounded-full bg-gradient-brand"
+                          style={{ width: `${getLockProgressPercent(selectedEscrow)}%` }}
+                        />
+                      </div>
+
+                      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                        <FieldCard
+                          label="Still Locked"
+                          value={formatKedolikTokenAmount(
+                            selectedEscrow.lockedAmount,
+                            selectedEscrow.tokenDecimals
+                          )}
+                        />
+                        <FieldCard
+                          label="Claimable"
+                          value={formatKedolikTokenAmount(
+                            selectedEscrow.claimableAmount,
+                            selectedEscrow.tokenDecimals
+                          )}
+                        />
+                        <FieldCard
+                          label="Unlock Date"
+                          value={formatKedolikUnixTime(selectedEscrow.cliffTime)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                        Wallets
+                      </div>
+                      <div className="mt-3">
+                        <PreviewRow label="From" value={formatLockHolder(selectedEscrow.creator)} />
+                        <PreviewRow label="Recipient" value={formatLockHolder(selectedEscrow.recipient)} />
+                        <PreviewRow label="Token CA" value={formatKedolikAddress(selectedEscrow.tokenMint)} />
+                      </div>
+                    </div>
                   </div>
 
                   <div className="mt-6 flex flex-wrap gap-3">
@@ -848,7 +1117,7 @@ export default function KedolikLocker() {
                         className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10"
                         onClick={() => setShowUpdateRecipientForm((current) => !current)}
                       >
-                        Update Recipient
+                        Update Recipient Wallet
                       </button>
                     )}
                   </div>
@@ -863,7 +1132,7 @@ export default function KedolikLocker() {
 
                   {showUpdateRecipientForm && canUpdateRecipient && (
                     <div className="mt-5 rounded-3xl border border-white/10 bg-dark-900/60 p-5">
-                      <div className="text-sm font-semibold text-white">Update Recipient</div>
+                      <div className="text-sm font-semibold text-white">Update Recipient Wallet</div>
                       <input
                         value={newRecipient}
                         onChange={(event) => setNewRecipient(event.target.value)}
@@ -893,21 +1162,29 @@ export default function KedolikLocker() {
             <section className="card mt-6 p-6 sm:p-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <h2 className="text-2xl font-bold font-heading text-white">Your Locks</h2>
+                  <h2 className="text-2xl font-bold font-heading text-white">
+                    Recent Locks Leaderboard
+                  </h2>
                   <p className="mt-2 text-sm text-gray-300">
-                    Open one of your locks below. The sample lock stays available for testing.
+                    All locks created on Kedolik Locker. Technical lock IDs are hidden from the
+                    standard locker view, allowing users to focus solely on the recipient, token
+                    amount, unlock date, and claimable status.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
+                  <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
+                    {recentEscrows.length} total
+                  </span>
                   {connected && (
                     <span className="rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
-                      {escrows.length > 0 ? `${escrows.length} lock${escrows.length === 1 ? '' : 's'}` : 'No locks yet'}
+                      {walletMatchCount} wallet match{walletMatchCount === 1 ? '' : 'es'}
                     </span>
                   )}
                   <button
                     type="button"
                     onClick={() => {
                       void refreshEscrows();
+                      void refreshRecentEscrows();
                       void refreshPrograms();
                     }}
                     className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10"
@@ -917,72 +1194,104 @@ export default function KedolikLocker() {
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {connected && escrows.length > 0 ? (
-                  escrows.map((escrow, index) => (
+              <div className="mt-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ['newest', 'Newest'],
+                    ['unlockLatest', 'Max Time'],
+                    ['unlockSoon', 'Unlock Soon'],
+                    ['amountHigh', 'Highest Amount'],
+                    ['amountLow', 'Lowest Amount'],
+                  ] as Array<[LockListSort, string]>).map(([sort, label]) => (
                     <button
-                      key={escrow.address}
+                      key={sort}
                       type="button"
-                      onClick={() => handleSelectEscrow(escrow.address)}
-                      className={`rounded-[28px] border p-5 text-left transition-all duration-300 ${
-                        selectedEscrow?.address === escrow.address
-                          ? 'border-brand-cyan/50 bg-brand-cyan/10'
-                          : 'border-white/10 bg-dark-900/60 hover:border-brand-cyan/40 hover:bg-white/5'
+                      onClick={() => setLockListSort(sort)}
+                      className={`rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+                        lockListSort === sort
+                          ? 'border-brand-cyan/40 bg-brand-cyan/15 text-brand-cyan'
+                          : 'border-white/10 bg-white/[0.03] text-gray-300 hover:border-white/20 hover:bg-white/[0.06]'
                       }`}
                     >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-white">Lock {index + 1}</div>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-gray-200">
-                          {escrow.walletRole === 'creator'
-                            ? 'Created by you'
-                            : escrow.walletRole === 'recipient'
-                              ? 'For you'
-                              : 'Viewer'}
-                        </span>
-                      </div>
-                      <div className="mt-4 text-2xl font-bold text-white">
-                        {formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}
-                      </div>
-                      <div className="mt-2 text-sm text-gray-300">
-                        {isOneTimeLock(escrow)
-                          ? `Unlocks ${formatKedolikUnixTime(escrow.cliffTime)}`
-                          : `Unlocks gradually from ${formatKedolikUnixTime(escrow.cliffTime)}`}
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-3 text-xs text-gray-400">
-                        <span>Claimable: {formatKedolikTokenAmount(escrow.claimableAmount, escrow.tokenDecimals)}</span>
-                        <span>Locked: {formatKedolikTokenAmount(escrow.lockedAmount, escrow.tokenDecimals)}</span>
-                      </div>
+                      {label}
                     </button>
+                  ))}
+                </div>
+                <div className="text-xs text-gray-400">
+                  Showing {sortedRecentEscrows.length === 0 ? 0 : leaderboardStartIndex + 1}-
+                  {Math.min(leaderboardStartIndex + LEADERBOARD_PAGE_SIZE, sortedRecentEscrows.length)} of{' '}
+                  {sortedRecentEscrows.length}
+                </div>
+              </div>
+
+              {recentEscrowsError && (
+                <div className="mt-5 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-100">
+                  {recentEscrowsError}
+                </div>
+              )}
+
+              <div className="mt-5 space-y-3">
+                {isLoadingRecentEscrows ? (
+                  <div className="rounded-2xl border border-white/10 bg-dark-900/60 p-5 text-sm text-gray-300">
+                    Loading recent locks...
+                  </div>
+                ) : paginatedRecentEscrows.length > 0 ? (
+                  paginatedRecentEscrows.map((escrow, index) => (
+                    <LockListItem
+                      key={escrow.address}
+                      escrow={escrow}
+                      index={leaderboardStartIndex + index}
+                      isSelected={selectedEscrow?.address === escrow.address}
+                      onSelect={() => handleSelectEscrow(escrow.address)}
+                    />
                   ))
                 ) : (
-                  <div className="rounded-[28px] border border-white/10 bg-dark-900/60 p-5 text-sm text-gray-300 md:col-span-2 xl:col-span-3">
-                    {connected
-                      ? 'No lock found for this wallet yet.'
-                      : 'Connect wallet to load your own locks.'}
+                  <div className="rounded-2xl border border-white/10 bg-dark-900/60 p-5 text-sm text-gray-300">
+                    No locks found for this filter on the current RPC endpoint.
                   </div>
                 )}
-
-                <button
-                  type="button"
-                  onClick={() => handleSelectEscrow(sampleEscrowAddress)}
-                  className={`rounded-[28px] border p-5 text-left transition-all duration-300 ${
-                    selectedEscrow?.address === sampleEscrowAddress
-                      ? 'border-brand-cyan/50 bg-brand-cyan/10'
-                      : 'border-white/10 bg-dark-900/60 hover:border-brand-cyan/40 hover:bg-white/5'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-white">Sample Lock</div>
-                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-gray-200">
-                      Devnet example
-                    </span>
-                  </div>
-                  <div className="mt-2 text-sm text-gray-300">
-                    Opens the live sample lock if you want to inspect the locker flow without using
-                    your own funds.
-                  </div>
-                </button>
               </div>
+
+              {sortedRecentEscrows.length > LEADERBOARD_PAGE_SIZE && (
+                <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setLeaderboardPage((page) => Math.max(1, page - 1))}
+                    disabled={currentLeaderboardPage === 1}
+                    className="rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Previous
+                  </button>
+
+                  <div className="flex flex-wrap justify-center gap-2">
+                    {Array.from({ length: leaderboardTotalPages }, (_, index) => index + 1).map((page) => (
+                      <button
+                        key={page}
+                        type="button"
+                        onClick={() => setLeaderboardPage(page)}
+                        className={`h-9 min-w-9 rounded-full border px-3 text-sm font-semibold transition-colors ${
+                          page === currentLeaderboardPage
+                            ? 'border-brand-cyan/40 bg-brand-cyan/15 text-brand-cyan'
+                            : 'border-white/10 bg-white/[0.03] text-gray-300 hover:border-white/20 hover:bg-white/[0.06]'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLeaderboardPage((page) => Math.min(leaderboardTotalPages, page + 1))
+                    }
+                    disabled={currentLeaderboardPage === leaderboardTotalPages}
+                    className="rounded-full border border-white/10 bg-white/5 px-5 py-2 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
             </section>
           </>
         )}

@@ -433,6 +433,30 @@ export const fetchLockerEscrowsForWallet = async (
   return summaries.sort((left, right) => right.vestingStartTime - left.vestingStartTime);
 };
 
+export const fetchAllLockerEscrows = async (
+  connection: Connection
+): Promise<LockerEscrowSummary[]> => {
+  const program = getKedolikLockerProgram(connection);
+  const vestingEscrowNamespace = getVestingEscrowNamespace(program);
+
+  if (!vestingEscrowNamespace.all) {
+    throw new Error('Locker IDL does not support lock listing.');
+  }
+
+  const allEscrows = await vestingEscrowNamespace.all();
+  const summaries = await Promise.all(
+    allEscrows.map(({ publicKey, account }) =>
+      buildLockerSummary(
+        connection,
+        publicKey,
+        decodeVestingEscrowState(account as RawVestingEscrowAccount)
+      )
+    )
+  );
+
+  return summaries.sort((left, right) => right.vestingStartTime - left.vestingStartTime);
+};
+
 const fetchLockerEscrowState = async (
   connection: Connection,
   escrowAddress: string

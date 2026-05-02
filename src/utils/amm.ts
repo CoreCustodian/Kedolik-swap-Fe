@@ -708,6 +708,7 @@ export interface PoolInfo {
   token1Symbol: string;
   token0Decimals: number;
   token1Decimals: number;
+  lpMintDecimals: number;
   // Pool creator
   creator: PublicKey;
   // Fee data
@@ -846,6 +847,7 @@ export const fetchPools = async (
         token1Symbol,
         token0Decimals,
         token1Decimals,
+        lpMintDecimals: data.lpMintDecimals ?? data.lp_mint_decimals ?? 9,
         creator: data.poolCreator || data.pool_creator || PublicKey.default, // Pool creator address
         protocolFeesToken0,
         protocolFeesToken1,

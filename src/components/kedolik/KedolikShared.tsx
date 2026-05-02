@@ -56,12 +56,8 @@ export const KedolikInfoRow = ({ label, value }: { label: string; value: string 
 
 export const KedolikPageFrame = ({ children }: { children: ReactNode }) => (
   <div className="relative min-h-screen overflow-hidden">
-    <div className="fixed inset-0 bg-gradient-mesh opacity-40"></div>
-    <div className="absolute top-20 left-10 h-96 w-96 rounded-full bg-brand-pink/10 blur-3xl animate-pulse-slow"></div>
-    <div
-      className="absolute bottom-20 right-10 h-96 w-96 rounded-full bg-brand-cyan/10 blur-3xl animate-pulse-slow"
-      style={{ animationDelay: '2s' }}
-    ></div>
+    <div className="fixed inset-0 bg-gradient-mesh opacity-25"></div>
+    <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:48px_48px]"></div>
 
     <div className="relative mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">{children}</div>
   </div>

@@ -54,19 +54,20 @@ const FieldCard = ({
   label: string;
   value: string;
 }) => (
-  <div className="rounded-3xl border border-white/10 bg-dark-900/60 p-5">
-    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-500">{label}</div>
-    <div className="mt-3 text-lg font-semibold text-white break-words">{value}</div>
+  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
+    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">{label}</div>
+    <div className="mt-2 text-sm font-semibold text-white break-words">{value}</div>
   </div>
 );
 
 export default function KedolikStaking() {
-  const { connected, publicKey } = useWallet();
+  const { connected } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshProgramStatus } = useKedolikProgramStatus();
   const { quarries, isLoading, error, refresh, stakingService } = useKedolikStaking();
   const [amount, setAmount] = useState('');
+  const [amountMode, setAmountMode] = useState<'stake' | 'unstake'>('stake');
   const [actionLoading, setActionLoading] = useState<'stake' | 'unstake' | 'claim' | null>(null);
 
   const activePool = quarries[0] ?? null;
@@ -120,6 +121,18 @@ export default function KedolikStaking() {
     );
   }, [activePool, connected]);
 
+  const stakeWalletBalance = useMemo(() => {
+    if (!connected) {
+      return 'Connect wallet';
+    }
+
+    return formatMetricAmount(
+      activePool?.userWalletBalance ?? null,
+      activePool?.stakeTokenDecimals ?? null,
+      'Loading...'
+    );
+  }, [activePool, connected]);
+
   const rewardWalletBalance = useMemo(() => {
     if (!connected) {
       return 'Connect wallet';
@@ -137,7 +150,17 @@ export default function KedolikStaking() {
       return;
     }
 
-    setAmount(formatInputAmount(activePool.userWalletBalance, activePool.stakeTokenDecimals));
+    setAmount(
+      formatInputAmount(
+        amountMode === 'stake' ? activePool.userWalletBalance : activePool.userStake,
+        activePool.stakeTokenDecimals
+      )
+    );
+  };
+
+  const handleAmountModeChange = (nextMode: 'stake' | 'unstake') => {
+    setAmountMode(nextMode);
+    setAmount('');
   };
 
   const parsedAmountRaw =
@@ -153,6 +176,17 @@ export default function KedolikStaking() {
     connected && parsedAmountRaw !== null && userStakeRaw !== null && parsedAmountRaw > userStakeRaw
   );
   const hasClaimableRewards = claimableRewardsRaw > 0n;
+  const exceedsSelectedBalance = amountMode === 'stake' ? exceedsWalletBalance : exceedsStakeBalance;
+  const selectedBalanceLabel =
+    amountMode === 'stake' ? `Available in wallet: ${stakeWalletBalance}` : `Available to unstake: ${userStake}`;
+  const primaryActionLabel = amountMode === 'stake' ? 'Stake' : 'Unstake';
+  const amountActionDisabled =
+    !connected ||
+    !hasValidAmount ||
+    actionLoading !== null ||
+    (amountMode === 'stake'
+      ? exceedsWalletBalance
+      : !activePool?.hasMiner || exceedsStakeBalance);
 
   const connectWalletIfNeeded = () => {
     if (!connected) {
@@ -247,10 +281,10 @@ export default function KedolikStaking() {
 
   return (
     <KedolikPageFrame>
-      <div className="mx-auto max-w-5xl">
-        <section className="card p-8 sm:p-10">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-            <div className="max-w-3xl">
+      <div className="mx-auto max-w-6xl">
+        <section className="card p-6 sm:p-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
                   Devnet
@@ -263,36 +297,32 @@ export default function KedolikStaking() {
                 )}
               </div>
 
-              <h1 className="text-4xl font-bold font-heading sm:text-5xl">Kedolik Staking</h1>
-              <p className="mt-4 max-w-3xl text-base leading-relaxed text-gray-300 sm:text-lg">
-                {KEDOLIK_DEVNET_LIVE_MESSAGES.staking} Stake token, check your balance, enter an
-                amount, and use the three actions below.
+              <h1 className="text-3xl font-bold font-heading sm:text-4xl">Kedolik Staking</h1>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300 sm:text-base">
+                {KEDOLIK_DEVNET_LIVE_MESSAGES.staking} Stake, unstake, and claim rewards from one
+                focused panel.
               </p>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-dark-900/70 p-5 lg:max-w-xs">
-              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-gray-400">
-                Wallet
+            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[480px]">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Wallet Balance
+                </div>
+                <div className="mt-2 text-base font-bold text-white">{stakeWalletBalance}</div>
               </div>
-              <div className="mt-3 text-lg font-semibold text-white">
-                {connected && publicKey ? formatKedolikAddress(publicKey.toString()) : 'Not connected'}
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Staked
+                </div>
+                <div className="mt-2 text-base font-bold text-white">{userStake}</div>
               </div>
-              <p className="mt-2 text-sm text-gray-400">
-                {connected
-                  ? activePool?.hasMiner
-                    ? 'Your stake position is loaded.'
-                    : 'No stake yet.'
-                  : 'Connect wallet to see your balance and stake.'}
-              </p>
-              {!connected && (
-                <button
-                  type="button"
-                  className="btn-primary mt-4 w-full text-sm"
-                  onClick={() => setWalletModalVisible(true)}
-                >
-                  Connect Wallet
-                </button>
-              )}
+              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                  Rewards
+                </div>
+                <div className="mt-2 text-base font-bold text-emerald-300">{claimableRewards}</div>
+              </div>
             </div>
           </div>
         </section>
@@ -313,114 +343,128 @@ export default function KedolikStaking() {
               </div>
             )}
 
-            <section className="card mt-6 p-6 sm:p-8">
+            <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
               {isLoading || !activePool ? (
-                <div className="text-sm text-gray-300">
+                <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
                   {isLoading
                     ? 'Loading live pool data...'
                     : 'Live pool data could not be read from the current RPC endpoint.'}
                 </div>
               ) : (
                 <>
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <FieldCard label="Stake Token" value={formatKedolikAddress(activePool.stakeTokenMint)} />
-                    <FieldCard label="Reward Token" value={formatKedolikAddress(activePool.rewardTokenMint)} />
-                    <FieldCard
-                      label="Total Staked"
-                      value={formatMetricAmount(
-                        activePool.totalStaked,
-                        activePool.stakeTokenDecimals,
-                        'Loading live pool data...'
-                      )}
-                    />
-                    <FieldCard label="Stakers" value={activePool.stakers ?? 'Loading live pool data...'} />
-                    <FieldCard label="Reward Rate" value={rewardRate} />
-                    <FieldCard
-                      label="Your Stake Token Balance"
-                      value={formatMetricAmount(
-                        activePool.userWalletBalance,
-                        activePool.stakeTokenDecimals,
-                        connected ? 'Loading live pool data...' : 'Connect wallet'
-                      )}
-                    />
-                    <FieldCard label="Your Reward Token Balance" value={rewardWalletBalance} />
-                    <FieldCard label="Your Stake" value={userStake} />
-                    <FieldCard label="Claimable Rewards" value={claimableRewards} />
-                  </div>
-
-                  <div className="mt-6 rounded-[32px] border border-white/10 bg-dark-900/60 p-5 sm:p-6">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-end">
-                      <div className="flex-1">
-                        <label
-                          className="block text-sm font-semibold text-white"
-                          htmlFor="kedolik-staking-amount"
-                        >
-                          Amount
-                        </label>
-                        <div className="mt-3 flex gap-3">
-                          <input
-                            id="kedolik-staking-amount"
-                            value={amount}
-                            onChange={(event) => setAmount(event.target.value)}
-                            placeholder="0.00"
-                            className="min-h-[56px] flex-1 rounded-2xl border border-white/10 bg-dark-800/80 px-4 text-lg text-white outline-none transition-all duration-300 placeholder:text-gray-500 focus:border-brand-cyan/50"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleMax}
-                            className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10"
-                          >
-                            Max
-                          </button>
-                        </div>
-
-                        <div className="mt-3 flex flex-wrap gap-4 text-sm text-gray-300">
-                          <span>
-                            Stake token balance:{' '}
-                            {formatMetricAmount(
-                              activePool.userWalletBalance,
-                              activePool.stakeTokenDecimals,
-                              connected ? 'Loading...' : 'Connect wallet'
-                            )}
-                          </span>
-                          <span>Reward token balance: {rewardWalletBalance}</span>
-                          <span>Your stake: {userStake}</span>
-                        </div>
+                  <div className="card p-5 sm:p-6">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h2 className="text-xl font-bold font-heading text-white">Your Position</h2>
+                        <p className="mt-2 text-sm text-gray-300">
+                          Balances and rewards update from the live staking program.
+                        </p>
                       </div>
-
-                      {!connected && (
-                        <button
-                          type="button"
-                          className="rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10"
-                          onClick={() => setWalletModalVisible(true)}
-                        >
-                          Connect Wallet
-                        </button>
-                      )}
+                      <span className="w-fit rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
+                        {activePool.hasMiner ? 'Position active' : 'No stake yet'}
+                      </span>
                     </div>
 
-                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                    <div className="mt-5 grid gap-3 md:grid-cols-3">
+                      <FieldCard label="Wallet Balance" value={stakeWalletBalance} />
+                      <FieldCard label="Currently Staked" value={userStake} />
+                      <FieldCard label="Claimable Rewards" value={claimableRewards} />
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                        Pool Stats
+                      </div>
+                      <div className="mt-4 grid gap-3 md:grid-cols-2">
+                        <FieldCard
+                          label="Total Staked"
+                          value={formatMetricAmount(
+                            activePool.totalStaked,
+                            activePool.stakeTokenDecimals,
+                            'Loading...'
+                          )}
+                        />
+                        <FieldCard label="Reward Rate" value={rewardRate} />
+                        <FieldCard label="Stakers" value={activePool.stakers ?? 'Loading...'} />
+                        <FieldCard label="Reward Wallet" value={rewardWalletBalance} />
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      <FieldCard label="Stake Token" value={formatKedolikAddress(activePool.stakeTokenMint)} />
+                      <FieldCard label="Reward Token" value={formatKedolikAddress(activePool.rewardTokenMint)} />
+                    </div>
+                  </div>
+
+                  <aside className="card p-5 sm:p-6 xl:sticky xl:top-24 xl:self-start">
+                    <div>
+                      <h2 className="text-xl font-bold font-heading text-white">Stake Actions</h2>
+                      <p className="mt-2 text-sm text-gray-300">
+                        {selectedBalanceLabel}
+                      </p>
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-2 gap-1 rounded-full border border-white/10 bg-dark-800/80 p-1 text-xs font-semibold">
                       <button
                         type="button"
-                        onClick={() => void handleStake()}
-                        disabled={!connected || !hasValidAmount || exceedsWalletBalance || actionLoading !== null}
-                        className="btn-primary text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => handleAmountModeChange('stake')}
+                        className={`rounded-full px-4 py-2 transition-all ${
+                          amountMode === 'stake'
+                            ? 'bg-brand-cyan/20 text-brand-cyan'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
                       >
-                        {actionLoading === 'stake' ? 'Staking...' : 'Stake'}
+                        Stake
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleUnstake()}
-                        disabled={
-                          !connected ||
-                          !hasValidAmount ||
-                          !activePool?.hasMiner ||
-                          exceedsStakeBalance ||
-                          actionLoading !== null
-                        }
-                        className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={() => handleAmountModeChange('unstake')}
+                        className={`rounded-full px-4 py-2 transition-all ${
+                          amountMode === 'unstake'
+                            ? 'bg-brand-cyan/20 text-brand-cyan'
+                            : 'text-gray-400 hover:text-white'
+                        }`}
                       >
-                        {actionLoading === 'unstake' ? 'Unstaking...' : 'Unstake'}
+                        Unstake
+                      </button>
+                    </div>
+
+                    <label className="mt-5 block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                          Amount
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleMax}
+                          className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+                        >
+                          {amountMode === 'stake' ? 'Max Wallet' : 'Max Staked'}
+                        </button>
+                      </div>
+                      <input
+                        id="kedolik-staking-amount"
+                        value={amount}
+                        onChange={(event) => setAmount(event.target.value)}
+                        placeholder="0.00"
+                        className="mt-3 min-h-[48px] w-full bg-transparent text-xl font-semibold text-white outline-none placeholder:text-gray-500"
+                      />
+                    </label>
+
+                    <div className="mt-5 space-y-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void (amountMode === 'stake' ? handleStake() : handleUnstake())
+                        }
+                        disabled={amountActionDisabled}
+                        className="btn-primary w-full text-sm disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
+                      >
+                        {actionLoading === amountMode
+                          ? amountMode === 'stake'
+                            ? 'Staking...'
+                            : 'Unstaking...'
+                          : primaryActionLabel}
                       </button>
                       <button
                         type="button"
@@ -428,27 +472,35 @@ export default function KedolikStaking() {
                         disabled={
                           !connected || !activePool?.hasMiner || !hasClaimableRewards || actionLoading !== null
                         }
-                        className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="w-full rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {actionLoading === 'claim' ? 'Claiming...' : 'Claim Rewards'}
                       </button>
                     </div>
 
-                    {(exceedsWalletBalance ||
-                      exceedsStakeBalance ||
-                      (connected && !activePool?.hasMiner) ||
-                      (connected && activePool?.hasMiner && !hasClaimableRewards)) && (
+                    {!connected && (
+                      <button
+                        type="button"
+                        className="mt-3 w-full rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+                        onClick={() => setWalletModalVisible(true)}
+                      >
+                        Connect Wallet
+                      </button>
+                    )}
+
+                    {(exceedsSelectedBalance ||
+                      (connected && amountMode === 'unstake' && !activePool?.hasMiner)) && (
                       <div className="mt-5 rounded-2xl border border-white/10 bg-dark-800/70 px-4 py-4 text-sm text-gray-200">
-                        {exceedsWalletBalance
-                          ? 'Amount exceeds your wallet balance.'
-                          : exceedsStakeBalance
-                            ? 'Amount exceeds your current stake.'
-                            : !activePool?.hasMiner
-                              ? 'Your first stake will create your staking position automatically.'
-                              : 'No rewards to claim yet.'}
+                        {exceedsSelectedBalance
+                          ? amountMode === 'stake'
+                            ? 'Amount exceeds your wallet balance.'
+                            : 'Amount exceeds your current stake.'
+                          : amountMode === 'unstake' && !activePool?.hasMiner
+                            ? 'You have no staked tokens to unstake.'
+                            : null}
                       </div>
                     )}
-                  </div>
+                  </aside>
                 </>
               )}
             </section>

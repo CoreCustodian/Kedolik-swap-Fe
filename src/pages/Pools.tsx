@@ -8,6 +8,12 @@ import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { fetchPoolStats, formatUsdCompact, PoolStats } from '../utils/poolStats';
+
+const hasActivePoolLiquidity = (pool: PoolInfo) =>
+  pool.token0Reserve > 0 &&
+  pool.token1Reserve > 0 &&
+  pool.lpSupply / Math.pow(10, pool.lpMintDecimals) > 0;
 
 const Pools = () => {
   const { connected, publicKey } = useWallet();
@@ -23,6 +29,9 @@ const Pools = () => {
   const [pools, setPools] = useState<PoolInfo[]>([]);
   const [userLpBalances, setUserLpBalances] = useState<Map<string, number>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
+  const [poolStats, setPoolStats] = useState<PoolStats | null>(null);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
   const [showCreatePool, setShowCreatePool] = useState(false);
   const [showAddLiquidity, setShowAddLiquidity] = useState<PoolInfo | null>(null);
   const [showRemoveLiquidity, setShowRemoveLiquidity] = useState<PoolInfo | null>(null);
@@ -123,9 +132,46 @@ const Pools = () => {
     fetchUserLpBalances();
   }, [connected, publicKey, pools.length, connection]); // Only depend on pools.length, not entire pools array
   
-  // Calculate stats
-  const totalTVL = pools.reduce((sum, pool) => sum + (pool.token0Reserve + pool.token1Reserve), 0);
-  const totalVolume = totalTVL * 0.5; // Simplified
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPoolStats = async () => {
+      if (pools.length === 0) {
+        setPoolStats(null);
+        setStatsError(null);
+        return;
+      }
+
+      setIsLoadingStats(true);
+      setStatsError(null);
+
+      try {
+        const nextStats = await fetchPoolStats(connection, pools);
+        if (!cancelled) {
+          setPoolStats(nextStats);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPoolStats(null);
+          setStatsError(error instanceof Error ? error.message : 'Unable to load live pool stats.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingStats(false);
+        }
+      }
+    };
+
+    loadPoolStats();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connection, pools]);
+
+  const totalTVL = poolStats?.totalTvlUsd ?? 0;
+  const totalVolume = poolStats?.volume24hUsd ?? 0;
+  const activePoolCount = pools.filter(hasActivePoolLiquidity).length;
   
   // Filter pools
   const filteredPools = pools.filter(pool => {
@@ -176,22 +222,42 @@ const Pools = () => {
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">Total Value Locked</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold gradient-text">
-                ${(totalTVL / 1e9).toFixed(2)}B
+                {isLoadingStats ? 'Loading...' : formatUsdCompact(totalTVL)}
+              </p>
+              <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
+                Liquidity {formatUsdCompact(poolStats?.poolLiquidityUsd ?? 0)} + locks{' '}
+                {formatUsdCompact(poolStats?.lockedAssetsUsd ?? 0)}
               </p>
             </div>
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">24h Volume</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-cyan">
-                ${(totalVolume / 1e6).toFixed(2)}M
+                {isLoadingStats ? 'Loading...' : formatUsdCompact(totalVolume)}
+              </p>
+              <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
+                Direct {formatUsdCompact(poolStats?.directVolume24hUsd ?? 0)} + aggregator{' '}
+                {formatUsdCompact(poolStats?.aggregatorVolume24hUsd ?? 0)}
               </p>
           </div>
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">Active Pools</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-pink">
-                {pools.length}
+                {activePoolCount}
+              </p>
+              <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
+                {poolStats
+                  ? `${pools.length} live account${pools.length === 1 ? '' : 's'} loaded`
+                  : 'Based on fetched pool accounts'}
               </p>
             </div>
           </div>
+
+          {(statsError || (poolStats && !poolStats.reached24hBoundary)) && (
+            <div className="mb-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-xs text-amber-100">
+              {statsError ||
+                `24h volume is calculated from the latest ${poolStats?.scannedTransactions ?? 0} program transactions. Add an indexer endpoint before launch for full high-traffic coverage.`}
+            </div>
+          )}
 
           {/* Controls - Responsive */}
           <div className="flex flex-col sm:flex-row gap-4 mb-6 sm:mb-8">
@@ -378,12 +444,13 @@ const PoolCard = ({
   getTokenByMint: (mint: import('@solana/web3.js').PublicKey) => TokenInfo | undefined;
   isDisabled?: boolean;
 }) => {
+  const lpSupplyUi = pool.lpSupply / Math.pow(10, pool.lpMintDecimals);
   // Detect dust pool
   const isDustPool = (pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || 
-                     (pool.lpSupply / 1e9) < 0.01;
+                     lpSupplyUi < 0.01;
   
   // Calculate user's share of the pool
-  const userPoolShare = pool.lpSupply > 0 ? (userLpBalance / (pool.lpSupply / 1e9)) * 100 : 0;
+  const userPoolShare = lpSupplyUi > 0 ? (userLpBalance / lpSupplyUi) * 100 : 0;
   
   // Get token info for logos
   const token0Info = getTokenByMint(pool.token0Mint);
@@ -494,7 +561,7 @@ const PoolCard = ({
         </div>
         <div className="flex justify-between text-xs sm:text-sm">
           <span className="text-gray-400">LP Supply</span>
-          <span className="font-semibold">{(pool.lpSupply / 1e9).toFixed(2)}</span>
+          <span className="font-semibold">{lpSupplyUi.toFixed(2)}</span>
         </div>
         {/* Always show LP token section to maintain consistent card height */}
         <div className={`flex justify-between text-xs sm:text-sm -mx-3 px-3 py-2 rounded-lg ${
@@ -680,7 +747,7 @@ const CreatePoolModal = ({
     
     if (existingPool) {
       const isDustPool = (existingPool.token0Reserve < 0.01 && existingPool.token1Reserve < 0.01) || 
-                         (existingPool.lpSupply / 1e9) < 0.01;
+                         (existingPool.lpSupply / Math.pow(10, existingPool.lpMintDecimals)) < 0.01;
       
       if (isDustPool) {
         showToast(
@@ -1152,7 +1219,7 @@ const AddLiquidityModal = ({
                 </div>
 
         {/* Dust Pool Info */}
-        {((pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || (pool.lpSupply / 1e9) < 0.01) && (
+        {((pool.token0Reserve < 0.01 && pool.token1Reserve < 0.01) || (pool.lpSupply / Math.pow(10, pool.lpMintDecimals)) < 0.01) && (
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 mb-4">
             <div className="flex items-start gap-2">
               <span className="text-blue-400 text-lg">ℹ️</span>
@@ -1301,7 +1368,7 @@ const RemoveLiquidityModal = ({
     }
 
     const lpAmountNum = parseFloat(lpAmount);
-    const lpSupplyNum = pool.lpSupply / 1e9;
+    const lpSupplyNum = pool.lpSupply / Math.pow(10, pool.lpMintDecimals);
     
     if (lpSupplyNum > 0) {
       const share = lpAmountNum / lpSupplyNum;
@@ -1447,7 +1514,7 @@ const RemoveLiquidityModal = ({
                   key={pct}
                   onClick={() => {
                     const MINIMUM_LP_LOCKED = 0.001; // Must match amm.ts
-                    const totalLpSupply = pool.lpSupply / 1e9;
+                    const totalLpSupply = pool.lpSupply / Math.pow(10, pool.lpMintDecimals);
                     const target = (lpBalance * pct) / 100;
                     // For 100%, leave the minimum locked
                     const desired = pct === 100
