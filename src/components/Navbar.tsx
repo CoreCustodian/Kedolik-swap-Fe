@@ -4,6 +4,8 @@ import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useConfig } from '../contexts/ConfigContext';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import { isAdditionalAdminWallet } from '../config/adminAccess';
+import { fetchKedolikStakeLockAdminConfig } from '../services/kedolikStaking';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -16,9 +18,17 @@ const Navbar = () => {
   const { adminAddress } = useConfig();
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const [feeReceiverAddress, setFeeReceiverAddress] = useState<string | null>(null);
+  const [stakingAdminAddress, setStakingAdminAddress] = useState<string | null>(null);
 
   const isActive = (path: string) => location.pathname === path;
-  const isAdmin = publicKey && adminAddress ? publicKey.toString() === adminAddress : false;
+  const connectedWalletAddress = publicKey?.toString() ?? null;
+  const hasProtocolAdminAccess =
+    Boolean(connectedWalletAddress && adminAddress && connectedWalletAddress === adminAddress) ||
+    isAdditionalAdminWallet(connectedWalletAddress);
+  const isStakingAdmin = Boolean(
+    connectedWalletAddress && stakingAdminAddress && connectedWalletAddress === stakingAdminAddress
+  );
+  const isAdmin = hasProtocolAdminAccess || isStakingAdmin;
   const isFeeReceiver = publicKey && feeReceiverAddress ? publicKey.toString() === feeReceiverAddress : false;
   const canAccessAdmin = isAdmin || isFeeReceiver;
   const isMoreActive = [
@@ -85,6 +95,25 @@ const Navbar = () => {
 
     fetchFeeReceiver();
   }, [connected, wallet, connection]);
+
+  useEffect(() => {
+    const fetchStakingAdmin = async () => {
+      if (!connected) {
+        setStakingAdminAddress(null);
+        return;
+      }
+
+      try {
+        const stakingAdminConfig = await fetchKedolikStakeLockAdminConfig(connection);
+        setStakingAdminAddress(stakingAdminConfig.authority);
+      } catch (error) {
+        console.error('Error fetching staking admin:', error);
+        setStakingAdminAddress(null);
+      }
+    };
+
+    void fetchStakingAdmin();
+  }, [connected, connection]);
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-[60] bg-dark-900/70 backdrop-blur-xl border-b border-white/10">

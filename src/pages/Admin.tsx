@@ -1,10 +1,16 @@
 import { useState, useEffect } from 'react';
-import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import BN from 'bn.js';
 import { fetchPools, PROGRAM_ID } from '../utils/amm';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { useConfig } from '../contexts/ConfigContext';
+import { isAdditionalAdminWallet } from '../config/adminAccess';
+import {
+  createKedolikStakingPool,
+  fetchKedolikStakeLockAdminConfig,
+  KedolikStakeLockAdminConfig,
+} from '../services/kedolikStaking';
 
 // NOTE: Admin is fetched dynamically from blockchain via ConfigContext
 
@@ -31,6 +37,7 @@ interface TotalFees {
 
 export default function Admin() {
   const { connection } = useConnection();
+  const anchorWallet = useAnchorWallet();
   const { publicKey, connected } = useWallet();
   const wallet = useWallet();
   const { adminAddress: currentAdmin, refreshConfig } = useConfig();
@@ -38,7 +45,7 @@ export default function Admin() {
   const [loading, setLoading] = useState(false);
   const [poolFees, setPoolFees] = useState<PoolFees[]>([]);
   const [totalFees, setTotalFees] = useState<TotalFees>({});
-  const [activeTab, setActiveTab] = useState<'fees' | 'settings'>('fees');
+  const [activeTab, setActiveTab] = useState<'fees' | 'settings' | 'staking'>('fees');
   
   // Settings state
   const [newFeeReceiver, setNewFeeReceiver] = useState('');
@@ -49,16 +56,37 @@ export default function Admin() {
   // Admin change state
   const [newAdmin, setNewAdmin] = useState('');
   const [updatingAdmin, setUpdatingAdmin] = useState(false);
+  const [stakingPoolForm, setStakingPoolForm] = useState({
+    stakeMint: '',
+    rewardMint: '',
+    poolId: '1',
+    rewardAmountRaw: '',
+    rewardDurationSeconds: '2592000',
+  });
+  const [creatingStakingPool, setCreatingStakingPool] = useState(false);
+  const [stakingAdminConfig, setStakingAdminConfig] = useState<KedolikStakeLockAdminConfig | null>(null);
+  const [loadingStakingAdminConfig, setLoadingStakingAdminConfig] = useState(false);
   
   // Check if connected wallet is admin or fee receiver
-  const isAdmin = publicKey && currentAdmin ? publicKey.toString() === currentAdmin : false;
+  const connectedWalletAddress = publicKey?.toString() ?? null;
+  const isOnChainAdmin = Boolean(
+    connectedWalletAddress && currentAdmin && connectedWalletAddress === currentAdmin
+  );
+  const isFrontendAdmin = isAdditionalAdminWallet(connectedWalletAddress);
+  const isStakingAdmin = Boolean(
+    connectedWalletAddress && stakingAdminConfig?.authority === connectedWalletAddress
+  );
+  const isAdmin = isOnChainAdmin || isFrontendAdmin;
   const isFeeReceiver = publicKey && currentFeeReceiver ? publicKey.toString() === currentFeeReceiver : false;
+  const canAccessAdmin = isAdmin || isFeeReceiver || isStakingAdmin;
   
   // In the new contract model:
   // - Admin can ONLY change admin and fee receiver (cannot claim fees)
   // - Fee receiver can ONLY claim fees (cannot change settings)
   const canClaimFees = isFeeReceiver;
   const canChangeSettings = isAdmin;
+  const canViewStakingInstance = isAdmin || isStakingAdmin;
+  const canCreateStakingInstance = isStakingAdmin;
   
   // Toast state
   const [toasts, setToasts] = useState<Array<{
@@ -77,6 +105,19 @@ export default function Admin() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
+  const fetchStakingAdminConfig = async () => {
+    setLoadingStakingAdminConfig(true);
+    try {
+      const config = await fetchKedolikStakeLockAdminConfig(connection);
+      setStakingAdminConfig(config);
+    } catch (error) {
+      console.error('Error fetching staking admin config:', error);
+      setStakingAdminConfig(null);
+    } finally {
+      setLoadingStakingAdminConfig(false);
+    }
+  };
+
   // Auto-fetch fee receiver on load
   useEffect(() => {
     if (connected && wallet) {
@@ -84,6 +125,11 @@ export default function Admin() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
+
+  useEffect(() => {
+    void fetchStakingAdminConfig();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection]);
   
   // Fetch current fee receiver from AMM config
   const fetchCurrentFeeReceiver = async () => {
@@ -515,6 +561,66 @@ export default function Admin() {
     }
   };
 
+  const createStakingInstance = async () => {
+    if (!anchorWallet) {
+      showToast('Connect the staking admin wallet before creating a staking instance', 'error');
+      return;
+    }
+
+    if (!canCreateStakingInstance) {
+      showToast(
+        `Only the current staking admin can create staking instances: ${stakingAdminConfig?.authority ?? 'loading'}`,
+        'error'
+      );
+      return;
+    }
+
+    if (
+      !stakingPoolForm.stakeMint.trim() ||
+      !stakingPoolForm.rewardMint.trim() ||
+      !stakingPoolForm.poolId.trim() ||
+      !stakingPoolForm.rewardAmountRaw.trim() ||
+      !stakingPoolForm.rewardDurationSeconds.trim()
+    ) {
+      showToast('Fill all staking instance fields', 'warning');
+      return;
+    }
+
+    if (!/^\d+$/.test(stakingPoolForm.rewardAmountRaw.trim())) {
+      showToast('Reward amount must be raw token units', 'warning');
+      return;
+    }
+
+    const duration = Number(stakingPoolForm.rewardDurationSeconds);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      showToast('Reward duration must be greater than zero', 'warning');
+      return;
+    }
+
+    try {
+      setCreatingStakingPool(true);
+      showToast('Creating Stake Lock V1 staking instance...', 'info');
+      const result = await createKedolikStakingPool(connection, anchorWallet, {
+        stakeMint: stakingPoolForm.stakeMint.trim(),
+        rewardMint: stakingPoolForm.rewardMint.trim(),
+        poolId: stakingPoolForm.poolId.trim(),
+        rewardAmountRaw: stakingPoolForm.rewardAmountRaw.trim(),
+        rewardDurationSeconds: Math.floor(duration),
+      });
+
+      showToast(`Staking instance created: ${result.pool.pool.slice(0, 8)}...`, 'success', result.signature);
+      showToast('The new staking pool is now discoverable from the Staking page.', 'success');
+      setStakingPoolForm((current) => ({
+        ...current,
+        rewardAmountRaw: '',
+      }));
+    } catch (error: unknown) {
+      showToast(`Failed to create staking instance: ${(error as Error)?.message || String(error)}`, 'error');
+    } finally {
+      setCreatingStakingPool(false);
+    }
+  };
+
   return (
     <>
       <div className="min-h-screen bg-gradient-to-br from-dark-950 via-dark-900 to-dark-950">
@@ -541,11 +647,13 @@ export default function Admin() {
             </div>
           )}
 
-          {connected && !isAdmin && !isFeeReceiver && (
+          {connected && !canAccessAdmin && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
               <div className="text-4xl mb-3">🚫</div>
               <p className="text-red-400 font-semibold mb-2">Access Denied</p>
-              <p className="text-gray-400 mb-4">Only the protocol admin or fee receiver can access this panel</p>
+              <p className="text-gray-400 mb-4">
+                Only the protocol admin, staking admin, or fee receiver can access this panel
+              </p>
               <div className="text-xs text-gray-500 space-y-1">
                 {currentAdmin ? (
                   <p>Current Admin: <span className="font-mono">{currentAdmin.slice(0, 12)}...{currentAdmin.slice(-8)}</span></p>
@@ -555,11 +663,15 @@ export default function Admin() {
                 {currentFeeReceiver && (
                   <p>Current Fee Receiver: <span className="font-mono">{currentFeeReceiver.slice(0, 12)}...{currentFeeReceiver.slice(-8)}</span></p>
                 )}
+                {stakingAdminConfig?.authority && (
+                  <p>Current Staking Admin: <span className="font-mono">{stakingAdminConfig.authority.slice(0, 12)}...{stakingAdminConfig.authority.slice(-8)}</span></p>
+                )}
                 <p>Your wallet: <span className="font-mono">{publicKey?.toString().slice(0, 12)}...{publicKey?.toString().slice(-8)}</span></p>
                 <button
                   onClick={() => {
                     refreshConfig();
                     fetchCurrentFeeReceiver();
+                    fetchStakingAdminConfig();
                   }}
                   className="mt-2 text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
                 >
@@ -569,7 +681,7 @@ export default function Admin() {
             </div>
           )}
 
-          {connected && (isAdmin || isFeeReceiver) && (
+          {connected && canAccessAdmin && (
             <>
               {/* Role Badge */}
               <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 mb-6">
@@ -579,7 +691,12 @@ export default function Admin() {
                     <div className="flex flex-wrap gap-2">
                       {isAdmin && (
                         <span className="px-3 py-1 bg-brand-purple/20 text-brand-purple rounded-full text-xs font-semibold border border-brand-purple/30">
-                          🔐 Admin (Can change settings)
+                          Admin {isOnChainAdmin ? '(Can change settings)' : '(Frontend access)'}
+                        </span>
+                      )}
+                      {isStakingAdmin && (
+                        <span className="px-3 py-1 bg-brand-cyan/20 text-brand-cyan rounded-full text-xs font-semibold border border-brand-cyan/30">
+                          Staking Admin (Can create pools)
                         </span>
                       )}
                       {isFeeReceiver && (
@@ -593,12 +710,20 @@ export default function Admin() {
                     onClick={() => {
                       refreshConfig();
                       fetchCurrentFeeReceiver();
+                      fetchStakingAdminConfig();
                     }}
                     className="px-4 py-2 text-xs font-semibold bg-white/5 hover:bg-white/10 rounded-lg transition-all whitespace-nowrap"
                   >
                     🔄 Refresh Status
                   </button>
                 </div>
+                {isFrontendAdmin && !isOnChainAdmin && (
+                  <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-200">
+                    This wallet has frontend admin-page access. On-chain settings transactions may
+                    still require the wallet stored as protocol admin in the AMM config. Staking
+                    pool creation requires the current Stake Lock admin.
+                  </div>
+                )}
               </div>
 
               {/* Tabs */}
@@ -628,6 +753,19 @@ export default function Admin() {
                     >
                       <span className="mr-2">⚙️</span>
                       Settings
+                    </button>
+                  )}
+                  {canViewStakingInstance && (
+                    <button
+                      onClick={() => setActiveTab('staking')}
+                      className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                        activeTab === 'staking'
+                          ? 'bg-gradient-brand text-white shadow-lg'
+                          : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      <span className="mr-2">⚡</span>
+                      Staking Instance
                     </button>
                   )}
                 </div>
@@ -779,6 +917,129 @@ export default function Admin() {
                 </>
               )}
 
+              {/* Staking Instance Tab */}
+              {activeTab === 'staking' && (
+                <>
+                  {!canCreateStakingInstance && (
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
+                      <div className="text-4xl mb-3">⚠️</div>
+                      <p className="text-yellow-400 font-semibold mb-2">Staking Admin Not Available</p>
+                      <p className="text-gray-400 mb-2">
+                        Only the wallet stored in the Stake Lock admin config can create staking instances.
+                      </p>
+                      <div className="mt-4 grid gap-3 text-left md:grid-cols-2">
+                        <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
+                          <div className="mb-1 text-xs text-gray-400">Current Staking Admin</div>
+                          <div className="break-all font-mono text-xs text-white">
+                            {loadingStakingAdminConfig
+                              ? 'Loading...'
+                              : stakingAdminConfig?.authority ?? 'Unavailable'}
+                          </div>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
+                          <div className="mb-1 text-xs text-gray-400">Connected Wallet</div>
+                          <div className="break-all font-mono text-xs text-white">
+                            {connectedWalletAddress ?? 'Connect wallet'}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {canCreateStakingInstance && (
+                    <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6">
+                      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 mb-5">
+                        <div>
+                          <h2 className="text-lg sm:text-xl font-bold mb-1">Create Staking Instance</h2>
+                          <p className="text-xs sm:text-sm text-gray-400">
+                            Initializes a Stake Lock V1 pool and funds its reward vault.
+                          </p>
+                        </div>
+                        <div className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-3 py-1 text-xs font-semibold text-brand-cyan">
+                          Devnet
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label className="bg-dark-900 border border-white/10 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-2">Stake Token CA</div>
+                          <input
+                            value={stakingPoolForm.stakeMint}
+                            onChange={(event) =>
+                              setStakingPoolForm((current) => ({ ...current, stakeMint: event.target.value }))
+                            }
+                            placeholder="Stake mint address"
+                            className="w-full bg-transparent text-sm font-mono text-white placeholder-gray-500 outline-none"
+                          />
+                        </label>
+
+                        <label className="bg-dark-900 border border-white/10 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-2">Reward Token CA</div>
+                          <input
+                            value={stakingPoolForm.rewardMint}
+                            onChange={(event) =>
+                              setStakingPoolForm((current) => ({ ...current, rewardMint: event.target.value }))
+                            }
+                            placeholder="Reward mint address"
+                            className="w-full bg-transparent text-sm font-mono text-white placeholder-gray-500 outline-none"
+                          />
+                        </label>
+
+                        <label className="bg-dark-900 border border-white/10 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-2">Pool ID</div>
+                          <input
+                            value={stakingPoolForm.poolId}
+                            onChange={(event) =>
+                              setStakingPoolForm((current) => ({ ...current, poolId: event.target.value }))
+                            }
+                            placeholder="1"
+                            className="w-full bg-transparent text-sm font-mono text-white placeholder-gray-500 outline-none"
+                          />
+                        </label>
+
+                        <label className="bg-dark-900 border border-white/10 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-2">Reward Duration Seconds</div>
+                          <input
+                            value={stakingPoolForm.rewardDurationSeconds}
+                            onChange={(event) =>
+                              setStakingPoolForm((current) => ({
+                                ...current,
+                                rewardDurationSeconds: event.target.value,
+                              }))
+                            }
+                            placeholder="2592000"
+                            className="w-full bg-transparent text-sm font-mono text-white placeholder-gray-500 outline-none"
+                          />
+                        </label>
+                      </div>
+
+                      <label className="mt-3 block bg-dark-900 border border-white/10 rounded-lg p-3">
+                        <div className="text-xs text-gray-400 mb-2">Reward Amount Raw Units</div>
+                        <input
+                          value={stakingPoolForm.rewardAmountRaw}
+                          onChange={(event) =>
+                            setStakingPoolForm((current) => ({
+                              ...current,
+                              rewardAmountRaw: event.target.value,
+                            }))
+                          }
+                          placeholder="Raw token amount, e.g. 1000000000 for 1 token with 9 decimals"
+                          className="w-full bg-transparent text-sm font-mono text-white placeholder-gray-500 outline-none"
+                        />
+                      </label>
+
+                      <button
+                        onClick={createStakingInstance}
+                        disabled={creatingStakingPool}
+                        className="btn-primary mt-5 w-full sm:w-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {creatingStakingPool ? 'Creating...' : 'Create Staking Instance'}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
               {/* Settings Tab */}
               {activeTab === 'settings' && (
                 <>
@@ -902,10 +1163,15 @@ export default function Admin() {
                       <div className="font-mono text-xs text-white break-all">
                         {currentAdmin || 'Loading from blockchain...'}
                       </div>
-                      {currentAdmin && publicKey && publicKey.toString() === currentAdmin && (
+                      {currentAdmin && isOnChainAdmin && (
                         <div className="mt-2 text-xs text-green-400">✅ You are the current admin</div>
                       )}
-                      {currentAdmin && publicKey && publicKey.toString() !== currentAdmin && (
+                      {currentAdmin && !isOnChainAdmin && isFrontendAdmin && (
+                        <div className="mt-2 text-xs text-yellow-400">
+                          Frontend admin-page access granted
+                        </div>
+                      )}
+                      {currentAdmin && !isOnChainAdmin && !isFrontendAdmin && (
                         <div className="mt-2 text-xs text-red-400">❌ You are NOT the admin</div>
                       )}
                       {!currentAdmin && (

@@ -1,17 +1,26 @@
-import { useWallet } from '@solana/wallet-adapter-react';
+import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
-import { useMemo, useState } from 'react';
+import { getMint } from '@solana/spl-token';
+import { PublicKey } from '@solana/web3.js';
+import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   KEDOLIK_DEVNET_CONFIG,
   KEDOLIK_DEVNET_LIVE_MESSAGES,
-  KEDOLIK_DEVNET_STAKING_LIVE,
   getKedolikExplorerAccountUrl,
 } from '../config/kedolikDevnet';
+import { KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS } from '../config/kedolikStakeLockV1';
 import { KEDOLIK_DEVNET_README_NOTES } from '../features/kedolikDevnetNotes';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { useKedolikProgramStatus } from '../hooks/useKedolikProgramStatus';
 import { useKedolikStaking } from '../hooks/useKedolikStaking';
+import {
+  createKedolikStakingPool,
+  fetchKedolikStakeLockAdminConfig,
+  KedolikStakeLockAdminConfig,
+  setKedolikStakingRewardRate,
+  transferKedolikStakingAdmin,
+} from '../services/kedolikStaking';
 import {
   KedolikInfoRow,
   KedolikPageFrame,
@@ -20,6 +29,14 @@ import {
   formatKedolikUnixTime,
   formatKedolikTokenAmount,
 } from '../components/kedolik/KedolikShared';
+
+const DEFAULT_ADMIN_FORM = {
+  stakeMint: '',
+  rewardMint: '',
+  poolId: '1',
+  rewardAmount: '',
+  rewardDurationSeconds: '2592000',
+};
 
 const formatMetricAmount = (
   rawValue: string | null,
@@ -60,8 +77,34 @@ const FieldCard = ({
   </div>
 );
 
+const AdminInput = ({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+}) => (
+  <label className="block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+      {label}
+    </span>
+    <input
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      className="mt-3 w-full bg-transparent text-sm font-semibold text-white outline-none placeholder:text-gray-500"
+    />
+  </label>
+);
+
 export default function KedolikStaking() {
-  const { connected } = useWallet();
+  const { connection } = useConnection();
+  const anchorWallet = useAnchorWallet();
+  const { connected, publicKey } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshProgramStatus } = useKedolikProgramStatus();
@@ -69,14 +112,88 @@ export default function KedolikStaking() {
   const [amount, setAmount] = useState('');
   const [amountMode, setAmountMode] = useState<'stake' | 'unstake'>('stake');
   const [actionLoading, setActionLoading] = useState<'stake' | 'unstake' | 'claim' | null>(null);
+  const [adminConfig, setAdminConfig] = useState<KedolikStakeLockAdminConfig | null>(null);
+  const [isLoadingAdminConfig, setIsLoadingAdminConfig] = useState(false);
+  const [adminForm, setAdminForm] = useState(DEFAULT_ADMIN_FORM);
+  const [adminRewardDecimals, setAdminRewardDecimals] = useState<number | null>(null);
+  const [adminActionLoading, setAdminActionLoading] = useState<'createPool' | 'setRewardRate' | 'transferAdmin' | null>(null);
+  const [newAdminAuthority, setNewAdminAuthority] = useState('');
+  const [rewardRateRaw, setRewardRateRaw] = useState('');
 
   const activePool = quarries[0] ?? null;
-  const stakingProgramStatus = programs.kedolikStaking;
-  const mintWrapperProgramStatus = programs.kedolikMintWrapper;
+  const stakeLockProgramStatus = programs.kedolikStakeLock;
+  const connectedWalletAddress = publicKey?.toString() ?? null;
+  const isStakeAdmin = Boolean(
+    connectedWalletAddress && adminConfig?.authority === connectedWalletAddress
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAdminConfig = async () => {
+      setIsLoadingAdminConfig(true);
+
+      try {
+        const nextAdminConfig = await fetchKedolikStakeLockAdminConfig(connection);
+
+        if (!cancelled) {
+          setAdminConfig(nextAdminConfig);
+        }
+      } catch (adminError) {
+        if (!cancelled) {
+          setAdminConfig(null);
+          toast.error(
+            adminError instanceof Error ? adminError.message : 'Unable to load staking admin config.'
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingAdminConfig(false);
+        }
+      }
+    };
+
+    void loadAdminConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [connection]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRewardDecimals = async () => {
+      const rewardMint = adminForm.rewardMint.trim();
+
+      if (!rewardMint) {
+        setAdminRewardDecimals(null);
+        return;
+      }
+
+      try {
+        const mintInfo = await getMint(connection, new PublicKey(rewardMint), 'confirmed');
+
+        if (!cancelled) {
+          setAdminRewardDecimals(mintInfo.decimals);
+        }
+      } catch {
+        if (!cancelled) {
+          setAdminRewardDecimals(null);
+        }
+      }
+    };
+
+    void loadRewardDecimals();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [adminForm.rewardMint, connection]);
 
   const rewardRate = useMemo(() => {
     if (!activePool?.rewardRate) {
-      return 'Loading live pool data...';
+      return 'No configured emissions';
     }
 
     return `${formatKedolikTokenAmount(activePool.rewardRate, activePool.rewardTokenDecimals)} / year`;
@@ -84,13 +201,13 @@ export default function KedolikStaking() {
 
   const rewardsPerSecond = useMemo(() => {
     if (!activePool?.rewardsPerSecondEstimate) {
-      return 'Loading live pool data...';
+      return 'No configured emissions';
     }
 
     return `${formatKedolikTokenAmount(
       activePool.rewardsPerSecondEstimate,
       activePool.rewardTokenDecimals
-    )} estimate`;
+    )} / second`;
   }, [activePool]);
 
   const userStake = useMemo(() => {
@@ -98,11 +215,7 @@ export default function KedolikStaking() {
       return 'Connect wallet';
     }
 
-    if (!activePool?.hasMiner) {
-      return 'No stake yet';
-    }
-
-    return formatMetricAmount(activePool.userStake, activePool.stakeTokenDecimals, 'Loading...');
+    return formatMetricAmount(activePool?.userStake ?? null, activePool?.stakeTokenDecimals ?? null, 'No stake yet');
   }, [activePool, connected]);
 
   const claimableRewards = useMemo(() => {
@@ -110,14 +223,10 @@ export default function KedolikStaking() {
       return 'Connect wallet';
     }
 
-    if (!activePool?.hasMiner) {
-      return 'No stake yet';
-    }
-
     return formatMetricAmount(
-      activePool.claimableRewards,
-      activePool.rewardTokenDecimals,
-      'Loading live pool data...'
+      activePool?.claimableRewards ?? null,
+      activePool?.rewardTokenDecimals ?? null,
+      'No rewards yet'
     );
   }, [activePool, connected]);
 
@@ -141,7 +250,7 @@ export default function KedolikStaking() {
     return formatMetricAmount(
       activePool?.userRewardWalletBalance ?? null,
       activePool?.rewardTokenDecimals ?? null,
-      'Loading live pool data...'
+      'Loading...'
     );
   }, [activePool, connected]);
 
@@ -182,11 +291,18 @@ export default function KedolikStaking() {
   const primaryActionLabel = amountMode === 'stake' ? 'Stake' : 'Unstake';
   const amountActionDisabled =
     !connected ||
+    !activePool ||
     !hasValidAmount ||
     actionLoading !== null ||
     (amountMode === 'stake'
       ? exceedsWalletBalance
-      : !activePool?.hasMiner || exceedsStakeBalance);
+      : !activePool.hasMiner || exceedsStakeBalance);
+  const rewardAmountRaw = parseAmountToRaw(adminForm.rewardAmount, adminRewardDecimals);
+  const rewardDurationSeconds = Number(adminForm.rewardDurationSeconds);
+  const computedAdminRewardRate =
+    rewardAmountRaw !== null && Number.isFinite(rewardDurationSeconds) && rewardDurationSeconds > 0
+      ? rewardAmountRaw / BigInt(Math.floor(rewardDurationSeconds))
+      : null;
 
   const connectWalletIfNeeded = () => {
     if (!connected) {
@@ -279,6 +395,127 @@ export default function KedolikStaking() {
     }
   };
 
+  const handleCreatePool = async () => {
+    if (connectWalletIfNeeded()) {
+      return;
+    }
+
+    if (!anchorWallet) {
+      toast.error('Connect a wallet before creating a staking pool.');
+      return;
+    }
+
+    if (!isStakeAdmin) {
+      toast.error('Only the current staking admin can create a pool.');
+      return;
+    }
+
+    if (rewardAmountRaw === null || rewardAmountRaw <= 0n) {
+      toast.error('Enter a valid reward amount.');
+      return;
+    }
+
+    if (!Number.isFinite(rewardDurationSeconds) || rewardDurationSeconds <= 0) {
+      toast.error('Enter a valid reward duration.');
+      return;
+    }
+
+    setAdminActionLoading('createPool');
+
+    try {
+      const result = await createKedolikStakingPool(connection, anchorWallet, {
+        stakeMint: adminForm.stakeMint.trim(),
+        rewardMint: adminForm.rewardMint.trim(),
+        poolId: adminForm.poolId.trim(),
+        rewardAmountRaw: rewardAmountRaw.toString(),
+        rewardDurationSeconds: Math.floor(rewardDurationSeconds),
+      });
+
+      toast.success(`Staking pool created: ${formatKedolikAddress(result.pool.pool)}`);
+      setAdminForm((current) => ({
+        ...current,
+        rewardAmount: '',
+      }));
+      await refresh();
+      await refreshProgramStatus();
+    } catch (adminError) {
+      toast.error(getActionErrorMessage(adminError));
+    } finally {
+      setAdminActionLoading(null);
+    }
+  };
+
+  const handleTransferAdmin = async () => {
+    if (connectWalletIfNeeded()) {
+      return;
+    }
+
+    if (!anchorWallet) {
+      toast.error('Connect a wallet before transferring admin authority.');
+      return;
+    }
+
+    if (!isStakeAdmin) {
+      toast.error('Only the current staking admin can transfer authority.');
+      return;
+    }
+
+    setAdminActionLoading('transferAdmin');
+
+    try {
+      await transferKedolikStakingAdmin(connection, anchorWallet, newAdminAuthority.trim());
+      toast.success('Staking admin transfer submitted.');
+      setNewAdminAuthority('');
+      const nextAdminConfig = await fetchKedolikStakeLockAdminConfig(connection);
+      setAdminConfig(nextAdminConfig);
+      await refreshProgramStatus();
+    } catch (adminError) {
+      toast.error(getActionErrorMessage(adminError));
+    } finally {
+      setAdminActionLoading(null);
+    }
+  };
+
+  const handleSetRewardRate = async () => {
+    if (connectWalletIfNeeded()) {
+      return;
+    }
+
+    if (!anchorWallet) {
+      toast.error('Connect a wallet before updating the reward rate.');
+      return;
+    }
+
+    if (!isStakeAdmin) {
+      toast.error('Only the current staking admin can update the reward rate.');
+      return;
+    }
+
+    if (!activePool) {
+      toast.error('Create a staking pool before updating its reward rate.');
+      return;
+    }
+
+    if (!/^\d+$/.test(rewardRateRaw.trim())) {
+      toast.error('Reward rate must be raw token units per second.');
+      return;
+    }
+
+    setAdminActionLoading('setRewardRate');
+
+    try {
+      await setKedolikStakingRewardRate(connection, anchorWallet, activePool.id, rewardRateRaw.trim());
+      toast.success('Reward rate update submitted.');
+      setRewardRateRaw('');
+      await refresh();
+      await refreshProgramStatus();
+    } catch (adminError) {
+      toast.error(getActionErrorMessage(adminError));
+    } finally {
+      setAdminActionLoading(null);
+    }
+  };
+
   return (
     <KedolikPageFrame>
       <div className="mx-auto max-w-6xl">
@@ -291,38 +528,23 @@ export default function KedolikStaking() {
                 </span>
                 {!isLoadingPrograms && (
                   <KedolikProgramStatusBadge
-                    live={stakingProgramStatus.live && mintWrapperProgramStatus.live}
-                    executable={stakingProgramStatus.executable && mintWrapperProgramStatus.executable}
+                    live={stakeLockProgramStatus.live}
+                    executable={stakeLockProgramStatus.executable}
                   />
                 )}
               </div>
 
               <h1 className="text-3xl font-bold font-heading sm:text-4xl">Kedolik Staking</h1>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300 sm:text-base">
-                {KEDOLIK_DEVNET_LIVE_MESSAGES.staking} Stake, unstake, and claim rewards from one
-                focused panel.
+                {KEDOLIK_DEVNET_LIVE_MESSAGES.staking} Stake, unstake, and claim rewards from a
+                selected Stake Lock V1 pool.
               </p>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[480px]">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Wallet Balance
-                </div>
-                <div className="mt-2 text-base font-bold text-white">{stakeWalletBalance}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Staked
-                </div>
-                <div className="mt-2 text-base font-bold text-white">{userStake}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3.5">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Rewards
-                </div>
-                <div className="mt-2 text-base font-bold text-emerald-300">{claimableRewards}</div>
-              </div>
+              <FieldCard label="Wallet Balance" value={stakeWalletBalance} />
+              <FieldCard label="Staked" value={userStake} />
+              <FieldCard label="Rewards" value={claimableRewards} />
             </div>
           </div>
         </section>
@@ -344,11 +566,15 @@ export default function KedolikStaking() {
             )}
 
             <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-              {isLoading || !activePool ? (
+              {isLoading ? (
                 <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
-                  {isLoading
-                    ? 'Loading live pool data...'
-                    : 'Live pool data could not be read from the current RPC endpoint.'}
+                  Loading live pool data...
+                </div>
+              ) : !activePool ? (
+                <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
+                  No staking pool instance has been created yet. The connected staking admin can
+                  create one below, or the admin can run `setup-devnet-lean-staking.js` once per
+                  staking instance.
                 </div>
               ) : (
                 <>
@@ -357,7 +583,7 @@ export default function KedolikStaking() {
                       <div>
                         <h2 className="text-xl font-bold font-heading text-white">Your Position</h2>
                         <p className="mt-2 text-sm text-gray-300">
-                          Balances and rewards update from the live staking program.
+                          The amount controls below switch Max between wallet balance and staked balance.
                         </p>
                       </div>
                       <span className="w-fit rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
@@ -385,14 +611,14 @@ export default function KedolikStaking() {
                           )}
                         />
                         <FieldCard label="Reward Rate" value={rewardRate} />
-                        <FieldCard label="Stakers" value={activePool.stakers ?? 'Loading...'} />
+                        <FieldCard label="Rewards / Second" value={rewardsPerSecond} />
                         <FieldCard label="Reward Wallet" value={rewardWalletBalance} />
                       </div>
                     </div>
 
                     <div className="mt-5 grid gap-3 md:grid-cols-2">
-                      <FieldCard label="Stake Token" value={formatKedolikAddress(activePool.stakeTokenMint)} />
-                      <FieldCard label="Reward Token" value={formatKedolikAddress(activePool.rewardTokenMint)} />
+                      <FieldCard label="Stake Token CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
+                      <FieldCard label="Reward Token CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
                     </div>
                   </div>
 
@@ -470,7 +696,7 @@ export default function KedolikStaking() {
                         type="button"
                         onClick={() => void handleClaimRewards()}
                         disabled={
-                          !connected || !activePool?.hasMiner || !hasClaimableRewards || actionLoading !== null
+                          !connected || !activePool.hasMiner || !hasClaimableRewards || actionLoading !== null
                         }
                         className="w-full rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -489,15 +715,13 @@ export default function KedolikStaking() {
                     )}
 
                     {(exceedsSelectedBalance ||
-                      (connected && amountMode === 'unstake' && !activePool?.hasMiner)) && (
+                      (connected && amountMode === 'unstake' && !activePool.hasMiner)) && (
                       <div className="mt-5 rounded-2xl border border-white/10 bg-dark-800/70 px-4 py-4 text-sm text-gray-200">
                         {exceedsSelectedBalance
                           ? amountMode === 'stake'
                             ? 'Amount exceeds your wallet balance.'
                             : 'Amount exceeds your current stake.'
-                          : amountMode === 'unstake' && !activePool?.hasMiner
-                            ? 'You have no staked tokens to unstake.'
-                            : null}
+                          : 'You have no staked tokens to unstake.'}
                       </div>
                     )}
                   </aside>
@@ -505,35 +729,210 @@ export default function KedolikStaking() {
               )}
             </section>
 
+            <section className="card mt-6 p-6 sm:p-8">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold font-heading text-white">Staking Pool Admin</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-gray-300">
+                    Admin controls are only available to the wallet stored in the Stake Lock V1
+                    admin config account.
+                  </p>
+                </div>
+                <span className="w-fit rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
+                  {isLoadingAdminConfig ? 'Loading admin' : isStakeAdmin ? 'Admin wallet' : 'Read only'}
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-3 lg:grid-cols-3">
+                <FieldCard
+                  label="Admin Config PDA"
+                  value={adminConfig?.address ?? KEDOLIK_DEVNET_CONFIG.adminConfigPda}
+                />
+                <FieldCard
+                  label="Current Staking Admin"
+                  value={adminConfig?.authority ?? KEDOLIK_DEVNET_CONFIG.currentStakingAdmin}
+                />
+                <FieldCard
+                  label="Connected Wallet"
+                  value={connectedWalletAddress ?? 'Connect wallet'}
+                />
+              </div>
+
+              {connected && isStakeAdmin && (
+                <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-bold text-white">Create Staking Instance</h3>
+                    <p className="mt-2 text-sm text-gray-300">
+                      The frontend derives the pool, stake vault, and reward vault from the V1 seeds,
+                      then sends initializeStakingPool and fundRewards.
+                    </p>
+
+                    <div className="mt-5 grid gap-3 md:grid-cols-2">
+                      <AdminInput
+                        label="Stake Token CA"
+                        value={adminForm.stakeMint}
+                        onChange={(value) => setAdminForm((current) => ({ ...current, stakeMint: value }))}
+                        placeholder="Stake mint address"
+                      />
+                      <AdminInput
+                        label="Reward Token CA"
+                        value={adminForm.rewardMint}
+                        onChange={(value) => setAdminForm((current) => ({ ...current, rewardMint: value }))}
+                        placeholder="Reward mint address"
+                      />
+                      <AdminInput
+                        label="Pool ID"
+                        value={adminForm.poolId}
+                        onChange={(value) => setAdminForm((current) => ({ ...current, poolId: value }))}
+                        placeholder="1"
+                      />
+                      <AdminInput
+                        label="Reward Duration Seconds"
+                        value={adminForm.rewardDurationSeconds}
+                        onChange={(value) =>
+                          setAdminForm((current) => ({ ...current, rewardDurationSeconds: value }))
+                        }
+                        placeholder="2592000"
+                      />
+                    </div>
+
+                    <label className="mt-3 block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                        Reward Amount
+                      </span>
+                      <input
+                        value={adminForm.rewardAmount}
+                        onChange={(event) =>
+                          setAdminForm((current) => ({ ...current, rewardAmount: event.target.value }))
+                        }
+                        placeholder="0.00"
+                        className="mt-3 w-full bg-transparent text-xl font-semibold text-white outline-none placeholder:text-gray-500"
+                      />
+                    </label>
+
+                    <div className="mt-4 rounded-2xl border border-white/10 bg-dark-900/60 p-4 text-sm text-gray-300">
+                      Computed reward rate:{' '}
+                      <span className="font-semibold text-white">
+                        {computedAdminRewardRate === null
+                          ? 'Enter reward mint, amount, and duration'
+                          : `${computedAdminRewardRate.toString()} raw units / second`}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void handleCreatePool()}
+                      disabled={adminActionLoading !== null}
+                      className="btn-primary mt-5 w-full text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {adminActionLoading === 'createPool' ? 'Creating Pool...' : 'Create And Fund Pool'}
+                    </button>
+                  </div>
+
+                  <aside className="rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+                    <h3 className="text-lg font-bold text-white">Update Reward Rate</h3>
+                    <p className="mt-2 text-sm text-gray-300">
+                      Sets the selected pool emission rate in raw reward token units per second.
+                    </p>
+                    <AdminInput
+                      label="Reward Rate / Second"
+                      value={rewardRateRaw}
+                      onChange={setRewardRateRaw}
+                      placeholder={activePool?.rewardsPerSecondEstimate ?? '0'}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleSetRewardRate()}
+                      disabled={!activePool || !rewardRateRaw.trim() || adminActionLoading !== null}
+                      className="mt-4 w-full rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-5 py-3 text-sm font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {adminActionLoading === 'setRewardRate' ? 'Updating...' : 'Update Reward Rate'}
+                    </button>
+
+                    <div className="my-5 h-px bg-white/10" />
+
+                    <h3 className="text-lg font-bold text-white">Transfer Staking Admin</h3>
+                    <p className="mt-2 text-sm text-gray-300">
+                      After transfer, only the new authority can create pools or update staking settings.
+                    </p>
+                    <AdminInput
+                      label="New Authority"
+                      value={newAdminAuthority}
+                      onChange={setNewAdminAuthority}
+                      placeholder="New admin wallet"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleTransferAdmin()}
+                      disabled={!newAdminAuthority.trim() || adminActionLoading !== null}
+                      className="mt-4 w-full rounded-full border border-red-400/30 bg-red-400/10 px-5 py-3 text-sm font-semibold text-red-100 transition-colors hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {adminActionLoading === 'transferAdmin' ? 'Transferring...' : 'Transfer Admin'}
+                    </button>
+                  </aside>
+                </div>
+              )}
+
+              {connected && !isStakeAdmin && (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-dark-900/60 p-5 text-sm text-gray-300">
+                  Your connected wallet is not the staking admin, so create/update controls are hidden.
+                </div>
+              )}
+
+              {!connected && (
+                <button
+                  type="button"
+                  className="mt-6 rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+                  onClick={() => setWalletModalVisible(true)}
+                >
+                  Connect Wallet
+                </button>
+              )}
+            </section>
+
             <details className="card mt-6 p-6">
               <summary className="cursor-pointer list-none text-lg font-semibold text-white">
-                Advanced / Debug
+                Advanced / Deployment Details
               </summary>
 
               <div className="mt-5 grid gap-3">
-                <KedolikInfoRow label="Kedolik Staking Program" value={KEDOLIK_DEVNET_CONFIG.kedolikStakingProgramId} />
-                <KedolikInfoRow label="Kedolik Mint Wrapper" value={KEDOLIK_DEVNET_CONFIG.kedolikMintWrapperProgramId} />
-                <KedolikInfoRow label="Quarry" value={KEDOLIK_DEVNET_STAKING_LIVE.quarry} />
-                <KedolikInfoRow label="Rewarder" value={KEDOLIK_DEVNET_STAKING_LIVE.rewarder} />
-                <KedolikInfoRow label="Minter" value={KEDOLIK_DEVNET_STAKING_LIVE.minter} />
-                <KedolikInfoRow label="Mint Wrapper" value={KEDOLIK_DEVNET_STAKING_LIVE.mintWrapper} />
-                <KedolikInfoRow label="Stake Token Mint" value={KEDOLIK_DEVNET_STAKING_LIVE.stakeTokenMint} />
-                <KedolikInfoRow label="Reward Token Mint" value={KEDOLIK_DEVNET_STAKING_LIVE.rewardTokenMint} />
+                <KedolikInfoRow label="Stake Lock V1 Program" value={KEDOLIK_DEVNET_CONFIG.stakeLockProgramId} />
+                <KedolikInfoRow label="ProgramData" value={KEDOLIK_DEVNET_CONFIG.programData} />
+                <KedolikInfoRow label="Admin Config PDA" value={KEDOLIK_DEVNET_CONFIG.adminConfigPda} />
                 <KedolikInfoRow
-                  label="Derived Miner PDA"
-                  value={activePool?.derivedUserMinerAddress ?? 'Connect wallet'}
+                  label="Selected Pool"
+                  value={activePool?.quarryAddress ?? 'No staking pool configured yet'}
                 />
                 <KedolikInfoRow
-                  label="Rewards / second"
-                  value={rewardsPerSecond}
+                  label="Position PDA"
+                  value={activePool?.derivedUserMinerAddress ?? 'Connect wallet after pool creation'}
                 />
                 <KedolikInfoRow
-                  label="Last Checkpoint"
+                  label="Last Loaded"
                   value={
                     activePool?.lastCheckpointTs
                       ? formatKedolikUnixTime(activePool.lastCheckpointTs)
-                      : 'Loading live pool data...'
+                      : 'No pool loaded'
                   }
+                />
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <FieldCard
+                  label="Fresh Program Deploy Estimate"
+                  value={`${KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS.observedDevnetProgramDeploySol} SOL`}
+                />
+                <FieldCard
+                  label="Create Staking Pool Rent"
+                  value={`${KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS.createStakingPoolRentOnlySol} SOL`}
+                />
+                <FieldCard
+                  label="User Stake Position Rent"
+                  value={`${KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS.userStakePositionRentSol} SOL`}
+                />
+                <FieldCard
+                  label="Create Lock Rent"
+                  value={`${KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS.createLockRentOnlySol} SOL`}
                 />
               </div>
 
@@ -558,7 +957,7 @@ export default function KedolikStaking() {
                 </button>
 
                 <a
-                  href={getKedolikExplorerAccountUrl(KEDOLIK_DEVNET_STAKING_LIVE.quarry)}
+                  href={getKedolikExplorerAccountUrl(KEDOLIK_DEVNET_CONFIG.stakeLockProgramId)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10"

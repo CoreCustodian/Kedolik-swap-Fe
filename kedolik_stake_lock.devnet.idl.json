@@ -1,0 +1,1050 @@
+{
+  "address": "6M6TzGRSRqYxYmAihrXgF6MrmrCJno4RK9mEDdtkanCW",
+  "metadata": {
+    "name": "kedolik_stake_lock",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Lean SPL staking and time-locking program for Kedolik"
+  },
+  "instructions": [
+    {
+      "name": "claim_rewards",
+      "discriminator": [
+        4,
+        144,
+        132,
+        71,
+        116,
+        23,
+        151,
+        80
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "owner_reward_token",
+          "writable": true
+        },
+        {
+          "name": "reward_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "close_position",
+      "discriminator": [
+        123,
+        134,
+        81,
+        0,
+        49,
+        68,
+        98,
+        98
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "pool",
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "position",
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_lock",
+      "discriminator": [
+        171,
+        216,
+        92,
+        167,
+        165,
+        8,
+        153,
+        90
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token_lock",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  107
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              },
+              {
+                "kind": "arg",
+                "path": "lock_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "lock_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  108,
+                  111,
+                  99,
+                  107,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "token_lock"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner_token",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "lock_id",
+          "type": "u64"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "unlock_ts",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "fund_rewards",
+      "discriminator": [
+        114,
+        64,
+        163,
+        112,
+        175,
+        167,
+        19,
+        121
+      ],
+      "accounts": [
+        {
+          "name": "funder",
+          "signer": true
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "funder_reward_token",
+          "writable": true
+        },
+        {
+          "name": "reward_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "initialize_admin_config",
+      "discriminator": [
+        133,
+        214,
+        35,
+        2,
+        50,
+        232,
+        95,
+        164
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "admin_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  109,
+                  105,
+                  110,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "initialize_staking_pool",
+      "discriminator": [
+        231,
+        155,
+        216,
+        76,
+        185,
+        211,
+        34,
+        151
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "admin_config"
+          ]
+        },
+        {
+          "name": "admin_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  109,
+                  105,
+                  110,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_mint"
+        },
+        {
+          "name": "reward_mint"
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  107,
+                  105,
+                  110,
+                  103,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "admin_config"
+              },
+              {
+                "kind": "account",
+                "path": "stake_mint"
+              },
+              {
+                "kind": "account",
+                "path": "reward_mint"
+              },
+              {
+                "kind": "arg",
+                "path": "pool_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "stake_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  107,
+                  101,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reward_vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  101,
+                  119,
+                  97,
+                  114,
+                  100,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "pool_id",
+          "type": "u64"
+        },
+        {
+          "name": "reward_rate_per_second",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "open_position",
+      "discriminator": [
+        135,
+        128,
+        47,
+        77,
+        15,
+        152,
+        240,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "pool"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "set_reward_rate",
+      "discriminator": [
+        253,
+        201,
+        190,
+        20,
+        48,
+        38,
+        120,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "admin_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  109,
+                  105,
+                  110,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          },
+          "relations": [
+            "pool"
+          ]
+        },
+        {
+          "name": "pool",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "admin_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "reward_rate_per_second",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "stake",
+      "discriminator": [
+        206,
+        176,
+        202,
+        18,
+        200,
+        209,
+        179,
+        108
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "owner_stake_token",
+          "writable": true
+        },
+        {
+          "name": "stake_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "transfer_admin_authority",
+      "discriminator": [
+        198,
+        11,
+        182,
+        207,
+        145,
+        11,
+        135,
+        215
+      ],
+      "accounts": [
+        {
+          "name": "admin_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  97,
+                  100,
+                  109,
+                  105,
+                  110,
+                  95,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "admin_config"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
+      "name": "unlock",
+      "discriminator": [
+        101,
+        155,
+        40,
+        21,
+        158,
+        189,
+        56,
+        203
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "token_lock"
+          ]
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "token_lock"
+          ]
+        },
+        {
+          "name": "token_lock",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "token_lock"
+          ]
+        },
+        {
+          "name": "owner_token",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "unstake",
+      "discriminator": [
+        90,
+        95,
+        107,
+        42,
+        205,
+        124,
+        50,
+        225
+      ],
+      "accounts": [
+        {
+          "name": "owner",
+          "signer": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "pool",
+          "writable": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "position",
+          "writable": true
+        },
+        {
+          "name": "owner_stake_token",
+          "writable": true
+        },
+        {
+          "name": "stake_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "AdminConfig",
+      "discriminator": [
+        156,
+        10,
+        79,
+        161,
+        71,
+        9,
+        62,
+        77
+      ]
+    },
+    {
+      "name": "StakePosition",
+      "discriminator": [
+        78,
+        165,
+        30,
+        111,
+        171,
+        125,
+        11,
+        220
+      ]
+    },
+    {
+      "name": "StakingPool",
+      "discriminator": [
+        203,
+        19,
+        214,
+        220,
+        220,
+        154,
+        24,
+        102
+      ]
+    },
+    {
+      "name": "TokenLock",
+      "discriminator": [
+        73,
+        228,
+        144,
+        241,
+        154,
+        44,
+        93,
+        238
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidAmount",
+      "msg": "Amount must be greater than zero."
+    },
+    {
+      "code": 6001,
+      "name": "InvalidMint",
+      "msg": "The provided mint does not match this account."
+    },
+    {
+      "code": 6002,
+      "name": "Unauthorized",
+      "msg": "You are not authorized to perform this action."
+    },
+    {
+      "code": 6003,
+      "name": "MathOverflow",
+      "msg": "Math overflow."
+    },
+    {
+      "code": 6004,
+      "name": "InsufficientStakedBalance",
+      "msg": "Not enough tokens are staked."
+    },
+    {
+      "code": 6005,
+      "name": "NoRewards",
+      "msg": "There are no rewards to claim."
+    },
+    {
+      "code": 6006,
+      "name": "InsufficientRewardVault",
+      "msg": "The reward vault does not contain enough tokens."
+    },
+    {
+      "code": 6007,
+      "name": "InvalidUnlockTime",
+      "msg": "Unlock time must be in the future."
+    },
+    {
+      "code": 6008,
+      "name": "LockNotExpired",
+      "msg": "The lock has not expired yet."
+    },
+    {
+      "code": 6009,
+      "name": "InvalidLockVault",
+      "msg": "The lock vault balance is invalid."
+    },
+    {
+      "code": 6010,
+      "name": "PositionNotEmpty",
+      "msg": "The stake position still has staked tokens or unclaimed rewards."
+    },
+    {
+      "code": 6011,
+      "name": "InvalidAuthority",
+      "msg": "The new authority address is invalid."
+    }
+  ],
+  "types": [
+    {
+      "name": "AdminConfig",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StakePosition",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "rewards_owed",
+            "type": "u64"
+          },
+          {
+            "name": "reward_per_token_paid",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StakingPool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool_id",
+            "type": "u64"
+          },
+          {
+            "name": "admin_config",
+            "type": "pubkey"
+          },
+          {
+            "name": "stake_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "stake_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "reward_vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "total_staked",
+            "type": "u64"
+          },
+          {
+            "name": "reward_rate_per_second",
+            "type": "u64"
+          },
+          {
+            "name": "last_update_ts",
+            "type": "i64"
+          },
+          {
+            "name": "reward_per_token_stored",
+            "type": "u128"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "stake_vault_bump",
+            "type": "u8"
+          },
+          {
+            "name": "reward_vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TokenLock",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "lock_id",
+            "type": "u64"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "unlock_ts",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "vault_bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ]
+}

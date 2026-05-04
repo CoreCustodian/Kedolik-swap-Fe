@@ -1,6 +1,7 @@
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { getMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
 import toast from 'react-hot-toast';
@@ -21,10 +22,16 @@ import {
 
 type LockerAction = 'create' | 'lookup' | 'claim' | 'cancel' | 'close' | 'updateRecipient' | null;
 type LockListSort = 'newest' | 'unlockLatest' | 'unlockSoon' | 'amountHigh' | 'amountLow';
+type SimpleLockForm = {
+  recipient: string;
+  tokenMint: string;
+  amount: string;
+  unlockAt: string;
+};
 
 const LEADERBOARD_PAGE_SIZE = 10;
 
-const DEFAULT_SIMPLE_LOCK_FORM = {
+const DEFAULT_SIMPLE_LOCK_FORM: SimpleLockForm = {
   recipient: '',
   tokenMint: KEDOLIK_DEVNET_LOCKER_LIVE.tokenMint,
   amount: '',
@@ -312,7 +319,7 @@ export default function KedolikLocker() {
 
   const lockerProgramStatus = programs.kedolikLocker;
   const connectedWalletAddress = publicKey?.toString() ?? null;
-  const sampleEscrowAddress = KEDOLIK_DEVNET_LOCKER_LIVE.escrow;
+  const sampleEscrowAddress = KEDOLIK_DEVNET_LOCKER_LIVE.escrow || null;
   const preferredEscrowAddress =
     connected && escrows.length > 0
       ? escrows[0].address
@@ -484,7 +491,7 @@ export default function KedolikLocker() {
       return 'Wallet Match';
     }
 
-    if (selectedEscrow.address === sampleEscrowAddress) {
+    if (sampleEscrowAddress && selectedEscrow.address === sampleEscrowAddress) {
       return 'Sample Lock';
     }
 
@@ -496,6 +503,7 @@ export default function KedolikLocker() {
 
   const showingSampleEscrowForViewer = Boolean(
     selectedEscrow &&
+      sampleEscrowAddress &&
       selectedEscrow.address === sampleEscrowAddress &&
       !selectedEscrow.walletMatchesCreator &&
       !selectedEscrow.walletMatchesRecipient
@@ -572,6 +580,13 @@ export default function KedolikLocker() {
 
     if (!simpleLockForm.recipient.trim() || !simpleLockForm.tokenMint.trim()) {
       toast.error('Recipient wallet and token CA are required to create a lock.');
+      return;
+    }
+
+    if (connectedWalletAddress && simpleLockForm.recipient.trim() !== connectedWalletAddress) {
+      toast.error(
+        'Stake Lock V1 unlocks back to the creator wallet. A different recipient wallet requires a contract change.'
+      );
       return;
     }
 
@@ -784,6 +799,24 @@ export default function KedolikLocker() {
               </div>
             )}
 
+            <section className="card mt-6 p-5 sm:p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <h2 className="text-xl font-bold font-heading text-white">Deploy Staking Instance</h2>
+                  <p className="mt-2 max-w-2xl text-sm text-gray-300">
+                    Create a Stake Lock V1 staking pool, fund rewards, and save the pool
+                    configuration from the staking admin controls.
+                  </p>
+                </div>
+                <Link
+                  to="/kedolik-staking"
+                  className="btn-primary w-fit whitespace-nowrap text-sm"
+                >
+                  Open Staking Admin
+                </Link>
+              </div>
+            </section>
+
             <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="card p-6 sm:p-8">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -924,8 +957,8 @@ export default function KedolikLocker() {
                   </div>
                   <div className="mt-2 text-sm leading-relaxed text-gray-200">
                     Kedolik Locker creates a single on-chain lock based on the specified
-                    configuration. Once the unlock time is reached, the designated recipient can
-                    claim the released tokens.
+                    configuration. Once the unlock time is reached, the lock owner can claim the
+                    released tokens.
                   </div>
                 </div>
               </aside>

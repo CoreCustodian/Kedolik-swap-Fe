@@ -1,93 +1,100 @@
 import { PublicKey } from '@solana/web3.js';
-import preparedDevnetConfig from '../../devnet-prepared.json';
-import liveDevnetSummary from '../../devnet-live-summary.json';
-import liveLockerConfig from '../../devnet-locker-live.json';
-import liveStakingConfig from '../../devnet-staking-live.json';
-import { STAKING_LOCKING_DEVNET } from '../../frontend-devnet.ts';
-import { STAKING_LOCKING_DEVNET_LIVE } from '../../frontend-devnet-live.ts';
+import {
+  KEDOLIK_STAKE_LOCK_ADMIN_CONFIG,
+  KEDOLIK_STAKE_LOCK_CURRENT_ADMIN,
+  KEDOLIK_STAKE_LOCK_PROGRAM_DATA,
+  KEDOLIK_STAKE_LOCK_PROGRAM_ID,
+  KEDOLIK_STAKE_LOCK_V1,
+  getKedolikStakeLockExplorerUrl,
+} from './kedolikStakeLockV1';
 
 export type KedolikProgramKey =
+  | 'kedolikStakeLock'
   | 'kedolikLocker'
-  | 'kedolikStaking'
-  | 'kedolikMintWrapper';
+  | 'kedolikStaking';
 
 export const KEDOLIK_DEVNET_CONFIG = {
-  cluster: STAKING_LOCKING_DEVNET_LIVE.cluster,
-  lockerProgramId: STAKING_LOCKING_DEVNET_LIVE.lockerProgramId,
-  kedolikStakingProgramId: STAKING_LOCKING_DEVNET_LIVE.quarryMineProgramId,
-  kedolikMintWrapperProgramId: STAKING_LOCKING_DEVNET_LIVE.quarryMintWrapperProgramId,
-  deployerWallet: STAKING_LOCKING_DEVNET_LIVE.deployerWallet,
-  feeReceiverWallet: STAKING_LOCKING_DEVNET_LIVE.feeReceiverWallet,
+  cluster: KEDOLIK_STAKE_LOCK_V1.cluster,
+  stakeLockProgramId: KEDOLIK_STAKE_LOCK_V1.programId,
+  lockerProgramId: KEDOLIK_STAKE_LOCK_V1.programId,
+  kedolikStakingProgramId: KEDOLIK_STAKE_LOCK_V1.programId,
+  adminConfigPda: KEDOLIK_STAKE_LOCK_V1.adminConfigPda,
+  programData: KEDOLIK_STAKE_LOCK_V1.programData,
+  upgradeAuthority: KEDOLIK_STAKE_LOCK_V1.upgradeAuthority,
+  currentStakingAdmin: KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin,
+  deployerWallet: KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin,
+  feeReceiverWallet: KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin,
 } as const;
 
 export const KEDOLIK_INTERNAL_PROGRAM_NAMES: Record<KedolikProgramKey, string> = {
-  kedolikLocker: 'locker',
-  kedolikStaking: 'quarry_mine',
-  kedolikMintWrapper: 'quarry_mint_wrapper',
+  kedolikStakeLock: 'kedolik_stake_lock',
+  kedolikLocker: 'kedolik_stake_lock',
+  kedolikStaking: 'kedolik_stake_lock',
 };
 
 export const KEDOLIK_PROGRAM_LABELS: Record<KedolikProgramKey, string> = {
+  kedolikStakeLock: 'Kedolik Stake Lock V1',
   kedolikLocker: 'Kedolik Locker',
   kedolikStaking: 'Kedolik Staking',
-  kedolikMintWrapper: 'Kedolik Mint Wrapper',
 };
 
 export const KEDOLIK_DEVNET_PUBLIC_KEYS = {
-  lockerProgram: new PublicKey(KEDOLIK_DEVNET_CONFIG.lockerProgramId),
-  kedolikStakingProgram: new PublicKey(KEDOLIK_DEVNET_CONFIG.kedolikStakingProgramId),
-  kedolikMintWrapperProgram: new PublicKey(KEDOLIK_DEVNET_CONFIG.kedolikMintWrapperProgramId),
-  deployerWallet: new PublicKey(KEDOLIK_DEVNET_CONFIG.deployerWallet),
-  feeReceiverWallet: new PublicKey(KEDOLIK_DEVNET_CONFIG.feeReceiverWallet),
+  stakeLockProgram: KEDOLIK_STAKE_LOCK_PROGRAM_ID,
+  lockerProgram: KEDOLIK_STAKE_LOCK_PROGRAM_ID,
+  kedolikStakingProgram: KEDOLIK_STAKE_LOCK_PROGRAM_ID,
+  adminConfig: KEDOLIK_STAKE_LOCK_ADMIN_CONFIG,
+  programData: KEDOLIK_STAKE_LOCK_PROGRAM_DATA,
+  deployerWallet: KEDOLIK_STAKE_LOCK_CURRENT_ADMIN,
+  feeReceiverWallet: KEDOLIK_STAKE_LOCK_CURRENT_ADMIN,
 };
 
 export const KEDOLIK_DEVNET_DEPLOYMENT = {
-  preparedStatus: preparedDevnetConfig.status,
-  liveStatus: liveDevnetSummary.status,
-  network: liveDevnetSummary.network,
-  notes: liveDevnetSummary.notes,
-  programsLive: liveDevnetSummary.programs_live,
+  preparedStatus: 'replaced',
+  liveStatus: 'live',
+  network: KEDOLIK_STAKE_LOCK_V1.cluster,
+  notes: [
+    'Legacy staking, mint-wrapper, and locker programs have been replaced by the combined Stake Lock V1 program.',
+    'No staking pool instance exists yet on devnet; the staking admin must initialize one.',
+  ],
+  programsLive: true,
 };
 
 export const KEDOLIK_DEVNET_SOURCE_CHECK = {
-  frontendDevnet: STAKING_LOCKING_DEVNET,
-  frontendDevnetLive: STAKING_LOCKING_DEVNET_LIVE,
-  preparedPrograms: preparedDevnetConfig.programs,
-  liveStaking: liveStakingConfig,
-  liveLocker: liveLockerConfig,
+  frontendDevnet: null,
+  frontendDevnetLive: null,
+  stakeLockV1: KEDOLIK_STAKE_LOCK_V1,
 };
 
 export const KEDOLIK_DEPLOYMENT_PENDING = false;
 
 export const KEDOLIK_DEVNET_LIVE_MESSAGES = {
-  staking: 'Kedolik Staking is live on devnet.',
-  locker: 'Kedolik Locker is live on devnet.',
-  testObjects: 'Devnet test pool and sample vesting escrow are available.',
+  staking: 'Kedolik Staking is live through the Stake Lock V1 devnet program.',
+  locker: 'Kedolik Locker is now live.',
+  testObjects: 'No staking pool instance has been created yet on devnet.',
 } as const;
 
 export const KEDOLIK_DEVNET_STAKING_LIVE = {
-  mintWrapper: liveStakingConfig.mint_wrapper,
-  rewarder: liveStakingConfig.rewarder,
-  quarry: liveStakingConfig.quarry,
-  minter: liveStakingConfig.minter,
-  miner: liveStakingConfig.miner,
-  stakeTokenMint: liveStakingConfig.stake_token_mint,
-  rewardTokenMint: liveStakingConfig.reward_token_mint,
-  userStakeTokenAccount: liveStakingConfig.user_stake_token_account,
-  userRewardTokenAccount: liveStakingConfig.user_reward_token_account,
+  pool: '',
+  poolId: '',
+  stakeVault: '',
+  rewardVault: '',
+  stakeTokenMint: '',
+  rewardTokenMint: '',
 } as const;
 
 export const KEDOLIK_DEVNET_LOCKER_LIVE = {
-  escrow: liveLockerConfig.escrow,
-  escrowTokenAccount: liveLockerConfig.escrow_token_account,
-  tokenMint: liveLockerConfig.token_mint,
-  recipient: liveLockerConfig.recipient,
+  escrow: '',
+  escrowTokenAccount: '',
+  tokenMint: '',
+  recipient: KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin,
 } as const;
 
-export const getKedolikExplorerAccountUrl = (address: string) =>
-  `https://explorer.solana.com/address/${address}?cluster=${KEDOLIK_DEVNET_CONFIG.cluster}`;
+export const getKedolikExplorerAccountUrl = getKedolikStakeLockExplorerUrl;
 
 export const KEDOLIK_PROGRAM_ADDRESSES: Record<KedolikProgramKey, string> = {
+  kedolikStakeLock: KEDOLIK_DEVNET_CONFIG.stakeLockProgramId,
   kedolikLocker: KEDOLIK_DEVNET_CONFIG.lockerProgramId,
   kedolikStaking: KEDOLIK_DEVNET_CONFIG.kedolikStakingProgramId,
-  kedolikMintWrapper: KEDOLIK_DEVNET_CONFIG.kedolikMintWrapperProgramId,
 };
+
+export const toKedolikPublicKey = (value: string) => new PublicKey(value);

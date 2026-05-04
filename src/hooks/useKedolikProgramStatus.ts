@@ -1,7 +1,7 @@
 import { useConnection } from '@solana/wallet-adapter-react';
+import { PublicKey } from '@solana/web3.js';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  KEDOLIK_DEVNET_PUBLIC_KEYS,
   KEDOLIK_PROGRAM_ADDRESSES,
   KEDOLIK_PROGRAM_LABELS,
   KedolikProgramKey,
@@ -28,13 +28,17 @@ const defaultStatus = (key: KedolikProgramKey): KedolikProgramStatus => ({
   statusMessage: 'Checking live devnet status...',
 });
 
+const getDefaultStatusMap = () =>
+  Object.fromEntries(
+    (Object.keys(KEDOLIK_PROGRAM_ADDRESSES) as KedolikProgramKey[]).map((key) => [
+      key,
+      defaultStatus(key),
+    ])
+  ) as KedolikProgramStatusMap;
+
 export const useKedolikProgramStatus = () => {
   const { connection } = useConnection();
-  const [programs, setPrograms] = useState<KedolikProgramStatusMap>({
-    kedolikLocker: defaultStatus('kedolikLocker'),
-    kedolikStaking: defaultStatus('kedolikStaking'),
-    kedolikMintWrapper: defaultStatus('kedolikMintWrapper'),
-  });
+  const [programs, setPrograms] = useState<KedolikProgramStatusMap>(getDefaultStatusMap);
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
@@ -44,13 +48,9 @@ export const useKedolikProgramStatus = () => {
       const entries = await Promise.all(
         (Object.keys(KEDOLIK_PROGRAM_ADDRESSES) as KedolikProgramKey[]).map(async (key) => {
           try {
-            const accountInfo = await connection.getAccountInfo(KEDOLIK_DEVNET_PUBLIC_KEYS[
-              key === 'kedolikLocker'
-                ? 'lockerProgram'
-                : key === 'kedolikStaking'
-                  ? 'kedolikStakingProgram'
-                  : 'kedolikMintWrapperProgram'
-            ]);
+            const accountInfo = await connection.getAccountInfo(
+              new PublicKey(KEDOLIK_PROGRAM_ADDRESSES[key])
+            );
 
             if (!accountInfo) {
               return [

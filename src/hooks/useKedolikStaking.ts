@@ -2,6 +2,7 @@ import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapte
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createKedolikStakingService,
+  KEDOLIK_STAKING_POOLS_UPDATED_EVENT,
   KedolikStakingQuarrySummary,
 } from '../services/kedolikStaking';
 
@@ -34,6 +35,20 @@ export const useKedolikStaking = () => {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const handlePoolsUpdated = () => {
+      void refresh();
+    };
+
+    window.addEventListener(KEDOLIK_STAKING_POOLS_UPDATED_EVENT, handlePoolsUpdated);
+    window.addEventListener('storage', handlePoolsUpdated);
+
+    return () => {
+      window.removeEventListener(KEDOLIK_STAKING_POOLS_UPDATED_EVENT, handlePoolsUpdated);
+      window.removeEventListener('storage', handlePoolsUpdated);
+    };
   }, [refresh]);
 
   return {
