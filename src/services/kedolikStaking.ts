@@ -25,7 +25,7 @@ import { confirmTransactionWithBlockhash } from '../utils/transactionConfirmatio
 
 const ADMIN_CONFIG_DISCRIMINATOR = Buffer.from('9c0a4fa147093e4d', 'hex');
 const STAKING_POOL_DISCRIMINATOR = Buffer.from('cb13d6dcdc9a1866', 'hex');
-const USER_POSITION_DISCRIMINATOR = Buffer.from('7b2ef811f087c911', 'hex');
+const USER_POSITION_DISCRIMINATOR = Buffer.from('4ea51e6fab7d0bdc', 'hex');
 
 const INITIALIZE_ADMIN_CONFIG_DISCRIMINATOR = Buffer.from('85d6230232e85fa4', 'hex');
 const TRANSFER_ADMIN_AUTHORITY_DISCRIMINATOR = Buffer.from('c60bb6cf910b87d7', 'hex');
@@ -91,9 +91,9 @@ export interface KedolikStakingService {
   cluster: 'devnet';
   kedolikStakingProgramId: string;
   fetchLiveQuarries: (walletPublicKey?: PublicKey | null) => Promise<KedolikStakingQuarrySummary[]>;
-  stake: (amountRaw: string) => Promise<string>;
-  unstake: (amountRaw: string) => Promise<string>;
-  claimRewards: () => Promise<string>;
+  stake: (amountRaw: string, poolAddress?: string) => Promise<string>;
+  unstake: (amountRaw: string, poolAddress?: string) => Promise<string>;
+  claimRewards: (poolAddress?: string) => Promise<string>;
   getUserMinerAddress: (authority: PublicKey) => string;
   getStatusMessage: () => string;
 }
@@ -135,6 +135,19 @@ interface DecodedUserPosition {
   rewardsOwed: bigint;
 }
 
+interface DecodedStakingPoolState {
+  poolId: bigint;
+  adminConfig: PublicKey;
+  stakeMint: PublicKey;
+  rewardMint: PublicKey;
+  stakeVault: PublicKey;
+  rewardVault: PublicKey;
+  totalStaked: bigint;
+  rewardRatePerSecond: bigint;
+  lastUpdateTs: number;
+  rewardPerTokenStored: bigint;
+}
+
 interface EnsureAtaResult {
   address: PublicKey;
   instruction: TransactionInstruction | null;
@@ -150,6 +163,9 @@ const readPublicKey = (data: Buffer, offset: number) => new PublicKey(data.subar
 
 const readU64 = (data: Buffer, offset: number) =>
   data.length >= offset + 8 ? data.readBigUInt64LE(offset) : 0n;
+
+const readI64 = (data: Buffer, offset: number) =>
+  data.length >= offset + 8 ? Number(data.readBigInt64LE(offset)) : 0;
 
 const readU128 = (data: Buffer, offset: number) => {
   if (data.length < offset + 16) {
@@ -390,34 +406,47 @@ const decodeOnChainPoolAccount = (
   publicKey: PublicKey,
   data: Buffer
 ): KedolikStoredStakingPool | null => {
-  if (!data.subarray(0, 8).equals(STAKING_POOL_DISCRIMINATOR) || data.length < 219) {
+  const state = decodeStakingPoolState(data);
+
+  if (!state) {
     return null;
   }
 
-  const poolId = readU64(data, 8);
-  const adminConfig = readPublicKey(data, 16);
-  const stakeMint = readPublicKey(data, 48);
-  const rewardMint = readPublicKey(data, 80);
-  const stakeVault = readPublicKey(data, 112);
-  const rewardVault = readPublicKey(data, 144);
-  const rewardRatePerSecond = readU64(data, 184);
-
-  if (!adminConfig.equals(KEDOLIK_STAKE_LOCK_ADMIN_CONFIG)) {
+  if (!state.adminConfig.equals(KEDOLIK_STAKE_LOCK_ADMIN_CONFIG)) {
     return null;
   }
 
   return {
-    poolId: poolId.toString(),
+    poolId: state.poolId.toString(),
     pool: publicKey.toString(),
-    stakeMint: stakeMint.toString(),
-    rewardMint: rewardMint.toString(),
-    stakeVault: stakeVault.toString(),
-    rewardVault: rewardVault.toString(),
-    rewardRatePerSecond: rewardRatePerSecond.toString(),
+    stakeMint: state.stakeMint.toString(),
+    rewardMint: state.rewardMint.toString(),
+    stakeVault: state.stakeVault.toString(),
+    rewardVault: state.rewardVault.toString(),
+    rewardRatePerSecond: state.rewardRatePerSecond.toString(),
     rewardAmountRaw: '0',
     rewardDurationSeconds: 0,
     createdAt: 0,
     updatedAt: Date.now(),
+  };
+};
+
+const decodeStakingPoolState = (data: Buffer): DecodedStakingPoolState | null => {
+  if (!data.subarray(0, 8).equals(STAKING_POOL_DISCRIMINATOR) || data.length < 219) {
+    return null;
+  }
+
+  return {
+    poolId: readU64(data, 8),
+    adminConfig: readPublicKey(data, 16),
+    stakeMint: readPublicKey(data, 48),
+    rewardMint: readPublicKey(data, 80),
+    stakeVault: readPublicKey(data, 112),
+    rewardVault: readPublicKey(data, 144),
+    totalStaked: readU64(data, 176),
+    rewardRatePerSecond: readU64(data, 184),
+    lastUpdateTs: readI64(data, 192),
+    rewardPerTokenStored: readU128(data, 200),
   };
 };
 
@@ -529,6 +558,32 @@ const fetchUserPosition = async (
   };
 };
 
+const estimateClaimableRewards = (
+  poolState: DecodedStakingPoolState | null,
+  position: DecodedUserPosition | null
+) => {
+  if (!position) {
+    return null;
+  }
+
+  if (!poolState) {
+    return position.rewardsOwed;
+  }
+
+  let rewardPerTokenStored = poolState.rewardPerTokenStored;
+  const elapsedSeconds = BigInt(Math.max(0, Math.floor(Date.now() / 1000) - poolState.lastUpdateTs));
+
+  if (poolState.totalStaked > 0n && poolState.rewardRatePerSecond > 0n && elapsedSeconds > 0n) {
+    rewardPerTokenStored +=
+      (elapsedSeconds * poolState.rewardRatePerSecond * ACC_REWARD_SCALE) / poolState.totalStaked;
+  }
+
+  const rewardPerTokenDelta =
+    rewardPerTokenStored > position.rewardDebt ? rewardPerTokenStored - position.rewardDebt : 0n;
+
+  return position.rewardsOwed + (position.amount * rewardPerTokenDelta) / ACC_REWARD_SCALE;
+};
+
 const getTokenDecimals = async (connection: Connection, mint: PublicKey) => {
   try {
     const mintInfo = await getMint(connection, mint, 'confirmed');
@@ -568,14 +623,18 @@ const mapPoolToSummary = async (
     fetchUserPosition(connection, pool, walletPublicKey),
     connection.getAccountInfo(pool, 'confirmed'),
   ]);
+  const livePool = poolAccountInfo ? decodeStakingPoolState(Buffer.from(poolAccountInfo.data)) : null;
   const positionAddress = position.address?.toString() ?? null;
-  const rewardRatePerSecond = poolConfig.rewardRatePerSecond || null;
+  const rewardRatePerSecond = livePool?.rewardRatePerSecond.toString() ?? poolConfig.rewardRatePerSecond ?? null;
+  const totalStakedRaw = livePool?.totalStaked.toString() ?? totalStaked;
   const rewardRateYearly =
     rewardRatePerSecond && rewardRatePerSecond !== '0'
       ? (BigInt(rewardRatePerSecond) * 365n * 24n * 60n * 60n).toString()
       : null;
-  const userStake = position.decoded?.amount.toString() ?? (position.infoExists ? null : '0');
-  const claimableRewards = position.decoded?.rewardsOwed.toString() ?? (position.infoExists ? null : '0');
+  const estimatedClaimableRewards = estimateClaimableRewards(livePool, position.decoded);
+  const userStake = position.decoded?.amount.toString() ?? '0';
+  const claimableRewards = estimatedClaimableRewards?.toString() ?? '0';
+  const hasPosition = Boolean(position.decoded);
   const objectStatus = (address: string, exists: boolean): KedolikStakingObjectStatus => ({
     address,
     exists,
@@ -597,7 +656,7 @@ const mapPoolToSummary = async (
     rewardTokenSymbol: 'REWARD',
     stakeTokenDecimals,
     rewardTokenDecimals,
-    totalStaked,
+    totalStaked: totalStakedRaw,
     stakers: null,
     rewardRate: rewardRateYearly,
     rewardsPerSecondEstimate: rewardRatePerSecond,
@@ -605,9 +664,9 @@ const mapPoolToSummary = async (
     userRewardWalletBalance,
     userStake,
     claimableRewards,
-    claimableRewardsState: claimableRewards === null ? 'pending' : 'ready',
-    lastCheckpointTs: poolConfig.updatedAt ? Math.floor(poolConfig.updatedAt / 1000) : null,
-    hasMiner: position.infoExists,
+    claimableRewardsState: hasPosition ? 'ready' : 'pending',
+    lastCheckpointTs: livePool?.lastUpdateTs ?? (poolConfig.updatedAt ? Math.floor(poolConfig.updatedAt / 1000) : null),
+    hasMiner: hasPosition,
     status: poolAccountInfo ? 'live' : 'awaiting_deployment',
     statusMessage: poolAccountInfo
       ? 'Live Stake Lock V1 pool'
@@ -620,7 +679,7 @@ const mapPoolToSummary = async (
       quarry: objectStatus(poolConfig.pool, Boolean(poolAccountInfo)),
       minter: objectStatus(poolConfig.rewardVault, true),
       sampleMiner: objectStatus(positionAddress ?? '', Boolean(positionAddress)),
-      userMiner: positionAddress ? objectStatus(positionAddress, position.infoExists) : null,
+      userMiner: positionAddress ? objectStatus(positionAddress, hasPosition) : null,
     },
   };
 };
@@ -635,6 +694,21 @@ const getFirstPoolOrThrow = async (connection: Connection) => {
   }
 
   return pools[0];
+};
+
+const getPoolOrThrow = async (connection: Connection, poolAddress?: string) => {
+  if (!poolAddress) {
+    return getFirstPoolOrThrow(connection);
+  }
+
+  const pools = await getConfiguredPools(connection);
+  const pool = pools.find((candidate) => candidate.pool === poolAddress);
+
+  if (!pool) {
+    throw new Error('Selected staking pool was not found on the current RPC endpoint.');
+  }
+
+  return pool;
 };
 
 const buildInitializeAdminConfigInstruction = (authority: PublicKey) =>
@@ -986,10 +1060,10 @@ export const createKedolikStakingService = (
 
     return Promise.all(pools.map((pool) => mapPoolToSummary(connection, pool, walletPublicKey)));
   },
-  stake: async (amountRaw) => {
+  stake: async (amountRaw, poolAddress) => {
     const signerWallet = assertWallet(wallet);
     const rawAmount = assertRawAmount(amountRaw);
-    const poolConfig = await getFirstPoolOrThrow(connection);
+    const poolConfig = await getPoolOrThrow(connection, poolAddress);
     const pool = toPublicKey(poolConfig.pool);
     const stakeMint = toPublicKey(poolConfig.stakeMint);
     const stakeVault = toPublicKey(poolConfig.stakeVault);
@@ -1033,10 +1107,10 @@ export const createKedolikStakingService = (
 
     return sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
   },
-  unstake: async (amountRaw) => {
+  unstake: async (amountRaw, poolAddress) => {
     const signerWallet = assertWallet(wallet);
     const rawAmount = assertRawAmount(amountRaw);
-    const poolConfig = await getFirstPoolOrThrow(connection);
+    const poolConfig = await getPoolOrThrow(connection, poolAddress);
     const pool = toPublicKey(poolConfig.pool);
     const stakeMint = toPublicKey(poolConfig.stakeMint);
     const stakeVault = toPublicKey(poolConfig.stakeVault);
@@ -1081,9 +1155,9 @@ export const createKedolikStakingService = (
 
     return sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
   },
-  claimRewards: async () => {
+  claimRewards: async (poolAddress) => {
     const signerWallet = assertWallet(wallet);
-    const poolConfig = await getFirstPoolOrThrow(connection);
+    const poolConfig = await getPoolOrThrow(connection, poolAddress);
     const pool = toPublicKey(poolConfig.pool);
     const rewardMint = toPublicKey(poolConfig.rewardMint);
     const rewardVault = toPublicKey(poolConfig.rewardVault);
