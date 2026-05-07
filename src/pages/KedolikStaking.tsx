@@ -50,6 +50,23 @@ const formatInputAmount = (rawValue: string | null, decimals: number | null) =>
   rawValue === null ? '' : formatKedolikTokenAmount(rawValue, decimals);
 
 const formatPercentHundredths = (value: bigint) => {
+  const compactUnits = [
+    { divisor: 1_000_000_000_000n, suffix: 'T' },
+    { divisor: 1_000_000_000n, suffix: 'B' },
+    { divisor: 1_000_000n, suffix: 'M' },
+    { divisor: 1_000n, suffix: 'K' },
+  ];
+
+  for (const unit of compactUnits) {
+    if (value >= unit.divisor * 100n) {
+      const scaledHundredths = value / unit.divisor;
+      const whole = scaledHundredths / 100n;
+      const fraction = (scaledHundredths % 100n).toString().padStart(2, '0').replace(/0+$/, '');
+
+      return `${whole.toLocaleString('en-US')}${fraction ? `.${fraction}` : ''}${unit.suffix}%`;
+    }
+  }
+
   const whole = value / 100n;
   const fraction = (value % 100n).toString().padStart(2, '0');
 
@@ -82,6 +99,12 @@ const formatStakingApy = (
   } catch {
     return 'Unavailable';
   }
+};
+
+const formatPoolCardLabel = (title: string) => {
+  const poolId = title.match(/#(.+)$/)?.[1];
+
+  return poolId ? `Pool #${poolId.slice(-6)}` : 'Stake Lock V1';
 };
 
 const parseAmountToRaw = (value: string, decimals: number | null) => {
@@ -820,7 +843,8 @@ export default function KedolikStaking() {
                           const rewardToken = getTokenInfo(pool.rewardTokenMint);
                           const stakeSymbol = stakeToken?.symbol ?? 'Stake Token';
                           const rewardSymbol = rewardToken?.symbol ?? 'Reward Token';
-                          const poolName = `Earn ${rewardSymbol} by staking ${stakeSymbol}`;
+                          const poolName = `${stakeSymbol} -> ${rewardSymbol}`;
+                          const poolLabel = formatPoolCardLabel(pool.title);
                           const apy = formatStakingApy(
                             pool.rewardRate,
                             pool.totalStaked,
@@ -850,18 +874,18 @@ export default function KedolikStaking() {
                                     <TokenAvatar token={stakeToken} fallback="ST" className="ring-2 ring-dark-900" />
                                   </div>
                                   <div className="min-w-0">
-                                    <div className="truncate text-sm font-semibold text-white">{poolName}</div>
-                                    <div className="truncate text-[11px] text-gray-400">{pool.title}</div>
+                                    <div className="text-sm font-semibold leading-snug text-white">{poolName}</div>
+                                    <div className="text-[11px] text-gray-400">{poolLabel}</div>
                                   </div>
                                 </div>
                                 <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-gray-300">
                                   {pool.status === 'live' ? 'Live' : 'Pending'}
                                 </span>
                               </div>
-                              <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-gray-400">
-                                <span className="min-w-0 truncate">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
-                                <span className="min-w-0 truncate">Rewards: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
-                                <span className="min-w-0 truncate">APY: {apy}</span>
+                              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-gray-400">
+                                <span className="min-w-0">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
+                                <span className="min-w-0">Reward/s: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
+                                <span className="min-w-0">APY: {apy}</span>
                               </div>
                             </button>
                           );
