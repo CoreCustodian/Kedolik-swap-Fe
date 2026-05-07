@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useConfig } from '../contexts/ConfigContext';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
-import { isAdditionalAdminWallet } from '../config/adminAccess';
 import { fetchKedolikStakeLockAdminConfig } from '../services/kedolikStaking';
 
 const Navbar = () => {
@@ -14,28 +13,24 @@ const Navbar = () => {
   const location = useLocation();
   const { publicKey, connected } = useWallet();
   const { connection } = useConnection();
-  const wallet = useWallet();
   const { adminAddress } = useConfig();
   const { kedolikDevnetEnabled } = useFeatureFlags();
-  const [feeReceiverAddress, setFeeReceiverAddress] = useState<string | null>(null);
   const [stakingAdminAddress, setStakingAdminAddress] = useState<string | null>(null);
 
   const isActive = (path: string) => location.pathname === path;
   const connectedWalletAddress = publicKey?.toString() ?? null;
-  const hasProtocolAdminAccess =
-    Boolean(connectedWalletAddress && adminAddress && connectedWalletAddress === adminAddress) ||
-    isAdditionalAdminWallet(connectedWalletAddress);
-  const isStakingAdmin = Boolean(
+  const hasProtocolAdminAccess = Boolean(
+    connectedWalletAddress && adminAddress && connectedWalletAddress === adminAddress
+  );
+  const hasStakingAdminAccess = Boolean(
     connectedWalletAddress && stakingAdminAddress && connectedWalletAddress === stakingAdminAddress
   );
-  const isAdmin = hasProtocolAdminAccess || isStakingAdmin;
-  const isFeeReceiver = publicKey && feeReceiverAddress ? publicKey.toString() === feeReceiverAddress : false;
-  const canAccessAdmin = isAdmin || isFeeReceiver;
+  const canShowAdminNav = connected && (hasProtocolAdminAccess || hasStakingAdminAccess);
   const isMoreActive = [
     '/kedolik-locker',
     '/kedolik-staking',
-    '/kedolikfun',
-    '/kedolikpad',
+    '/KedolFun',
+    '/KedolPad',
   ].includes(location.pathname);
 
   useEffect(() => {
@@ -67,34 +62,6 @@ const Navbar = () => {
       document.removeEventListener('keydown', handleEscape);
     };
   }, [isMoreOpen]);
-
-  // Fetch fee receiver address when wallet connects
-  useEffect(() => {
-    const fetchFeeReceiver = async () => {
-      if (!connected || !wallet) {
-        setFeeReceiverAddress(null);
-        return;
-      }
-
-      try {
-        const { getProgram, AMM_CONFIG } = await import('../utils/amm');
-        const program = getProgram(connection, wallet);
-        
-        type AmmCfg = { feeReceiver?: { toString(): string }; fundOwner?: { toString(): string } };
-        type AmmProgramAcc = { ammConfig: { fetch: (p: unknown) => Promise<AmmCfg> } };
-        const ammConfigData = await (program.account as unknown as AmmProgramAcc).ammConfig.fetch(AMM_CONFIG);
-        
-        const feeReceiver = ammConfigData.feeReceiver || ammConfigData.fundOwner;
-        if (feeReceiver) {
-          setFeeReceiverAddress(feeReceiver.toString());
-        }
-      } catch (error) {
-        console.error('Error fetching fee receiver:', error);
-      }
-    };
-
-    fetchFeeReceiver();
-  }, [connected, wallet, connection]);
 
   useEffect(() => {
     const fetchStakingAdmin = async () => {
@@ -174,7 +141,7 @@ const Navbar = () => {
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-brand scale-x-0 group-hover:scale-x-100 transition-transform duration-300"></div>
             </Link>
 
-            {canAccessAdmin && (
+            {canShowAdminNav && (
               <Link 
                 to="/admin"
                 className={`relative px-4 py-2 rounded-lg font-medium transition-all duration-300 group ${
@@ -183,7 +150,7 @@ const Navbar = () => {
                     : 'text-yellow-400 hover:text-yellow-300 border border-yellow-400/20 hover:border-yellow-400/40'
                 }`}
               >
-                {isAdmin ? '👑 Admin' : '💰 Fees'}
+                Admin
                 {isActive('/admin') && (
                   <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-400"></div>
                 )}
@@ -243,19 +210,19 @@ const Navbar = () => {
                     Launch
                   </div>
                   <Link
-                    to="/kedolikfun"
+                    to="/KedolFun"
                     className="flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-gray-200 transition-all duration-300 hover:bg-white/5 hover:text-white"
                   >
-                    <span>KedolikFun</span>
+                    <span>KedolFun</span>
                     <span className="rounded-full border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
                       PREVIEW
                     </span>
                   </Link>
                   <Link
-                    to="/kedolikpad"
+                    to="/KedolPad"
                     className="flex items-center justify-between rounded-2xl px-3 py-3 text-sm text-gray-200 transition-all duration-300 hover:bg-white/5 hover:text-white"
                   >
-                    <span>KedolikPad</span>
+                    <span>KedolPad</span>
                     <span className="rounded-full border border-red-500/30 bg-red-500/20 px-2 py-0.5 text-[10px] font-bold text-red-400">
                       PREVIEW
                     </span>
@@ -370,7 +337,7 @@ const Navbar = () => {
               Profile
             </Link>
             
-            {canAccessAdmin && (
+            {canShowAdminNav && (
               <Link 
                 to="/admin"
                 className={`flex items-center gap-2 px-4 py-3 rounded-xl font-medium transition-all duration-300 ${
@@ -380,8 +347,7 @@ const Navbar = () => {
                 }`}
                 onClick={() => setIsOpen(false)}
               >
-                <span className="text-xl">{isAdmin ? '👑' : '💰'}</span>
-                {isAdmin ? 'Admin Panel' : 'Fee Management'}
+                Admin Panel
               </Link>
             )}
             
@@ -392,21 +358,21 @@ const Navbar = () => {
             </div>
             
             <Link 
-              to="/kedolikfun" 
+              to="/KedolFun" 
               className="flex items-center justify-between px-4 py-3 rounded-xl font-medium text-gray-300 hover:bg-white/5 hover:text-white transition-all duration-300"
               onClick={() => setIsOpen(false)}
             >
-              <span>KedolikFun</span>
+              <span>KedolFun</span>
               <span className="px-2 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded-full border border-red-500/30 font-bold">
                 SOON
               </span>
             </Link>
             <Link 
-              to="/kedolikpad" 
+              to="/KedolPad" 
               className="flex items-center justify-between px-4 py-3 rounded-xl font-medium text-gray-300 hover:bg-white/5 hover:text-white transition-all duration-300"
               onClick={() => setIsOpen(false)}
             >
-              <span>KedolikPad</span>
+              <span>KedolPad</span>
               <span className="px-2 py-0.5 text-[10px] bg-red-500/20 text-red-400 rounded-full border border-red-500/30 font-bold">
                 SOON
               </span>

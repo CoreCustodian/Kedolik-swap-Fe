@@ -3,9 +3,9 @@ import KedolikPlaceholderPage from '../components/kedolik/KedolikPlaceholderPage
 export default function KedolikPad() {
   return (
     <KedolikPlaceholderPage
-      badge="KedolikPad"
-      title="KedolikPad"
-      description="KedolikPad now has a clean routed page for launchpad-style experiences instead of a dead navigation target. It is ready to be expanded into a full product surface later."
+      badge="KedolPad"
+      title="KedolPad"
+      description="KedolPad now has a clean routed page for launchpad-style experiences instead of a dead navigation target. It is ready to be expanded into a full product surface later."
       status="Foundation Ready"
       cards={[
         {

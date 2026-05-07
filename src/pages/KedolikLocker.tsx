@@ -1,7 +1,6 @@
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { getMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
 import toast from 'react-hot-toast';
@@ -11,6 +10,8 @@ import {
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { useKedolikLocker } from '../hooks/useKedolikLocker';
 import { useKedolikProgramStatus } from '../hooks/useKedolikProgramStatus';
+import { useRemoteTokens } from '../hooks/useRemoteTokens';
+import type { TokenInfo } from '../config/tokens';
 import { fetchAllLockerEscrows, LockerEscrowSummary } from '../services/kedolikLocker';
 import {
   KedolikPageFrame,
@@ -112,6 +113,40 @@ const PreviewRow = ({ label, value }: { label: string; value: string }) => (
   </div>
 );
 
+const TokenIdentity = ({ token, fallback }: { token?: TokenInfo; fallback: string }) => {
+  const symbol = token?.symbol ?? fallback;
+
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      {token?.logoURI ? (
+        <img
+          src={token.logoURI}
+          alt={symbol}
+          className="h-9 w-9 shrink-0 rounded-full object-cover"
+          onError={(event) => {
+            const target = event.target as HTMLImageElement;
+            target.style.display = 'none';
+            if (target.nextElementSibling) {
+              (target.nextElementSibling as HTMLElement).style.display = 'flex';
+            }
+          }}
+        />
+      ) : null}
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-brand text-xs font-bold text-white ${
+          token?.logoURI ? 'hidden' : ''
+        }`}
+      >
+        {symbol.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold text-white">{symbol}</div>
+        <div className="truncate text-xs text-gray-400">{token?.name ?? 'Unknown token'}</div>
+      </div>
+    </div>
+  );
+};
+
 const getLockProgressPercent = (escrow: LockerEscrowSummary) => {
   const total = toBigInt(escrow.scheduledTotalAmount);
 
@@ -124,20 +159,34 @@ const getLockProgressPercent = (escrow: LockerEscrowSummary) => {
   return Math.min(100, Number(basisPoints) / 100);
 };
 
-const compareBigIntDesc = (left: bigint, right: bigint) => {
-  if (left === right) {
-    return 0;
-  }
-
-  return left > right ? -1 : 1;
+const scaleLockAmountForSort = (escrow: LockerEscrowSummary) => {
+  const decimals = escrow.tokenDecimals ?? 0;
+  return {
+    amount: toBigInt(escrow.scheduledTotalAmount),
+    decimals,
+  };
 };
 
-const compareBigIntAsc = (left: bigint, right: bigint) => {
-  if (left === right) {
-    return 0;
+const compareLockAmount = (
+  left: LockerEscrowSummary,
+  right: LockerEscrowSummary,
+  direction: 'asc' | 'desc'
+) => {
+  const leftAmount = scaleLockAmountForSort(left);
+  const rightAmount = scaleLockAmountForSort(right);
+  const maxDecimals = Math.max(leftAmount.decimals, rightAmount.decimals);
+  const leftScaled = leftAmount.amount * 10n ** BigInt(maxDecimals - leftAmount.decimals);
+  const rightScaled = rightAmount.amount * 10n ** BigInt(maxDecimals - rightAmount.decimals);
+
+  if (leftScaled === rightScaled) {
+    return right.vestingStartTime - left.vestingStartTime;
   }
 
-  return left > right ? 1 : -1;
+  if (direction === 'desc') {
+    return leftScaled > rightScaled ? -1 : 1;
+  }
+
+  return leftScaled > rightScaled ? 1 : -1;
 };
 
 const getLockStatusLabel = (escrow: LockerEscrowSummary) => {
@@ -168,11 +217,13 @@ const LockListItem = ({
   escrow,
   index,
   isSelected,
+  token,
   onSelect,
 }: {
   escrow: LockerEscrowSummary;
   index: number;
   isSelected: boolean;
+  token?: TokenInfo;
   onSelect: () => void;
 }) => (
   <button
@@ -189,12 +240,15 @@ const LockListItem = ({
         #{index + 1}
       </div>
 
-      <div>
+      <div className="min-w-0">
         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Locked</div>
         <div className="mt-1 text-base font-semibold text-white">
           {formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}
         </div>
-        <div className="mt-1 text-xs text-gray-400">
+        <div className="mt-2">
+          <TokenIdentity token={token} fallback="Token" />
+        </div>
+        <div className="mt-2 text-xs text-gray-400">
           {getLockProgressPercent(escrow).toFixed(0)}% unlocked
         </div>
       </div>
@@ -227,12 +281,14 @@ const LockListItem = ({
 
 const ClaimableLockCard = ({
   escrow,
+  token,
   onSelect,
   onClaim,
   disabled,
   isClaiming,
 }: {
   escrow: LockerEscrowSummary;
+  token?: TokenInfo;
   onSelect: () => void;
   onClaim: () => void;
   disabled: boolean;
@@ -246,6 +302,9 @@ const ClaimableLockCard = ({
         </div>
         <div className="mt-2 text-2xl font-bold text-white">
           {formatKedolikTokenAmount(escrow.claimableAmount, escrow.tokenDecimals)}
+        </div>
+        <div className="mt-3">
+          <TokenIdentity token={token} fallback="Token" />
         </div>
       </div>
       <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
@@ -288,6 +347,7 @@ export default function KedolikLocker() {
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshPrograms } = useKedolikProgramStatus();
+  const { getTokenByMint } = useRemoteTokens();
   const {
     escrows,
     isLoadingEscrows,
@@ -318,6 +378,17 @@ export default function KedolikLocker() {
   const [leaderboardPage, setLeaderboardPage] = useState(1);
 
   const lockerProgramStatus = programs.kedolikLocker;
+  const getTokenInfo = (mintAddress?: string | null) => {
+    if (!mintAddress) {
+      return undefined;
+    }
+
+    try {
+      return getTokenByMint(new PublicKey(mintAddress));
+    } catch {
+      return undefined;
+    }
+  };
   const connectedWalletAddress = publicKey?.toString() ?? null;
   const sampleEscrowAddress = KEDOLIK_DEVNET_LOCKER_LIVE.escrow || null;
   const preferredEscrowAddress =
@@ -338,15 +409,9 @@ export default function KedolikLocker() {
       case 'unlockSoon':
         return left.cliffTime - right.cliffTime;
       case 'amountHigh':
-        return compareBigIntDesc(
-          toBigInt(left.scheduledTotalAmount),
-          toBigInt(right.scheduledTotalAmount)
-        );
+        return compareLockAmount(left, right, 'desc');
       case 'amountLow':
-        return compareBigIntAsc(
-          toBigInt(left.scheduledTotalAmount),
-          toBigInt(right.scheduledTotalAmount)
-        );
+        return compareLockAmount(left, right, 'asc');
       case 'newest':
       default:
         return right.vestingStartTime - left.vestingStartTime;
@@ -553,6 +618,8 @@ export default function KedolikLocker() {
       simpleLockAmountRaw > 0n
   );
 
+  const createLockToken = getTokenInfo(simpleLockForm.tokenMint.trim());
+  const selectedLockToken = getTokenInfo(selectedEscrow?.tokenMint);
   const selectedLockHeadline = selectedEscrow ? getLockHeadline(selectedEscrow) : '';
   const minimumUnlockAt = useMemo(() => formatDateTimeLocalValue(Date.now() + 5 * 60 * 1000), []);
   const unlockPreviewLabel = simpleLockForm.unlockAt
@@ -799,24 +866,6 @@ export default function KedolikLocker() {
               </div>
             )}
 
-            <section className="card mt-6 p-5 sm:p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div>
-                  <h2 className="text-xl font-bold font-heading text-white">Deploy Staking Instance</h2>
-                  <p className="mt-2 max-w-2xl text-sm text-gray-300">
-                    Create a Stake Lock V1 staking pool, fund rewards, and save the pool
-                    configuration from the staking admin controls.
-                  </p>
-                </div>
-                <Link
-                  to="/kedolik-staking"
-                  className="btn-primary w-fit whitespace-nowrap text-sm"
-                >
-                  Open Staking Admin
-                </Link>
-              </div>
-            </section>
-
             <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="card p-6 sm:p-8">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -859,6 +908,11 @@ export default function KedolikLocker() {
                       placeholder="Token contract address"
                       className="mt-3 w-full bg-transparent font-mono text-sm text-white outline-none placeholder:text-gray-500"
                     />
+                    {simpleLockForm.tokenMint.trim() && (
+                      <div className="mt-4 rounded-xl border border-white/10 bg-dark-900/60 p-3">
+                        <TokenIdentity token={createLockToken} fallback="Token" />
+                      </div>
+                    )}
                   </label>
 
                   <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
@@ -984,6 +1038,7 @@ export default function KedolikLocker() {
                       <ClaimableLockCard
                         key={escrow.address}
                         escrow={escrow}
+                        token={getTokenInfo(escrow.tokenMint)}
                         onSelect={() => handleSelectEscrow(escrow.address)}
                         onClaim={() => void handleClaimWalletEscrow(escrow)}
                         disabled={actionLoading !== null}
@@ -1019,6 +1074,9 @@ export default function KedolikLocker() {
                         </span>
                       </div>
                       <h2 className="mt-4 text-3xl font-bold font-heading text-white">Selected Lock</h2>
+                      <div className="mt-4 max-w-sm rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+                        <TokenIdentity token={selectedLockToken} fallback="Token" />
+                      </div>
                       <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300">
                         {selectedLockHeadline}
                       </p>
@@ -1239,7 +1297,10 @@ export default function KedolikLocker() {
                     <button
                       key={sort}
                       type="button"
-                      onClick={() => setLockListSort(sort)}
+                      onClick={() => {
+                        setLockListSort(sort);
+                        setLeaderboardPage(1);
+                      }}
                       className={`rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
                         lockListSort === sort
                           ? 'border-brand-cyan/40 bg-brand-cyan/15 text-brand-cyan'
@@ -1275,6 +1336,7 @@ export default function KedolikLocker() {
                       escrow={escrow}
                       index={leaderboardStartIndex + index}
                       isSelected={selectedEscrow?.address === escrow.address}
+                      token={getTokenInfo(escrow.tokenMint)}
                       onSelect={() => handleSelectEscrow(escrow.address)}
                     />
                   ))

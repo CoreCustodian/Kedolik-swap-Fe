@@ -225,8 +225,9 @@ const Pools = () => {
                 {isLoadingStats ? 'Loading...' : formatUsdCompact(totalTVL)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                Liquidity {formatUsdCompact(poolStats?.poolLiquidityUsd ?? 0)} + locks{' '}
-                {formatUsdCompact(poolStats?.lockedAssetsUsd ?? 0)}
+                Pool vaults {formatUsdCompact(poolStats?.poolLiquidityUsd ?? 0)} + token locks{' '}
+                {formatUsdCompact(poolStats?.lockedTokenUsd ?? 0)} + locked LP{' '}
+                {formatUsdCompact(poolStats?.lockedLiquidityUsd ?? 0)}
               </p>
             </div>
             <div className="card p-4 sm:p-6">
@@ -235,8 +236,8 @@ const Pools = () => {
                 {isLoadingStats ? 'Loading...' : formatUsdCompact(totalVolume)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                Direct {formatUsdCompact(poolStats?.directVolume24hUsd ?? 0)} + aggregator{' '}
-                {formatUsdCompact(poolStats?.aggregatorVolume24hUsd ?? 0)}
+                On-chain swaps: direct {formatUsdCompact(poolStats?.directVolume24hUsd ?? 0)} +
+                aggregator {formatUsdCompact(poolStats?.aggregatorVolume24hUsd ?? 0)}
               </p>
           </div>
             <div className="card p-4 sm:p-6">
@@ -255,7 +256,7 @@ const Pools = () => {
           {(statsError || (poolStats && !poolStats.reached24hBoundary)) && (
             <div className="mb-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-xs text-amber-100">
               {statsError ||
-                `24h volume is calculated from the latest ${poolStats?.scannedTransactions ?? 0} program transactions. Add an indexer endpoint before launch for full high-traffic coverage.`}
+                `24h volume is calculated from on-chain SwapEvent logs. The scan loaded ${poolStats?.scannedTransactions ?? 0} program transaction${poolStats?.scannedTransactions === 1 ? '' : 's'} but did not reach the full 24h boundary on this RPC response.`}
             </div>
           )}
 

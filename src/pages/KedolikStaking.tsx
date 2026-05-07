@@ -14,6 +14,8 @@ import { KEDOLIK_DEVNET_README_NOTES } from '../features/kedolikDevnetNotes';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { useKedolikProgramStatus } from '../hooks/useKedolikProgramStatus';
 import { useKedolikStaking } from '../hooks/useKedolikStaking';
+import { useRemoteTokens } from '../hooks/useRemoteTokens';
+import type { TokenInfo } from '../config/tokens';
 import {
   createKedolikStakingPool,
   fetchKedolikStakeLockAdminConfig,
@@ -112,6 +114,84 @@ const FieldCard = ({
   </div>
 );
 
+const TokenPill = ({ token, fallback }: { token?: TokenInfo; fallback: string }) => {
+  const symbol = token?.symbol ?? fallback;
+
+  return (
+    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+      {token?.logoURI ? (
+        <img
+          src={token.logoURI}
+          alt={symbol}
+          className="h-8 w-8 shrink-0 rounded-full object-cover"
+          onError={(event) => {
+            const target = event.target as HTMLImageElement;
+            target.style.display = 'none';
+            if (target.nextElementSibling) {
+              (target.nextElementSibling as HTMLElement).style.display = 'flex';
+            }
+          }}
+        />
+      ) : null}
+      <div
+        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-brand text-xs font-bold text-white ${
+          token?.logoURI ? 'hidden' : ''
+        }`}
+      >
+        {symbol.slice(0, 2).toUpperCase()}
+      </div>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-semibold text-white">{symbol}</div>
+        <div className="truncate text-[11px] text-gray-400">{token?.name ?? 'Unknown token'}</div>
+      </div>
+    </div>
+  );
+};
+
+const TokenAvatar = ({
+  token,
+  fallback,
+  className = '',
+}: {
+  token?: TokenInfo;
+  fallback: string;
+  className?: string;
+}) => {
+  const symbol = token?.symbol ?? fallback;
+
+  if (token?.logoURI) {
+    return (
+      <>
+        <img
+          src={token.logoURI}
+          alt={symbol}
+          className={`h-8 w-8 rounded-full object-cover ${className}`}
+          onError={(event) => {
+            const target = event.target as HTMLImageElement;
+            target.style.display = 'none';
+            if (target.nextElementSibling) {
+              (target.nextElementSibling as HTMLElement).style.display = 'flex';
+            }
+          }}
+        />
+        <div
+          className={`hidden h-8 w-8 items-center justify-center rounded-full bg-gradient-brand text-[10px] font-bold text-white ${className}`}
+        >
+          {symbol.slice(0, 2).toUpperCase()}
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <div
+      className={`flex h-8 w-8 items-center justify-center rounded-full bg-gradient-brand text-[10px] font-bold text-white ${className}`}
+    >
+      {symbol.slice(0, 2).toUpperCase()}
+    </div>
+  );
+};
+
 const AdminInput = ({
   label,
   value,
@@ -144,6 +224,7 @@ export default function KedolikStaking() {
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshProgramStatus } = useKedolikProgramStatus();
   const { quarries, isLoading, error, refresh, stakingService } = useKedolikStaking();
+  const { getTokenByMint } = useRemoteTokens();
   const [amount, setAmount] = useState('');
   const [amountMode, setAmountMode] = useState<'stake' | 'unstake'>('stake');
   const [actionLoading, setActionLoading] = useState<'stake' | 'unstake' | 'claim' | null>(null);
@@ -160,6 +241,24 @@ export default function KedolikStaking() {
     () => quarries.find((pool) => pool.id === selectedPoolId) ?? quarries[0] ?? null,
     [quarries, selectedPoolId]
   );
+  const getTokenInfo = (mintAddress?: string | null) => {
+    if (!mintAddress) {
+      return undefined;
+    }
+
+    try {
+      return getTokenByMint(new PublicKey(mintAddress));
+    } catch {
+      return undefined;
+    }
+  };
+  const activeStakeToken = getTokenInfo(activePool?.stakeTokenMint);
+  const activeRewardToken = getTokenInfo(activePool?.rewardTokenMint);
+  const activeStakeSymbol = activeStakeToken?.symbol ?? 'Stake Token';
+  const activeRewardSymbol = activeRewardToken?.symbol ?? 'Reward Token';
+  const activePoolName = activePool
+    ? `Earn ${activeRewardSymbol} by staking ${activeStakeSymbol}`
+    : 'Kedolik Staking';
   const hasMultiplePools = quarries.length > 1;
   const stakeLockProgramStatus = programs.kedolikStakeLock;
   const connectedWalletAddress = publicKey?.toString() ?? null;
@@ -655,11 +754,17 @@ export default function KedolikStaking() {
                 )}
               </div>
 
-              <h1 className="text-3xl font-bold font-heading sm:text-4xl">Kedolik Staking</h1>
+              <h1 className="text-3xl font-bold font-heading sm:text-4xl">{activePoolName}</h1>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300 sm:text-base">
                 {KEDOLIK_DEVNET_LIVE_MESSAGES.staking} Stake, unstake, and claim rewards from a
                 selected Stake Lock V1 pool.
               </p>
+              {activePool && (
+                <div className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
+                  <TokenPill token={activeStakeToken} fallback="Stake Token" />
+                  <TokenPill token={activeRewardToken} fallback="Reward Token" />
+                </div>
+              )}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[560px] lg:grid-cols-4">
@@ -711,6 +816,11 @@ export default function KedolikStaking() {
                       <div className={`grid max-h-[320px] gap-2 overflow-y-auto pr-1 ${hasMultiplePools ? 'md:grid-cols-2' : ''}`}>
                         {quarries.map((pool) => {
                           const selected = activePool?.id === pool.id;
+                          const stakeToken = getTokenInfo(pool.stakeTokenMint);
+                          const rewardToken = getTokenInfo(pool.rewardTokenMint);
+                          const stakeSymbol = stakeToken?.symbol ?? 'Stake Token';
+                          const rewardSymbol = rewardToken?.symbol ?? 'Reward Token';
+                          const poolName = `Earn ${rewardSymbol} by staking ${stakeSymbol}`;
                           const apy = formatStakingApy(
                             pool.rewardRate,
                             pool.totalStaked,
@@ -734,7 +844,16 @@ export default function KedolikStaking() {
                               }`}
                             >
                               <div className="flex items-center justify-between gap-3">
-                                <span className="text-sm font-semibold text-white">{pool.title}</span>
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div className="flex shrink-0 -space-x-2">
+                                    <TokenAvatar token={rewardToken} fallback="RW" className="ring-2 ring-dark-900" />
+                                    <TokenAvatar token={stakeToken} fallback="ST" className="ring-2 ring-dark-900" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate text-sm font-semibold text-white">{poolName}</div>
+                                    <div className="truncate text-[11px] text-gray-400">{pool.title}</div>
+                                  </div>
+                                </div>
                                 <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-gray-300">
                                   {pool.status === 'live' ? 'Live' : 'Pending'}
                                 </span>
@@ -754,7 +873,7 @@ export default function KedolikStaking() {
                       <div>
                         <h2 className="text-xl font-bold font-heading text-white">Your Position</h2>
                         <p className="mt-1 text-xs text-gray-400">
-                          Selected pool: {activePool.title}
+                          Selected pool: {activePoolName}
                         </p>
                       </div>
                       <span className="w-fit rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
@@ -931,6 +1050,8 @@ export default function KedolikStaking() {
               )}
             </section>
 
+            {connected && isStakeAdmin && (
+              <>
             <section className="card mt-6 p-6 sm:p-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
@@ -1171,6 +1292,8 @@ export default function KedolikStaking() {
                 </a>
               </div>
             </details>
+              </>
+            )}
           </>
         )}
       </div>

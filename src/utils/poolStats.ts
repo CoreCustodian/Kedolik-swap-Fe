@@ -5,13 +5,11 @@ import {
   PublicKey,
   SignaturesForAddressOptions,
 } from '@solana/web3.js';
-import { PROGRAM_ID } from '../config/addresses';
+import { PROGRAM_ID, USDC_MINT, USDT_MINT } from '../config/addresses';
 import { fetchAllLockerEscrows } from '../services/kedolikLocker';
-import { getTokenPrices, getTokenUsdPrice } from './prices';
 import { PoolInfo } from './amm';
 
 const DAY_SECONDS = 24 * 60 * 60;
-const MAX_SIGNATURE_PAGES = 3;
 const SIGNATURE_PAGE_SIZE = 1000;
 const TRANSACTION_BATCH_SIZE = 100;
 const SWAP_EVENT_DISCRIMINATOR = Buffer.from([64, 198, 205, 232, 38, 8, 113, 226]);
@@ -70,19 +68,6 @@ const getPoolLiquidityUsd = (
   return pool.token0Reserve * token0Price + pool.token1Reserve * token1Price;
 };
 
-const getPoolSymbolForMint = (pools: PoolInfo[], mint: string) => {
-  const pool = pools.find(
-    (candidate) =>
-      candidate.token0Mint.toString() === mint || candidate.token1Mint.toString() === mint
-  );
-
-  if (!pool) {
-    return undefined;
-  }
-
-  return pool.token0Mint.toString() === mint ? pool.token0Symbol : pool.token1Symbol;
-};
-
 const getKnownDecimals = (pools: PoolInfo[]) => {
   const decimalsByMint = new Map<string, number>();
 
@@ -96,27 +81,51 @@ const getKnownDecimals = (pools: PoolInfo[]) => {
 };
 
 const getPrices = async (
-  connection: Connection,
+  _connection: Connection,
   pools: PoolInfo[],
   mintAddresses: string[]
 ) => {
   const uniqueMints = [...new Set(mintAddresses)];
-  const prices = await getTokenPrices(uniqueMints);
-  const missingMints = uniqueMints.filter((mint) => !prices.has(mint));
+  const prices = new Map<string, number>();
+  const stableMints = new Set([USDC_MINT.toString(), USDT_MINT.toString()]);
 
-  await Promise.all(
-    missingMints.map(async (mint) => {
-      const fallbackPrice = await getTokenUsdPrice(
-        connection,
-        mint,
-        getPoolSymbolForMint(pools, mint)
-      );
+  uniqueMints.forEach((mint) => {
+    if (stableMints.has(mint)) {
+      prices.set(mint, 1);
+    }
+  });
 
-      if (fallbackPrice > 0) {
-        prices.set(mint, fallbackPrice);
+  // Derive token prices from Kedolik pool reserves. This keeps pool stats based on
+  // deployed pool/vault contract data and makes new meme pools priceable as soon as
+  // they have a path to USDC/USDT through Kedolik liquidity.
+  for (let pass = 0; pass < pools.length; pass += 1) {
+    let updated = false;
+
+    pools.forEach((pool) => {
+      if (pool.token0Reserve <= 0 || pool.token1Reserve <= 0) {
+        return;
       }
-    })
-  );
+
+      const token0Mint = pool.token0Mint.toString();
+      const token1Mint = pool.token1Mint.toString();
+      const token0Price = prices.get(token0Mint);
+      const token1Price = prices.get(token1Mint);
+
+      if (token0Price && !token1Price) {
+        prices.set(token1Mint, (pool.token0Reserve * token0Price) / pool.token1Reserve);
+        updated = true;
+      }
+
+      if (token1Price && !token0Price) {
+        prices.set(token0Mint, (pool.token1Reserve * token1Price) / pool.token0Reserve);
+        updated = true;
+      }
+    });
+
+    if (!updated) {
+      break;
+    }
+  }
 
   return prices;
 };
@@ -191,7 +200,7 @@ const fetchRecentProgramTransactions = async (connection: Connection) => {
   let before: string | undefined;
   let reached24hBoundary = false;
 
-  for (let page = 0; page < MAX_SIGNATURE_PAGES; page += 1) {
+  while (!reached24hBoundary) {
     const options: SignaturesForAddressOptions = {
       limit: SIGNATURE_PAGE_SIZE,
       before,

@@ -5,7 +5,6 @@ import BN from 'bn.js';
 import { fetchPools, PROGRAM_ID } from '../utils/amm';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { useConfig } from '../contexts/ConfigContext';
-import { isAdditionalAdminWallet } from '../config/adminAccess';
 import {
   deriveKedolikStakingPoolAddresses,
   fetchKedolikStakingAdminPools,
@@ -192,11 +191,10 @@ export default function Admin() {
   const isOnChainAdmin = Boolean(
     connectedWalletAddress && currentAdmin && connectedWalletAddress === currentAdmin
   );
-  const isFrontendAdmin = isAdditionalAdminWallet(connectedWalletAddress);
   const isStakingAdmin = Boolean(
     connectedWalletAddress && stakingAdminConfig?.authority === connectedWalletAddress
   );
-  const isAdmin = isOnChainAdmin || isFrontendAdmin;
+  const isAdmin = isOnChainAdmin;
   const isFeeReceiver = publicKey && currentFeeReceiver ? publicKey.toString() === currentFeeReceiver : false;
   const canAccessAdmin = isAdmin || isFeeReceiver || isStakingAdmin;
   
@@ -1086,7 +1084,7 @@ export default function Admin() {
                     <div className="flex flex-wrap gap-2">
                       {isAdmin && (
                         <span className="px-3 py-1 bg-brand-purple/20 text-brand-purple rounded-full text-xs font-semibold border border-brand-purple/30">
-                          Admin {isOnChainAdmin ? '(Can change settings)' : '(Frontend access)'}
+                          Admin (Can change settings)
                         </span>
                       )}
                       {isStakingAdmin && (
@@ -1112,13 +1110,6 @@ export default function Admin() {
                     🔄 Refresh Status
                   </button>
                 </div>
-                {isFrontendAdmin && !isOnChainAdmin && (
-                  <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-200">
-                    This wallet has frontend admin-page access. On-chain settings transactions may
-                    still require the wallet stored as protocol admin in the AMM config. Staking
-                    pool creation requires the current Stake Lock admin.
-                  </div>
-                )}
               </div>
 
               {/* Tabs */}
@@ -2025,12 +2016,7 @@ export default function Admin() {
                       {currentAdmin && isOnChainAdmin && (
                         <div className="mt-2 text-xs text-green-400">✅ You are the current admin</div>
                       )}
-                      {currentAdmin && !isOnChainAdmin && isFrontendAdmin && (
-                        <div className="mt-2 text-xs text-yellow-400">
-                          Frontend admin-page access granted
-                        </div>
-                      )}
-                      {currentAdmin && !isOnChainAdmin && !isFrontendAdmin && (
+                      {currentAdmin && !isOnChainAdmin && (
                         <div className="mt-2 text-xs text-red-400">❌ You are NOT the admin</div>
                       )}
                       {!currentAdmin && (

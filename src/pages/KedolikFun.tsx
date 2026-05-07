@@ -3,9 +3,9 @@ import KedolikPlaceholderPage from '../components/kedolik/KedolikPlaceholderPage
 export default function KedolikFun() {
   return (
     <KedolikPlaceholderPage
-      badge="KedolikFun"
-      title="KedolikFun"
-      description="KedolikFun is now routed into a stable branded page for community drops, social quests, and campaign-style launches. The route no longer breaks the UI."
+      badge="KedolFun"
+      title="KedolFun"
+      description="KedolFun is now routed into a stable branded page for community drops, social quests, and campaign-style launches. The route no longer breaks the UI."
       status="Preview Mode"
       cards={[
         {

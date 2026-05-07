@@ -33,8 +33,10 @@ function App() {
                 <Route path="/kedolik" element={<Navigate to="/kedolik-locker" replace />} />
                 <Route path="/kedolik-locker" element={<KedolikLocker />} />
                 <Route path="/kedolik-staking" element={<KedolikStaking />} />
-                <Route path="/kedolikfun" element={<KedolikFun />} />
-                <Route path="/kedolikpad" element={<KedolikPad />} />
+                <Route path="/KedolFun" element={<KedolikFun />} />
+                <Route path="/KedolPad" element={<KedolikPad />} />
+                <Route path="/kedolikfun" element={<Navigate to="/KedolFun" replace />} />
+                <Route path="/kedolikpad" element={<Navigate to="/KedolPad" replace />} />
               </Routes>
             </div>
             <Footer />
