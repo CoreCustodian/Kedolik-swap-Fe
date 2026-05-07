@@ -216,25 +216,13 @@ const getLockStatusClass = (escrow: LockerEscrowSummary) => {
 const LockListItem = ({
   escrow,
   index,
-  isSelected,
   token,
-  onSelect,
 }: {
   escrow: LockerEscrowSummary;
   index: number;
-  isSelected: boolean;
   token?: TokenInfo;
-  onSelect: () => void;
 }) => (
-  <button
-    type="button"
-    onClick={onSelect}
-    className={`w-full rounded-2xl border px-4 py-4 text-left transition-all duration-300 ${
-      isSelected
-        ? 'border-brand-cyan/50 bg-brand-cyan/10 shadow-[0_16px_40px_rgba(98,192,235,0.12)]'
-        : 'border-white/10 bg-white/[0.03] hover:border-brand-cyan/40 hover:bg-white/[0.06]'
-    }`}
-  >
+  <div className="w-full select-none rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left">
     <div className="grid gap-4 md:grid-cols-[52px_1.1fr_0.9fr_0.9fr_0.85fr] md:items-center">
       <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-dark-900/80 text-sm font-bold text-white">
         #{index + 1}
@@ -276,7 +264,7 @@ const LockListItem = ({
         </div>
       </div>
     </div>
-  </button>
+  </div>
 );
 
 const ClaimableLockCard = ({
@@ -1335,9 +1323,7 @@ export default function KedolikLocker() {
                       key={escrow.address}
                       escrow={escrow}
                       index={leaderboardStartIndex + index}
-                      isSelected={selectedEscrow?.address === escrow.address}
                       token={getTokenInfo(escrow.tokenMint)}
-                      onSelect={() => handleSelectEscrow(escrow.address)}
                     />
                   ))
                 ) : (
