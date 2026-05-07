@@ -127,6 +127,49 @@ export interface CreateKedolikStakingPoolInput {
   rewardDurationSeconds: number;
 }
 
+export interface KedolikStakingPoolAddresses {
+  poolId: string;
+  pool: string;
+  stakeVault: string;
+  rewardVault: string;
+}
+
+export interface KedolikStakingTokenBalance {
+  mint: string;
+  tokenAccount: string;
+  decimals: number;
+  balanceRaw: string;
+}
+
+export type KedolikStakingAdminPoolStatus =
+  | 'active'
+  | 'unfunded'
+  | 'low_rewards'
+  | 'rewards_stopped'
+  | 'missing';
+
+export interface KedolikStakingAdminPool {
+  poolId: string;
+  pool: string;
+  stakeMint: string;
+  rewardMint: string;
+  stakeVault: string;
+  rewardVault: string;
+  stakeTokenDecimals: number | null;
+  rewardTokenDecimals: number | null;
+  totalStaked: string | null;
+  rewardRatePerSecond: string;
+  rewardVaultBalance: string | null;
+  stakeVaultBalance: string | null;
+  status: KedolikStakingAdminPoolStatus;
+  statusLabel: string;
+  statusMessage: string;
+  secondsOfRewardsRemaining: number | null;
+  exists: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 interface DecodedUserPosition {
   user: PublicKey;
   pool: PublicKey;
@@ -332,6 +375,24 @@ export const getUserStakePositionPda = (pool: PublicKey, user: PublicKey) =>
     KEDOLIK_STAKE_LOCK_PROGRAM_ID
   )[0];
 
+export const deriveKedolikStakingPoolAddresses = (
+  stakeMintAddress: string,
+  rewardMintAddress: string,
+  poolIdValue: string
+): KedolikStakingPoolAddresses => {
+  const stakeMint = toPublicKey(stakeMintAddress);
+  const rewardMint = toPublicKey(rewardMintAddress);
+  const poolId = assertU64String(poolIdValue, 'Pool ID');
+  const pool = getStakingPoolPda(stakeMint, rewardMint, poolId);
+
+  return {
+    poolId: poolId.toString(),
+    pool: pool.toString(),
+    stakeVault: getStakeVaultPda(pool).toString(),
+    rewardVault: getRewardVaultPda(pool).toString(),
+  };
+};
+
 export const fetchKedolikStakeLockAdminConfig = async (
   connection: Connection
 ): Promise<KedolikStakeLockAdminConfig> => {
@@ -504,6 +565,30 @@ const getWalletTokenBalance = async (
   return getRawTokenAccountBalance(connection, ata);
 };
 
+export const fetchKedolikWalletTokenBalance = async (
+  connection: Connection,
+  owner: PublicKey,
+  mintAddress: string
+): Promise<KedolikStakingTokenBalance> => {
+  const mint = toPublicKey(mintAddress);
+  const tokenProgram = await getTokenProgramForMint(connection, mint);
+  const mintInfo = await getMint(connection, mint, 'confirmed', tokenProgram);
+  const tokenAccount = getAssociatedTokenAddressSync(
+    mint,
+    owner,
+    false,
+    tokenProgram,
+    ASSOCIATED_TOKEN_PROGRAM_ID
+  );
+
+  return {
+    mint: mint.toString(),
+    tokenAccount: tokenAccount.toString(),
+    decimals: mintInfo.decimals,
+    balanceRaw: (await getRawTokenAccountBalance(connection, tokenAccount)) ?? '0',
+  };
+};
+
 const decodeUserPosition = (
   data: Buffer,
   expectedPool: PublicKey,
@@ -610,6 +695,7 @@ const mapPoolToSummary = async (
     stakeTokenDecimals,
     rewardTokenDecimals,
     totalStaked,
+    rewardVaultBalance,
     userWalletBalance,
     userRewardWalletBalance,
     position,
@@ -618,6 +704,7 @@ const mapPoolToSummary = async (
     getTokenDecimals(connection, stakeMint),
     getTokenDecimals(connection, rewardMint),
     getRawTokenAccountBalance(connection, stakeVault),
+    getRawTokenAccountBalance(connection, toPublicKey(poolConfig.rewardVault)),
     getWalletTokenBalance(connection, walletPublicKey, stakeMint, stakeTokenProgram),
     getWalletTokenBalance(connection, walletPublicKey, rewardMint, rewardTokenProgram),
     fetchUserPosition(connection, pool, walletPublicKey),
@@ -672,7 +759,7 @@ const mapPoolToSummary = async (
       ? 'Live Stake Lock V1 pool'
       : 'Pool config is stored in the frontend, but the on-chain pool account was not found.',
     sampleStakeWalletBalance: null,
-    sampleRewardWalletBalance: null,
+    sampleRewardWalletBalance: rewardVaultBalance,
     objectStatuses: {
       mintWrapper: objectStatus(KEDOLIK_STAKE_LOCK_PROGRAM_ID.toString(), true),
       rewarder: objectStatus(KEDOLIK_STAKE_LOCK_ADMIN_CONFIG.toString(), true),
@@ -682,6 +769,126 @@ const mapPoolToSummary = async (
       userMiner: positionAddress ? objectStatus(positionAddress, hasPosition) : null,
     },
   };
+};
+
+const getAdminPoolStatus = (
+  rewardRatePerSecondRaw: string,
+  rewardVaultBalanceRaw: string | null,
+  exists: boolean
+): {
+  status: KedolikStakingAdminPoolStatus;
+  statusLabel: string;
+  statusMessage: string;
+  secondsOfRewardsRemaining: number | null;
+} => {
+  if (!exists) {
+    return {
+      status: 'missing',
+      statusLabel: 'Missing',
+      statusMessage: 'The pool is stored locally, but the on-chain pool account was not found.',
+      secondsOfRewardsRemaining: null,
+    };
+  }
+
+  const rewardRatePerSecond = BigInt(rewardRatePerSecondRaw || '0');
+  const rewardVaultBalance = BigInt(rewardVaultBalanceRaw ?? '0');
+
+  if (rewardRatePerSecond === 0n) {
+    return {
+      status: 'rewards_stopped',
+      statusLabel: 'Rewards stopped',
+      statusMessage: 'Future reward accrual is stopped. Users can still unstake and claim accrued rewards.',
+      secondsOfRewardsRemaining: null,
+    };
+  }
+
+  if (rewardVaultBalance === 0n) {
+    return {
+      status: 'unfunded',
+      statusLabel: 'Unfunded',
+      statusMessage: 'Rewards are not funded yet.',
+      secondsOfRewardsRemaining: 0,
+    };
+  }
+
+  const secondsOfRewardsRemaining = Number(rewardVaultBalance / rewardRatePerSecond);
+
+  if (secondsOfRewardsRemaining < 24 * 60 * 60) {
+    return {
+      status: 'low_rewards',
+      statusLabel: 'Low rewards',
+      statusMessage: 'Reward vault has less than 24 hours of rewards at the current rate.',
+      secondsOfRewardsRemaining,
+    };
+  }
+
+  return {
+    status: 'active',
+    statusLabel: 'Active',
+    statusMessage: 'Reward rate and reward vault balance are both active.',
+    secondsOfRewardsRemaining,
+  };
+};
+
+const mapPoolToAdminPool = async (
+  connection: Connection,
+  poolConfig: KedolikStoredStakingPool
+): Promise<KedolikStakingAdminPool> => {
+  const pool = toPublicKey(poolConfig.pool);
+  const stakeMint = toPublicKey(poolConfig.stakeMint);
+  const rewardMint = toPublicKey(poolConfig.rewardMint);
+  const stakeVault = toPublicKey(poolConfig.stakeVault);
+  const rewardVault = toPublicKey(poolConfig.rewardVault);
+  const [
+    stakeTokenDecimals,
+    rewardTokenDecimals,
+    stakeVaultBalance,
+    rewardVaultBalance,
+    poolAccountInfo,
+  ] = await Promise.all([
+    getTokenDecimals(connection, stakeMint),
+    getTokenDecimals(connection, rewardMint),
+    getRawTokenAccountBalance(connection, stakeVault),
+    getRawTokenAccountBalance(connection, rewardVault),
+    connection.getAccountInfo(pool, 'confirmed'),
+  ]);
+  const livePool = poolAccountInfo ? decodeStakingPoolState(Buffer.from(poolAccountInfo.data)) : null;
+  const rewardRatePerSecond =
+    livePool?.rewardRatePerSecond.toString() ?? poolConfig.rewardRatePerSecond ?? '0';
+  const totalStaked = livePool?.totalStaked.toString() ?? stakeVaultBalance;
+  const status = getAdminPoolStatus(rewardRatePerSecond, rewardVaultBalance, Boolean(livePool));
+
+  return {
+    poolId: (livePool?.poolId ?? BigInt(poolConfig.poolId || '0')).toString(),
+    pool: pool.toString(),
+    stakeMint: poolConfig.stakeMint,
+    rewardMint: poolConfig.rewardMint,
+    stakeVault: poolConfig.stakeVault,
+    rewardVault: poolConfig.rewardVault,
+    stakeTokenDecimals,
+    rewardTokenDecimals,
+    totalStaked,
+    rewardRatePerSecond,
+    rewardVaultBalance,
+    stakeVaultBalance,
+    exists: Boolean(livePool),
+    createdAt: poolConfig.createdAt,
+    updatedAt: poolConfig.updatedAt,
+    ...status,
+  };
+};
+
+export const fetchKedolikStakingAdminPools = async (
+  connection: Connection
+): Promise<KedolikStakingAdminPool[]> => {
+  const pools = await getConfiguredPools(connection);
+  const adminPools = await Promise.all(pools.map((pool) => mapPoolToAdminPool(connection, pool)));
+
+  return adminPools.sort((left, right) => {
+    const leftId = BigInt(left.poolId || '0');
+    const rightId = BigInt(right.poolId || '0');
+    return leftId === rightId ? left.pool.localeCompare(right.pool) : leftId > rightId ? -1 : 1;
+  });
 };
 
 const getFirstPoolOrThrow = async (connection: Connection) => {
@@ -919,6 +1126,87 @@ export const transferKedolikStakingAdmin = async (
   return sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
 };
 
+export const initializeKedolikStakingPool = async (
+  connection: Connection,
+  wallet: AnchorWallet,
+  input: CreateKedolikStakingPoolInput
+) => {
+  const signerWallet = assertWallet(wallet);
+  const adminConfig = await fetchKedolikStakeLockAdminConfig(connection);
+
+  if (adminConfig.exists && adminConfig.authority !== signerWallet.publicKey.toString()) {
+    throw new Error('Only the current staking admin can create a staking pool.');
+  }
+
+  const stakeMint = toPublicKey(input.stakeMint);
+  const rewardMint = toPublicKey(input.rewardMint);
+  const poolId = assertU64String(input.poolId, 'Pool ID');
+  const rewardAmountRaw = assertRawAmount(input.rewardAmountRaw);
+  const rewardDurationSeconds = BigInt(input.rewardDurationSeconds);
+
+  if (rewardDurationSeconds <= 0n) {
+    throw new Error('Reward duration must be greater than zero.');
+  }
+
+  const rewardRatePerSecond = rewardAmountRaw / rewardDurationSeconds;
+
+  if (rewardRatePerSecond <= 0n) {
+    throw new Error('Reward amount is too small for the selected duration.');
+  }
+
+  const pool = getStakingPoolPda(stakeMint, rewardMint, poolId);
+  const stakeVault = getStakeVaultPda(pool);
+  const rewardVault = getRewardVaultPda(pool);
+
+  if (await connection.getAccountInfo(pool, 'confirmed')) {
+    throw new Error('A staking pool already exists for this stake mint, reward mint, and pool ID.');
+  }
+
+  const [stakeTokenProgram, rewardTokenProgram] = await Promise.all([
+    getTokenProgramForMint(connection, stakeMint),
+    getTokenProgramForMint(connection, rewardMint),
+  ]);
+
+  if (!stakeTokenProgram.equals(rewardTokenProgram)) {
+    throw new Error('Stake Lock V1 frontend currently expects stake and reward mints to share the same token program.');
+  }
+
+  const transaction = new Transaction().add(
+    buildInitializeStakingPoolInstruction(
+      signerWallet.publicKey,
+      stakeMint,
+      rewardMint,
+      pool,
+      stakeVault,
+      rewardVault,
+      poolId,
+      rewardRatePerSecond,
+      rewardTokenProgram
+    )
+  );
+  const signature = await sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
+  const storedPool: KedolikStoredStakingPool = {
+    poolId: poolId.toString(),
+    pool: pool.toString(),
+    stakeMint: stakeMint.toString(),
+    rewardMint: rewardMint.toString(),
+    stakeVault: stakeVault.toString(),
+    rewardVault: rewardVault.toString(),
+    rewardRatePerSecond: rewardRatePerSecond.toString(),
+    rewardAmountRaw: rewardAmountRaw.toString(),
+    rewardDurationSeconds: Number(rewardDurationSeconds),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  saveStoredPool(storedPool);
+
+  return {
+    signature,
+    pool: storedPool,
+    rewardRatePerSecond: rewardRatePerSecond.toString(),
+  };
+};
+
 export const createKedolikStakingPool = async (
   connection: Connection,
   wallet: AnchorWallet,
@@ -1016,6 +1304,58 @@ export const createKedolikStakingPool = async (
     signature,
     pool: storedPool,
   };
+};
+
+export const fundKedolikStakingRewards = async (
+  connection: Connection,
+  wallet: AnchorWallet,
+  poolAddress: string,
+  amountRaw: string
+) => {
+  const signerWallet = assertWallet(wallet);
+  const rawAmount = assertRawAmount(amountRaw);
+  const poolConfig = await getPoolOrThrow(connection, poolAddress);
+  const pool = toPublicKey(poolConfig.pool);
+  const rewardMint = toPublicKey(poolConfig.rewardMint);
+  const rewardVault = toPublicKey(poolConfig.rewardVault);
+  const rewardTokenProgram = await getTokenProgramForMint(connection, rewardMint);
+  const funderRewardToken = await ensureAta(
+    connection,
+    signerWallet.publicKey,
+    signerWallet.publicKey,
+    rewardMint,
+    rewardTokenProgram
+  );
+  const funderBalance = await getRawTokenAccountBalance(connection, funderRewardToken.address);
+
+  if (!funderBalance || BigInt(funderBalance) < rawAmount) {
+    throw new Error('Admin reward token balance is lower than the amount being funded.');
+  }
+
+  const transaction = new Transaction();
+
+  if (funderRewardToken.instruction) {
+    transaction.add(funderRewardToken.instruction);
+  }
+
+  transaction.add(
+    buildFundRewardsInstruction(
+      signerWallet.publicKey,
+      pool,
+      funderRewardToken.address,
+      rewardVault,
+      rewardTokenProgram,
+      rawAmount
+    )
+  );
+  const signature = await sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
+  const currentRewardAmount = BigInt(poolConfig.rewardAmountRaw || '0');
+
+  updateStoredPool(pool.toString(), {
+    rewardAmountRaw: (currentRewardAmount + rawAmount).toString(),
+  });
+
+  return signature;
 };
 
 export const setKedolikStakingRewardRate = async (

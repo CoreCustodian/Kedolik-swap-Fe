@@ -339,9 +339,18 @@ export default function KedolikStaking() {
   const walletBalanceRaw = activePool?.userWalletBalance ? BigInt(activePool.userWalletBalance) : null;
   const userStakeRaw = activePool?.userStake ? BigInt(activePool.userStake) : null;
   const claimableRewardsRaw = activePool?.claimableRewards ? BigInt(activePool.claimableRewards) : 0n;
+  const rewardVaultBalanceRaw = activePool?.sampleRewardWalletBalance
+    ? BigInt(activePool.sampleRewardWalletBalance)
+    : 0n;
+  const rewardRatePerSecondRaw = activePool?.rewardsPerSecondEstimate
+    ? BigInt(activePool.rewardsPerSecondEstimate)
+    : 0n;
   const hasValidAmount = parsedAmountRaw !== null;
   const hasPositiveAmount = parsedAmountRaw !== null && parsedAmountRaw > 0n;
   const hasStakedTokens = Boolean(userStakeRaw && userStakeRaw > 0n);
+  const stakingRewardsUnavailable = Boolean(
+    activePool && (rewardVaultBalanceRaw === 0n || rewardRatePerSecondRaw === 0n)
+  );
   const exceedsWalletBalance = Boolean(
     connected && parsedAmountRaw !== null && walletBalanceRaw !== null && parsedAmountRaw > walletBalanceRaw
   );
@@ -365,7 +374,7 @@ export default function KedolikStaking() {
     !hasPositiveAmount ||
     actionLoading !== null ||
     (amountMode === 'stake'
-      ? exceedsWalletBalance
+      ? exceedsWalletBalance || stakingRewardsUnavailable
       : !activePool.hasMiner || !hasStakedTokens || exceedsStakeBalance);
   const rewardAmountRaw = parseAmountToRaw(adminForm.rewardAmount, adminRewardDecimals);
   const rewardDurationSeconds = Number(adminForm.rewardDurationSeconds);
@@ -410,6 +419,11 @@ export default function KedolikStaking() {
 
     if (exceedsWalletBalance) {
       toast.error('Stake amount exceeds your wallet balance.');
+      return;
+    }
+
+    if (stakingRewardsUnavailable) {
+      toast.error('This pool is not currently funded for new staking rewards.');
       return;
     }
 
@@ -846,6 +860,14 @@ export default function KedolikStaking() {
                         className="mt-3 min-h-[52px] w-full bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-gray-500"
                       />
                     </label>
+
+                    {amountMode === 'stake' && stakingRewardsUnavailable && (
+                      <div className="mt-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
+                        This pool is not currently funded for new staking rewards. You can still
+                        view the pool, but staking is disabled until rewards are funded and the
+                        reward rate is greater than zero.
+                      </div>
+                    )}
 
                     <div className="mt-4 space-y-3">
                       <button
