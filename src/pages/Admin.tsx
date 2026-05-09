@@ -115,6 +115,58 @@ const formatDuration = (seconds: number | null) => {
   return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 };
 
+const SECONDS_PER_DAY = 24 * 60 * 60;
+
+const formatStakingDuration = (seconds: number | null) => {
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) {
+    return 'Unavailable';
+  }
+
+  if (seconds >= SECONDS_PER_DAY) {
+    const days = seconds / SECONDS_PER_DAY;
+    const formattedDays = Number.isInteger(days)
+      ? days.toLocaleString('en-US')
+      : days.toLocaleString('en-US', { maximumFractionDigits: 1 });
+
+    return `${formattedDays} days`;
+  }
+
+  if (seconds >= 60 * 60) {
+    const hours = Math.ceil(seconds / (60 * 60));
+    return `${hours.toLocaleString('en-US')} hours`;
+  }
+
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return `${minutes.toLocaleString('en-US')} minutes`;
+};
+
+const parseDurationSeconds = (value: string) => {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : null;
+};
+
+const formatDateTime = (timestamp: number | null | undefined) =>
+  timestamp ? new Date(timestamp * 1000).toLocaleString() : 'Unavailable';
+
+const getStakingTiming = (
+  stakingEndsAt: number | null,
+  secondsRemaining: number | null,
+  isExpired: boolean,
+  nowSeconds: number
+) => {
+  if (stakingEndsAt) {
+    return {
+      isExpired: nowSeconds >= stakingEndsAt,
+      secondsRemaining: Math.max(0, stakingEndsAt - nowSeconds),
+    };
+  }
+
+  return {
+    isExpired,
+    secondsRemaining,
+  };
+};
+
 const getNextStakingPoolId = (pools: KedolikStakingAdminPool[]) => {
   const maxPoolId = pools.reduce((max, pool) => {
     try {
@@ -134,6 +186,8 @@ const getPoolStatusClasses = (status: KedolikStakingAdminPool['status']) => {
       return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
     case 'low_rewards':
       return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300';
+    case 'expired':
+      return 'border-red-500/30 bg-red-500/10 text-red-300';
     case 'unfunded':
       return 'border-orange-500/30 bg-orange-500/10 text-orange-300';
     case 'rewards_stopped':
@@ -185,6 +239,7 @@ export default function Admin() {
   const [fundingRecoveryPool, setFundingRecoveryPool] = useState<KedolikStoredStakingPool | null>(null);
   const [newStakingAdmin, setNewStakingAdmin] = useState('');
   const [transferringStakingAdmin, setTransferringStakingAdmin] = useState(false);
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
   
   // Check if connected wallet is admin or fee receiver
   const connectedWalletAddress = publicKey?.toString() ?? null;
@@ -207,10 +262,21 @@ export default function Admin() {
   const canCreateStakingInstance = isStakingAdmin;
   const stakingDashboardSummary = useMemo(() => ({
     totalPools: stakingPools.length,
-    activePools: stakingPools.filter((pool) => pool.status === 'active' || pool.status === 'low_rewards').length,
+    activePools: stakingPools.filter((pool) => {
+      const timing = getStakingTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
+      return !timing.isExpired && (pool.status === 'active' || pool.status === 'low_rewards');
+    }).length,
+    expiredPools: stakingPools.filter((pool) =>
+      getStakingTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds).isExpired
+    ).length,
     unfundedPools: stakingPools.filter((pool) => pool.status === 'unfunded').length,
     rewardsStoppedPools: stakingPools.filter((pool) => pool.status === 'rewards_stopped').length,
-  }), [stakingPools]);
+  }), [nowSeconds, stakingPools]);
+  const createRewardDurationSeconds = parseDurationSeconds(stakingPoolForm.rewardDistributionSeconds);
+  const createRewardDurationLabel = formatStakingDuration(createRewardDurationSeconds);
+  const createRewardEndsAt = createRewardDurationSeconds
+    ? formatDateTime(nowSeconds + createRewardDurationSeconds)
+    : 'Unavailable';
   const createPoolAddresses = useMemo(() => {
     if (!stakingPoolForm.stakeMint.trim() || !stakingPoolForm.rewardMint.trim() || !stakingPoolForm.poolId.trim()) {
       return null;
@@ -286,6 +352,14 @@ export default function Admin() {
     void fetchStakingAdminConfig();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 60_000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (connected && canViewStakingInstance) {
@@ -941,7 +1015,8 @@ export default function Admin() {
         connection,
         anchorWallet,
         pool.pool,
-        nextRate.toString()
+        nextRate.toString(),
+        Math.floor(duration)
       );
 
       showToast(`Reward rate updated for pool ${formatAddress(pool.pool)}`, 'success', signature);
@@ -1306,10 +1381,11 @@ export default function Admin() {
               {/* Stake Lock V1 Dashboard */}
               {activeTab === 'staking' && (
                 <div className="space-y-6">
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                     {[
                       { label: 'Total Pools', value: stakingDashboardSummary.totalPools },
                       { label: 'Active Pools', value: stakingDashboardSummary.activePools },
+                      { label: 'Expired Pools', value: stakingDashboardSummary.expiredPools },
                       { label: 'Unfunded Pools', value: stakingDashboardSummary.unfundedPools },
                       { label: 'Rewards Stopped', value: stakingDashboardSummary.rewardsStoppedPools },
                     ].map((card) => (
@@ -1412,9 +1488,10 @@ export default function Admin() {
                         </div>
                       </div>
                       <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
-                        <div className="mb-1 text-xs text-gray-400">Not Supported</div>
+                        <div className="mb-1 text-xs text-gray-400">Leftover Rewards</div>
                         <div className="text-xs text-white">
-                          Delete pool, withdraw unused rewards, change mints, or hard pause staking.
+                          Stake Lock V1 has no withdraw-unused-rewards instruction. Leftover reward
+                          vault tokens stay in the pool unless users claim them or the program is upgraded.
                         </div>
                       </div>
                     </div>
@@ -1488,7 +1565,19 @@ export default function Admin() {
                           const actionForm = getPoolActionForm(pool.pool);
                           const rewardVaultBalanceRaw = BigInt(pool.rewardVaultBalance ?? '0');
                           const rewardRateRaw = BigInt(pool.rewardRatePerSecond || '0');
+                          const poolTiming = getStakingTiming(
+                            pool.stakingEndsAt,
+                            pool.stakingSecondsRemaining,
+                            pool.isExpired,
+                            nowSeconds
+                          );
+                          const poolStatus: KedolikStakingAdminPool['status'] = poolTiming.isExpired ? 'expired' : pool.status;
+                          const poolStatusLabel = poolTiming.isExpired ? 'Expired' : pool.statusLabel;
+                          const poolStatusMessage = poolTiming.isExpired
+                            ? 'The configured staking duration has ended. Users can still unstake and claim available rewards.'
+                            : pool.statusMessage;
                           const rateActionLabel = pool.status === 'rewards_stopped' ? 'Resume Rewards' : 'Change Reward Rate';
+                          const actionDurationSeconds = parseDurationSeconds(actionForm.rateDistributionSeconds);
 
                           return (
                             <div key={pool.pool} className="rounded-xl border border-white/10 bg-dark-900/80 p-4">
@@ -1496,14 +1585,15 @@ export default function Admin() {
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <h4 className="font-bold text-white">Stake Lock Pool #{pool.poolId}</h4>
-                                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getPoolStatusClasses(pool.status)}`}>
-                                      {pool.statusLabel}
+                                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getPoolStatusClasses(poolStatus)}`}>
+                                      {poolStatusLabel}
                                     </span>
                                   </div>
-                                  <p className="mt-1 text-xs text-gray-400">{pool.statusMessage}</p>
+                                  <p className="mt-1 text-xs text-gray-400">{poolStatusMessage}</p>
                                 </div>
-                                <div className="text-xs text-gray-400">
-                                  Rewards remaining: {formatDuration(pool.secondsOfRewardsRemaining)}
+                                <div className="text-xs text-gray-400 lg:text-right">
+                                  <div>Staking ends: {formatDateTime(pool.stakingEndsAt)}</div>
+                                  <div>Rewards remaining: {formatDuration(pool.secondsOfRewardsRemaining)}</div>
                                 </div>
                               </div>
 
@@ -1539,6 +1629,24 @@ export default function Admin() {
                                   </div>
                                 </div>
                                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Staking Duration</div>
+                                  <div className="mt-1 text-sm font-semibold text-white">
+                                    {formatStakingDuration(pool.rewardDurationSeconds)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Staking Ends On</div>
+                                  <div className={`mt-1 text-sm font-semibold ${poolTiming.isExpired ? 'text-red-300' : 'text-white'}`}>
+                                    {poolTiming.isExpired ? `Expired ${formatDateTime(pool.stakingEndsAt)}` : formatDateTime(pool.stakingEndsAt)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Time Left</div>
+                                  <div className={`mt-1 text-sm font-semibold ${poolTiming.isExpired ? 'text-red-300' : 'text-white'}`}>
+                                    {poolTiming.isExpired ? 'Expired' : formatDuration(poolTiming.secondsRemaining)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                                   <div className="text-xs text-gray-400">Stake Vault Balance</div>
                                   <div className="mt-1 text-sm font-semibold text-white">
                                     {formatRawTokenAmount(pool.stakeVaultBalance, pool.stakeTokenDecimals)}
@@ -1555,6 +1663,13 @@ export default function Admin() {
                                 <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs text-yellow-200">
                                   User-facing staking should warn before new stakes because
                                   {rewardVaultBalanceRaw === 0n ? ' the reward vault is empty.' : ' the reward rate is zero.'}
+                                </div>
+                              )}
+
+                              {poolTiming.isExpired && (
+                                <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
+                                  This pool is marked Expired in the UI because its configured duration has ended.
+                                  Existing stakers can still unstake and claim rewards supported by the contract.
                                 </div>
                               )}
 
@@ -1604,6 +1719,12 @@ export default function Admin() {
                                         placeholder="Distribution seconds"
                                         className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
                                       />
+                                      <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-300">
+                                        Duration: <span className="font-semibold text-white">{formatStakingDuration(actionDurationSeconds)}</span>
+                                        <span className="mt-1 block">
+                                          New end: {actionDurationSeconds ? formatDateTime(nowSeconds + actionDurationSeconds) : 'Unavailable'}
+                                        </span>
+                                      </div>
                                       <button
                                         type="button"
                                         onClick={() => void updateStakingPoolRewardRate(pool)}
@@ -1703,6 +1824,16 @@ export default function Admin() {
                                   className="w-full bg-transparent text-sm text-white outline-none placeholder-gray-500"
                                 />
                               </label>
+                            </div>
+                            <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300">
+                              Duration: <span className="font-semibold text-white">{createRewardDurationLabel}</span>
+                              <span className="mt-1 block">
+                                If created now, staking ends on{' '}
+                                <span className="font-semibold text-white">{createRewardEndsAt}</span>
+                              </span>
+                              <span className="mt-1 block text-gray-400">
+                                2592000 seconds = 30 days. For 180 days, use 15552000 seconds.
+                              </span>
                             </div>
                             <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs text-gray-300">
                               The panel fetches reward mint decimals, converts reward amount to raw units, then sets:

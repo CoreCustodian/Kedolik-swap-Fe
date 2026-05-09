@@ -96,13 +96,19 @@ const getLockHeadline = (escrow: LockerEscrowSummary) => {
 const FieldCard = ({
   label,
   value,
+  valueClassName = '',
 }: {
   label: string;
   value: string;
+  valueClassName?: string;
 }) => (
-  <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">{label}</div>
-    <div className="mt-2 text-base font-semibold text-white break-words">{value}</div>
+  <div className="rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.055] to-white/[0.025] p-3">
+    <div className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.08em] text-gray-500 sm:text-[10px]">
+      {label}
+    </div>
+    <div className={`mt-1.5 min-w-0 text-sm font-semibold text-white break-words ${valueClassName}`}>
+      {value}
+    </div>
   </div>
 );
 
@@ -390,6 +396,15 @@ export default function KedolikLocker() {
     (escrow) => escrow.recipient === connectedWalletAddress && toBigInt(escrow.claimableAmount) > 0n
   );
   const claimableLockCount = walletClaimableEscrows.length;
+  const lockerHeroStats = [
+    { label: 'Recent Locks', value: recentEscrows.length.toLocaleString('en-US') },
+    { label: 'Your Claimable', value: claimableLockCount.toLocaleString('en-US'), valueClassName: 'text-emerald-300' },
+    {
+      label: 'Wallet',
+      value: connected && publicKey ? formatKedolikAddress(publicKey.toString()) : 'Not connected',
+      valueClassName: 'font-mono',
+    },
+  ];
   const sortedRecentEscrows = [...recentEscrows].sort((left, right) => {
     switch (lockListSort) {
       case 'unlockLatest':
@@ -787,7 +802,7 @@ export default function KedolikLocker() {
       <div className="mx-auto max-w-6xl">
         <section className="card p-6 sm:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-2xl">
+            <div className="min-w-0 max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
                   Devnet
@@ -807,27 +822,15 @@ export default function KedolikLocker() {
               </p>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[440px]">
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Recent Locks
-                </div>
-                <div className="mt-2 text-2xl font-bold text-white">{recentEscrows.length}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Your Claimable
-                </div>
-                <div className="mt-2 text-2xl font-bold text-emerald-300">{claimableLockCount}</div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                  Wallet
-                </div>
-                <div className="mt-2 font-mono text-sm font-semibold text-white">
-                  {connected && publicKey ? formatKedolikAddress(publicKey.toString()) : 'Not connected'}
-                </div>
-              </div>
+            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3 lg:w-[500px] lg:shrink-0">
+              {lockerHeroStats.map((stat) => (
+                <FieldCard
+                  key={stat.label}
+                  label={stat.label}
+                  value={stat.value}
+                  valueClassName={stat.valueClassName}
+                />
+              ))}
             </div>
           </div>
         </section>

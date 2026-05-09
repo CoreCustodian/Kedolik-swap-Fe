@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   KEDOLIK_DEVNET_CONFIG,
-  KEDOLIK_DEVNET_LIVE_MESSAGES,
   getKedolikExplorerAccountUrl,
 } from '../config/kedolikDevnet';
 import { KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS } from '../config/kedolikStakeLockV1';
@@ -101,6 +100,75 @@ const formatStakingApy = (
   }
 };
 
+const SECONDS_PER_DAY = 24 * 60 * 60;
+
+const formatStakingDuration = (seconds: number | null) => {
+  if (seconds === null) {
+    return 'Not set';
+  }
+
+  if (seconds >= SECONDS_PER_DAY) {
+    const days = seconds / SECONDS_PER_DAY;
+    const formattedDays = Number.isInteger(days)
+      ? days.toLocaleString('en-US')
+      : days.toLocaleString('en-US', { maximumFractionDigits: 1 });
+
+    return `${formattedDays} days`;
+  }
+
+  if (seconds >= 60 * 60) {
+    const hours = Math.ceil(seconds / (60 * 60));
+    return `${hours.toLocaleString('en-US')} hours`;
+  }
+
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return `${minutes.toLocaleString('en-US')} minutes`;
+};
+
+const formatStakingEndsAt = (timestamp: number | null) =>
+  timestamp ? formatKedolikUnixTime(timestamp) : 'Not set';
+
+const formatStakingTimeRemaining = (secondsRemaining: number | null, isExpired: boolean) => {
+  if (isExpired) {
+    return 'Expired';
+  }
+
+  if (secondsRemaining === null) {
+    return 'Not set';
+  }
+
+  if (secondsRemaining >= SECONDS_PER_DAY) {
+    const days = Math.ceil(secondsRemaining / SECONDS_PER_DAY);
+    return `${days.toLocaleString('en-US')} days left`;
+  }
+
+  if (secondsRemaining >= 60 * 60) {
+    const hours = Math.ceil(secondsRemaining / (60 * 60));
+    return `${hours.toLocaleString('en-US')} hours left`;
+  }
+
+  return 'Less than 1 hour';
+};
+
+const getLivePoolTiming = (
+  stakingEndsAt: number | null | undefined,
+  fallbackSecondsRemaining: number | null | undefined,
+  fallbackExpired: boolean,
+  nowSeconds: number
+) => {
+  if (stakingEndsAt) {
+    return {
+      isExpired: nowSeconds >= stakingEndsAt,
+      secondsRemaining: Math.max(0, stakingEndsAt - nowSeconds),
+    };
+  }
+
+  return {
+    isExpired: fallbackExpired,
+    secondsRemaining: fallbackSecondsRemaining ?? null,
+  };
+};
+
 const formatPoolCardLabel = (title: string) => {
   const poolId = title.match(/#(.+)$/)?.[1];
 
@@ -127,49 +195,21 @@ const parseAmountToRaw = (value: string, decimals: number | null) => {
 const FieldCard = ({
   label,
   value,
+  valueClassName = '',
 }: {
   label: string;
   value: string;
+  valueClassName?: string;
 }) => (
-  <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{label}</div>
-    <div className="mt-1.5 text-sm font-semibold text-white break-words">{value}</div>
+  <div className="rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.055] to-white/[0.025] p-3">
+    <div className="whitespace-nowrap text-[9px] font-semibold uppercase tracking-[0.08em] text-gray-500 sm:text-[10px]">
+      {label}
+    </div>
+    <div className={`mt-1.5 min-w-0 text-sm font-semibold text-white break-words ${valueClassName}`}>
+      {value}
+    </div>
   </div>
 );
-
-const TokenPill = ({ token, fallback }: { token?: TokenInfo; fallback: string }) => {
-  const symbol = token?.symbol ?? fallback;
-
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-      {token?.logoURI ? (
-        <img
-          src={token.logoURI}
-          alt={symbol}
-          className="h-8 w-8 shrink-0 rounded-full object-cover"
-          onError={(event) => {
-            const target = event.target as HTMLImageElement;
-            target.style.display = 'none';
-            if (target.nextElementSibling) {
-              (target.nextElementSibling as HTMLElement).style.display = 'flex';
-            }
-          }}
-        />
-      ) : null}
-      <div
-        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-brand text-xs font-bold text-white ${
-          token?.logoURI ? 'hidden' : ''
-        }`}
-      >
-        {symbol.slice(0, 2).toUpperCase()}
-      </div>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-white">{symbol}</div>
-        <div className="truncate text-[11px] text-gray-400">{token?.name ?? 'Unknown token'}</div>
-      </div>
-    </div>
-  );
-};
 
 const TokenAvatar = ({
   token,
@@ -259,6 +299,7 @@ export default function KedolikStaking() {
   const [newAdminAuthority, setNewAdminAuthority] = useState('');
   const [rewardRateRaw, setRewardRateRaw] = useState('');
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
 
   const activePool = useMemo(
     () => quarries.find((pool) => pool.id === selectedPoolId) ?? quarries[0] ?? null,
@@ -277,17 +318,26 @@ export default function KedolikStaking() {
   };
   const activeStakeToken = getTokenInfo(activePool?.stakeTokenMint);
   const activeRewardToken = getTokenInfo(activePool?.rewardTokenMint);
-  const activeStakeSymbol = activeStakeToken?.symbol ?? 'Stake Token';
-  const activeRewardSymbol = activeRewardToken?.symbol ?? 'Reward Token';
-  const activePoolName = activePool
-    ? `Earn ${activeRewardSymbol} by staking ${activeStakeSymbol}`
-    : 'Kedolik Staking';
+  const activeStakeSymbol = activeStakeToken?.symbol ?? 'Unknown';
+  const activeRewardSymbol = activeRewardToken?.symbol ?? 'Unknown';
+  const activePoolName = 'Stake & Earn';
+  const activePoolDisplayName = activePool
+    ? `${activeStakeSymbol} -> ${activeRewardSymbol}`
+    : 'No pool selected';
   const hasMultiplePools = quarries.length > 1;
   const stakeLockProgramStatus = programs.kedolikStakeLock;
   const connectedWalletAddress = publicKey?.toString() ?? null;
   const isStakeAdmin = Boolean(
     connectedWalletAddress && adminConfig?.authority === connectedWalletAddress
   );
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000));
+    }, 60_000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (quarries.length === 0) {
@@ -437,6 +487,18 @@ export default function KedolikStaking() {
       'Loading...'
     );
   }, [activePool, connected]);
+  const activePoolTiming = getLivePoolTiming(
+    activePool?.stakingEndsAt,
+    activePool?.stakingSecondsRemaining,
+    Boolean(activePool?.isExpired),
+    nowSeconds
+  );
+  const stakingDuration = formatStakingDuration(activePool?.rewardDurationSeconds ?? null);
+  const stakingEndsAt = formatStakingEndsAt(activePool?.stakingEndsAt ?? null);
+  const stakingTimeRemaining = formatStakingTimeRemaining(
+    activePoolTiming.secondsRemaining,
+    activePoolTiming.isExpired
+  );
 
   const handleMax = () => {
     if (!activePool) {
@@ -473,6 +535,11 @@ export default function KedolikStaking() {
   const stakingRewardsUnavailable = Boolean(
     activePool && (rewardVaultBalanceRaw === 0n || rewardRatePerSecondRaw === 0n)
   );
+  const stakingDisabledReason = activePoolTiming.isExpired
+    ? 'This staking period has expired. Existing users can still unstake and claim available rewards.'
+    : stakingRewardsUnavailable
+      ? 'This pool is not currently funded for new staking rewards. You can still view the pool, but staking is disabled until rewards are funded and the reward rate is greater than zero.'
+      : null;
   const exceedsWalletBalance = Boolean(
     connected && parsedAmountRaw !== null && walletBalanceRaw !== null && parsedAmountRaw > walletBalanceRaw
   );
@@ -484,11 +551,18 @@ export default function KedolikStaking() {
   const primaryActionLabel = amountMode === 'stake' ? 'Stake' : 'Unstake';
   const positionStatusLabel = !connected
     ? 'Connect wallet'
-    : hasStakedTokens
+    : activePoolTiming.isExpired
+      ? 'Expired'
+      : hasStakedTokens
       ? 'Staked'
       : activePool?.hasMiner
         ? 'Position open'
         : 'No stake yet';
+  const activePoolStatusClass = activePoolTiming.isExpired
+    ? 'border-red-400/30 bg-red-400/10 text-red-200'
+    : activePool?.status === 'live'
+      ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+      : 'border-white/10 bg-white/5 text-gray-300';
   const amountActionDisabled =
     !connected ||
     !activePool ||
@@ -496,7 +570,7 @@ export default function KedolikStaking() {
     !hasPositiveAmount ||
     actionLoading !== null ||
     (amountMode === 'stake'
-      ? exceedsWalletBalance || stakingRewardsUnavailable
+      ? exceedsWalletBalance || Boolean(stakingDisabledReason)
       : !activePool.hasMiner || !hasStakedTokens || exceedsStakeBalance);
   const rewardAmountRaw = parseAmountToRaw(adminForm.rewardAmount, adminRewardDecimals);
   const rewardDurationSeconds = Number(adminForm.rewardDurationSeconds);
@@ -504,6 +578,44 @@ export default function KedolikStaking() {
     rewardAmountRaw !== null && Number.isFinite(rewardDurationSeconds) && rewardDurationSeconds > 0
       ? rewardAmountRaw / BigInt(Math.floor(rewardDurationSeconds))
       : null;
+  const adminRewardDurationPreview =
+    Number.isFinite(rewardDurationSeconds) && rewardDurationSeconds > 0
+      ? formatStakingDuration(Math.floor(rewardDurationSeconds))
+      : 'Enter duration seconds';
+  const heroStats = [
+    { label: 'Wallet Balance', value: stakeWalletBalance },
+    { label: 'Staked', value: userStake },
+    { label: 'Rewards', value: claimableRewards },
+    { label: 'APY', value: poolApy },
+    {
+      label: 'Ends',
+      value: stakingTimeRemaining,
+      valueClassName: activePoolTiming.isExpired ? 'text-red-200' : '',
+    },
+  ];
+  const positionStats = [
+    { label: 'Wallet Balance', value: stakeWalletBalance },
+    { label: 'Currently Staked', value: userStake },
+    { label: 'Claimable Rewards', value: claimableRewards },
+  ];
+  const poolStats = [
+    {
+      label: 'Total Staked',
+      value: activePool
+        ? formatMetricAmount(activePool.totalStaked, activePool.stakeTokenDecimals, 'Loading...')
+        : 'Loading...',
+    },
+    { label: 'APY', value: poolApy },
+    { label: 'Reward Rate', value: rewardRate },
+    { label: 'Rewards / Second', value: rewardsPerSecond },
+    { label: 'Duration', value: stakingDuration },
+    {
+      label: 'Ends On',
+      value: activePoolTiming.isExpired ? `Expired ${stakingEndsAt}` : stakingEndsAt,
+      valueClassName: activePoolTiming.isExpired ? 'text-red-200' : '',
+    },
+    { label: 'Reward Wallet', value: rewardWalletBalance },
+  ];
 
   useEffect(() => {
     if (amountMode === 'unstake' && activePool && activePool.userStake === '0') {
@@ -544,8 +656,8 @@ export default function KedolikStaking() {
       return;
     }
 
-    if (stakingRewardsUnavailable) {
-      toast.error('This pool is not currently funded for new staking rewards.');
+    if (stakingDisabledReason) {
+      toast.error(stakingDisabledReason);
       return;
     }
 
@@ -764,7 +876,7 @@ export default function KedolikStaking() {
       <div className="mx-auto max-w-6xl">
         <section className="card p-6 sm:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-2xl">
+            <div className="min-w-0 max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
                   Devnet
@@ -775,26 +887,29 @@ export default function KedolikStaking() {
                     executable={stakeLockProgramStatus.executable}
                   />
                 )}
+                {activePoolTiming.isExpired && (
+                  <span className="rounded-full border border-red-400/30 bg-red-400/10 px-4 py-1 text-xs font-semibold text-red-200">
+                    Expired
+                  </span>
+                )}
               </div>
 
               <h1 className="text-3xl font-bold font-heading sm:text-4xl">{activePoolName}</h1>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300 sm:text-base">
-                {KEDOLIK_DEVNET_LIVE_MESSAGES.staking} Stake, unstake, and claim rewards from a
-                selected Stake Lock V1 pool.
+                Kedolik Staking is now live. Stake your tokens, unstake anytime, and seamlessly
+                claim rewards through the selected Stake V1 pool.
               </p>
-              {activePool && (
-                <div className="mt-4 grid max-w-xl gap-3 sm:grid-cols-2">
-                  <TokenPill token={activeStakeToken} fallback="Stake Token" />
-                  <TokenPill token={activeRewardToken} fallback="Reward Token" />
-                </div>
-              )}
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[560px] lg:grid-cols-4">
-              <FieldCard label="Wallet Balance" value={stakeWalletBalance} />
-              <FieldCard label="Staked" value={userStake} />
-              <FieldCard label="Rewards" value={claimableRewards} />
-              <FieldCard label="APY" value={poolApy} />
+            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3 lg:w-[520px] lg:shrink-0">
+              {heroStats.map((stat) => (
+                <FieldCard
+                  key={stat.label}
+                  label={stat.label}
+                  value={stat.value}
+                  valueClassName={stat.valueClassName}
+                />
+              ))}
             </div>
           </div>
         </section>
@@ -841,10 +956,26 @@ export default function KedolikStaking() {
                           const selected = activePool?.id === pool.id;
                           const stakeToken = getTokenInfo(pool.stakeTokenMint);
                           const rewardToken = getTokenInfo(pool.rewardTokenMint);
-                          const stakeSymbol = stakeToken?.symbol ?? 'Stake Token';
-                          const rewardSymbol = rewardToken?.symbol ?? 'Reward Token';
+                          const stakeSymbol = stakeToken?.symbol ?? 'Unknown';
+                          const rewardSymbol = rewardToken?.symbol ?? 'Unknown';
                           const poolName = `${stakeSymbol} -> ${rewardSymbol}`;
                           const poolLabel = formatPoolCardLabel(pool.title);
+                          const poolTiming = getLivePoolTiming(
+                            pool.stakingEndsAt,
+                            pool.stakingSecondsRemaining,
+                            pool.isExpired,
+                            nowSeconds
+                          );
+                          const poolStatusLabel = poolTiming.isExpired
+                            ? 'Expired'
+                            : pool.status === 'live'
+                              ? 'Live'
+                              : 'Pending';
+                          const poolStatusClass = poolTiming.isExpired
+                            ? 'border-red-400/30 bg-red-400/10 text-red-200'
+                            : pool.status === 'live'
+                              ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                              : 'border-white/10 text-gray-300';
                           const apy = formatStakingApy(
                             pool.rewardRate,
                             pool.totalStaked,
@@ -878,14 +1009,15 @@ export default function KedolikStaking() {
                                     <div className="text-[11px] text-gray-400">{poolLabel}</div>
                                   </div>
                                 </div>
-                                <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-semibold text-gray-300">
-                                  {pool.status === 'live' ? 'Live' : 'Pending'}
+                                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${poolStatusClass}`}>
+                                  {poolStatusLabel}
                                 </span>
                               </div>
-                              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-gray-400">
+                              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-gray-400 sm:grid-cols-4">
                                 <span className="min-w-0">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
                                 <span className="min-w-0">Reward/s: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
                                 <span className="min-w-0">APY: {apy}</span>
+                                <span className="min-w-0">Ends: {formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}</span>
                               </div>
                             </button>
                           );
@@ -897,18 +1029,18 @@ export default function KedolikStaking() {
                       <div>
                         <h2 className="text-xl font-bold font-heading text-white">Your Position</h2>
                         <p className="mt-1 text-xs text-gray-400">
-                          Selected pool: {activePoolName}
+                          Selected pool: {activePoolDisplayName}
                         </p>
                       </div>
-                      <span className="w-fit rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
+                      <span className={`w-fit rounded-full border px-4 py-1 text-xs font-semibold ${activePoolStatusClass}`}>
                         {positionStatusLabel}
                       </span>
                     </div>
 
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      <FieldCard label="Wallet Balance" value={stakeWalletBalance} />
-                      <FieldCard label="Currently Staked" value={userStake} />
-                      <FieldCard label="Claimable Rewards" value={claimableRewards} />
+                      {positionStats.map((stat) => (
+                        <FieldCard key={stat.label} label={stat.label} value={stat.value} />
+                      ))}
                     </div>
 
                     <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
@@ -916,18 +1048,14 @@ export default function KedolikStaking() {
                         Pool Stats
                       </div>
                       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        <FieldCard
-                          label="Total Staked"
-                          value={formatMetricAmount(
-                            activePool.totalStaked,
-                            activePool.stakeTokenDecimals,
-                            'Loading...'
-                          )}
-                        />
-                        <FieldCard label="APY" value={poolApy} />
-                        <FieldCard label="Reward Rate" value={rewardRate} />
-                        <FieldCard label="Rewards / Second" value={rewardsPerSecond} />
-                        <FieldCard label="Reward Wallet" value={rewardWalletBalance} />
+                        {poolStats.map((stat) => (
+                          <FieldCard
+                            key={stat.label}
+                            label={stat.label}
+                            value={stat.value}
+                            valueClassName={stat.valueClassName}
+                          />
+                        ))}
                       </div>
                     </div>
 
@@ -936,8 +1064,8 @@ export default function KedolikStaking() {
                         Token addresses
                       </summary>
                       <div className="mt-3 grid gap-3 md:grid-cols-2">
-                        <FieldCard label="Stake Token CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
-                        <FieldCard label="Reward Token CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
+                        <FieldCard label="Stake Mint CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
+                        <FieldCard label="Reward Mint CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
                       </div>
                     </details>
                   </div>
@@ -1004,11 +1132,13 @@ export default function KedolikStaking() {
                       />
                     </label>
 
-                    {amountMode === 'stake' && stakingRewardsUnavailable && (
-                      <div className="mt-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-100">
-                        This pool is not currently funded for new staking rewards. You can still
-                        view the pool, but staking is disabled until rewards are funded and the
-                        reward rate is greater than zero.
+                    {amountMode === 'stake' && stakingDisabledReason && (
+                      <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+                        activePoolTiming.isExpired
+                          ? 'border-red-400/30 bg-red-400/10 text-red-100'
+                          : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100'
+                      }`}>
+                        {stakingDisabledReason}
                       </div>
                     )}
 
@@ -1116,13 +1246,13 @@ export default function KedolikStaking() {
 
                     <div className="mt-5 grid gap-3 md:grid-cols-2">
                       <AdminInput
-                        label="Stake Token CA"
+                        label="Stake Mint CA"
                         value={adminForm.stakeMint}
                         onChange={(value) => setAdminForm((current) => ({ ...current, stakeMint: value }))}
                         placeholder="Stake mint address"
                       />
                       <AdminInput
-                        label="Reward Token CA"
+                        label="Reward Mint CA"
                         value={adminForm.rewardMint}
                         onChange={(value) => setAdminForm((current) => ({ ...current, rewardMint: value }))}
                         placeholder="Reward mint address"
@@ -1141,6 +1271,10 @@ export default function KedolikStaking() {
                         }
                         placeholder="2592000"
                       />
+                    </div>
+                    <div className="mt-3 rounded-lg border border-white/10 bg-dark-900/60 px-4 py-3 text-sm text-gray-300">
+                      Duration preview:{' '}
+                      <span className="font-semibold text-white">{adminRewardDurationPreview}</span>
                     </div>
 
                     <label className="mt-3 block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
@@ -1195,6 +1329,12 @@ export default function KedolikStaking() {
                     >
                       {adminActionLoading === 'setRewardRate' ? 'Updating...' : 'Update Reward Rate'}
                     </button>
+
+                    <div className="mt-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-xs leading-relaxed text-yellow-100">
+                      Stake Lock V1 does not include an admin withdraw-unused-rewards instruction.
+                      Leftover rewards remain in the reward vault unless users claim them or the
+                      program is upgraded.
+                    </div>
 
                     <div className="my-5 h-px bg-white/10" />
 

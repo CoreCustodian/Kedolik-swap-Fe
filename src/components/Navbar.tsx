@@ -252,9 +252,11 @@ const Navbar = () => {
 
           {/* Mobile menu button */}
           <div className="lg:hidden flex items-center gap-2 z-[70]">
-            <WalletMultiButton className="!bg-gradient-brand !rounded-full !text-[10px] sm:!text-xs !px-2 sm:!px-3 !py-1.5 sm:!py-2 !z-[75] !max-w-[100px] !overflow-hidden" style={{ 
-              '--wallet-button-text': 'Connect' 
-            } as React.CSSProperties} />
+            <div className="hidden sm:block">
+              <WalletMultiButton className="!bg-gradient-brand !rounded-full !text-xs !px-3 !py-2 !z-[75] !h-10 sm:!w-32 !min-w-0 !max-w-none !overflow-hidden !whitespace-nowrap" style={{ 
+                '--wallet-button-text': 'Connect' 
+              } as React.CSSProperties} />
+            </div>
             <button
               onClick={() => setIsOpen(!isOpen)}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white transition-all duration-300"
@@ -275,6 +277,9 @@ const Navbar = () => {
       {isOpen && (
         <div className="lg:hidden bg-dark-800/95 backdrop-blur-xl border-t border-white/10 animate-in slide-in-from-top duration-300">
           <div className="px-4 pt-4 pb-6 space-y-2">
+            <div className="sm:hidden pb-2">
+              <WalletMultiButton className="!flex !w-full !justify-center !bg-gradient-brand !rounded-xl !text-sm !font-semibold !shadow-glow-brand !min-w-0" />
+            </div>
             <Link 
               to="/" 
               className={`block px-4 py-3 rounded-xl font-medium transition-all duration-300 ${

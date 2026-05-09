@@ -66,6 +66,11 @@ export interface KedolikStakingQuarrySummary {
   stakers: string | null;
   rewardRate: string | null;
   rewardsPerSecondEstimate: string | null;
+  rewardDurationSeconds: number | null;
+  stakingStartedAt: number | null;
+  stakingEndsAt: number | null;
+  stakingSecondsRemaining: number | null;
+  isExpired: boolean;
   userWalletBalance: string | null;
   userRewardWalletBalance: string | null;
   userStake: string | null;
@@ -145,6 +150,7 @@ export type KedolikStakingAdminPoolStatus =
   | 'active'
   | 'unfunded'
   | 'low_rewards'
+  | 'expired'
   | 'rewards_stopped'
   | 'missing';
 
@@ -165,6 +171,11 @@ export interface KedolikStakingAdminPool {
   statusLabel: string;
   statusMessage: string;
   secondsOfRewardsRemaining: number | null;
+  rewardDurationSeconds: number | null;
+  stakingStartedAt: number | null;
+  stakingEndsAt: number | null;
+  stakingSecondsRemaining: number | null;
+  isExpired: boolean;
   exists: boolean;
   createdAt: number;
   updatedAt: number;
@@ -529,12 +540,15 @@ const getConfiguredPools = async (connection: Connection) => {
   stored.forEach((pool) => byPool.set(pool.pool, pool));
   onChain.forEach((pool) => {
     const storedPool = byPool.get(pool.pool);
+    const storedDuration = Number(storedPool?.rewardDurationSeconds || 0);
+    const storedCreatedAt = Number(storedPool?.createdAt || 0);
+
     byPool.set(pool.pool, {
       ...storedPool,
       ...pool,
       rewardAmountRaw: storedPool?.rewardAmountRaw ?? pool.rewardAmountRaw,
-      rewardDurationSeconds: storedPool?.rewardDurationSeconds ?? pool.rewardDurationSeconds,
-      createdAt: storedPool?.createdAt ?? pool.createdAt,
+      rewardDurationSeconds: storedDuration > 0 ? storedDuration : pool.rewardDurationSeconds,
+      createdAt: storedCreatedAt > 0 ? storedCreatedAt : pool.createdAt,
       updatedAt: Math.max(storedPool?.updatedAt ?? 0, pool.updatedAt ?? 0),
     });
   });
@@ -549,6 +563,39 @@ const getRawTokenAccountBalance = async (connection: Connection, tokenAccount: P
   } catch {
     return null;
   }
+};
+
+const getPoolTiming = (poolConfig: KedolikStoredStakingPool) => {
+  const rewardDurationSeconds = Number(poolConfig.rewardDurationSeconds || 0);
+  const createdAtMs = Number(poolConfig.createdAt || 0);
+
+  if (
+    !Number.isFinite(rewardDurationSeconds) ||
+    rewardDurationSeconds <= 0 ||
+    !Number.isFinite(createdAtMs) ||
+    createdAtMs <= 0
+  ) {
+    return {
+      rewardDurationSeconds: null,
+      stakingStartedAt: null,
+      stakingEndsAt: null,
+      stakingSecondsRemaining: null,
+      isExpired: false,
+    };
+  }
+
+  const stakingStartedAt = Math.floor(createdAtMs / 1000);
+  const stakingEndsAt = stakingStartedAt + Math.floor(rewardDurationSeconds);
+  const now = Math.floor(Date.now() / 1000);
+  const stakingSecondsRemaining = Math.max(0, stakingEndsAt - now);
+
+  return {
+    rewardDurationSeconds: Math.floor(rewardDurationSeconds),
+    stakingStartedAt,
+    stakingEndsAt,
+    stakingSecondsRemaining,
+    isExpired: now >= stakingEndsAt,
+  };
 };
 
 const getWalletTokenBalance = async (
@@ -722,6 +769,7 @@ const mapPoolToSummary = async (
   const userStake = position.decoded?.amount.toString() ?? '0';
   const claimableRewards = estimatedClaimableRewards?.toString() ?? '0';
   const hasPosition = Boolean(position.decoded);
+  const poolTiming = getPoolTiming(poolConfig);
   const objectStatus = (address: string, exists: boolean): KedolikStakingObjectStatus => ({
     address,
     exists,
@@ -747,6 +795,11 @@ const mapPoolToSummary = async (
     stakers: null,
     rewardRate: rewardRateYearly,
     rewardsPerSecondEstimate: rewardRatePerSecond,
+    rewardDurationSeconds: poolTiming.rewardDurationSeconds,
+    stakingStartedAt: poolTiming.stakingStartedAt,
+    stakingEndsAt: poolTiming.stakingEndsAt,
+    stakingSecondsRemaining: poolTiming.stakingSecondsRemaining,
+    isExpired: poolTiming.isExpired,
     userWalletBalance,
     userRewardWalletBalance,
     userStake,
@@ -856,7 +909,16 @@ const mapPoolToAdminPool = async (
   const rewardRatePerSecond =
     livePool?.rewardRatePerSecond.toString() ?? poolConfig.rewardRatePerSecond ?? '0';
   const totalStaked = livePool?.totalStaked.toString() ?? stakeVaultBalance;
-  const status = getAdminPoolStatus(rewardRatePerSecond, rewardVaultBalance, Boolean(livePool));
+  const poolTiming = getPoolTiming(poolConfig);
+  const rewardStatus = getAdminPoolStatus(rewardRatePerSecond, rewardVaultBalance, Boolean(livePool));
+  const status = poolTiming.isExpired
+    ? {
+        status: 'expired' as const,
+        statusLabel: 'Expired',
+        statusMessage: 'The configured staking duration has ended. Users can still unstake and claim available rewards.',
+        secondsOfRewardsRemaining: rewardStatus.secondsOfRewardsRemaining,
+      }
+    : rewardStatus;
 
   return {
     poolId: (livePool?.poolId ?? BigInt(poolConfig.poolId || '0')).toString(),
@@ -872,6 +934,11 @@ const mapPoolToAdminPool = async (
     rewardVaultBalance,
     stakeVaultBalance,
     exists: Boolean(livePool),
+    rewardDurationSeconds: poolTiming.rewardDurationSeconds,
+    stakingStartedAt: poolTiming.stakingStartedAt,
+    stakingEndsAt: poolTiming.stakingEndsAt,
+    stakingSecondsRemaining: poolTiming.stakingSecondsRemaining,
+    isExpired: poolTiming.isExpired,
     createdAt: poolConfig.createdAt,
     updatedAt: poolConfig.updatedAt,
     ...status,
@@ -1362,7 +1429,8 @@ export const setKedolikStakingRewardRate = async (
   connection: Connection,
   wallet: AnchorWallet,
   poolAddress: string,
-  rewardRatePerSecondRaw: string
+  rewardRatePerSecondRaw: string,
+  rewardDurationSeconds?: number
 ) => {
   const signerWallet = assertWallet(wallet);
   const adminConfig = await fetchKedolikStakeLockAdminConfig(connection);
@@ -1380,6 +1448,12 @@ export const setKedolikStakingRewardRate = async (
 
   updateStoredPool(pool.toString(), {
     rewardRatePerSecond: rewardRatePerSecond.toString(),
+    ...(rewardDurationSeconds && rewardDurationSeconds > 0
+      ? {
+          rewardDurationSeconds: Math.floor(rewardDurationSeconds),
+          createdAt: Date.now(),
+        }
+      : {}),
   });
 
   return signature;
