@@ -36,6 +36,7 @@ const STAKE_DISCRIMINATOR = Buffer.from('ceb0ca12c8d1b36c', 'hex');
 const SET_REWARD_RATE_DISCRIMINATOR = Buffer.from('fdc9be1430267822', 'hex');
 const CLAIM_REWARDS_DISCRIMINATOR = Buffer.from('0490844774179750', 'hex');
 const UNSTAKE_DISCRIMINATOR = Buffer.from('5a5f6b2acd7c32e1', 'hex');
+const RECLAIM_UNCLAIMED_REWARDS_DISCRIMINATOR = Buffer.from('81e839e301f1a889', 'hex');
 const CLOSE_POSITION_DISCRIMINATOR = Buffer.from('7b86510031446262', 'hex');
 const STAKING_POOL_STORAGE_KEY = 'kedolik:stake-lock-v1:pools';
 export const KEDOLIK_STAKING_POOLS_UPDATED_EVENT = 'kedolik:staking-pools-updated';
@@ -54,6 +55,16 @@ export interface KedolikStakingQuarrySummary {
   rewarderAddress: string;
   mintWrapperAddress: string;
   minterAddress: string;
+  poolAdminAddress: string;
+  poolAdminExists: boolean;
+  poolCreator: string | null;
+  reservedRewards: string | null;
+  rewardEndTs: number | null;
+  reclaimableRewards: string | null;
+  requiredRewardAmount: string | null;
+  fundedRewardAmount: string | null;
+  isFullyFunded: boolean;
+  isLegacy: boolean;
   sampleMinerAddress: string;
   derivedUserMinerAddress: string | null;
   stakeTokenMint: string;
@@ -78,7 +89,7 @@ export interface KedolikStakingQuarrySummary {
   claimableRewardsState: 'ready' | 'refreshing' | 'pending';
   lastCheckpointTs: number | null;
   hasMiner: boolean;
-  status: 'live' | 'awaiting_client' | 'awaiting_deployment';
+  status: 'live' | 'awaiting_client' | 'awaiting_deployment' | 'awaiting_rewards' | 'legacy';
   statusMessage: string;
   sampleStakeWalletBalance: string | null;
   sampleRewardWalletBalance: string | null;
@@ -99,6 +110,7 @@ export interface KedolikStakingService {
   stake: (amountRaw: string, poolAddress?: string) => Promise<string>;
   unstake: (amountRaw: string, poolAddress?: string) => Promise<string>;
   claimRewards: (poolAddress?: string) => Promise<string>;
+  reclaimUnclaimedRewards: (poolAddress?: string) => Promise<string>;
   getUserMinerAddress: (authority: PublicKey) => string;
   getStatusMessage: () => string;
 }
@@ -115,10 +127,12 @@ export interface KedolikStoredStakingPool {
   pool: string;
   stakeMint: string;
   rewardMint: string;
+  poolAdmin?: string;
   stakeVault: string;
   rewardVault: string;
   rewardRatePerSecond: string;
   rewardAmountRaw: string;
+  fundedRewardAmountRaw?: string;
   rewardDurationSeconds: number;
   createdAt: number;
   updatedAt: number;
@@ -135,6 +149,7 @@ export interface CreateKedolikStakingPoolInput {
 export interface KedolikStakingPoolAddresses {
   poolId: string;
   pool: string;
+  poolAdmin: string;
   stakeVault: string;
   rewardVault: string;
 }
@@ -152,6 +167,7 @@ export type KedolikStakingAdminPoolStatus =
   | 'low_rewards'
   | 'expired'
   | 'rewards_stopped'
+  | 'legacy'
   | 'missing';
 
 export interface KedolikStakingAdminPool {
@@ -159,6 +175,16 @@ export interface KedolikStakingAdminPool {
   pool: string;
   stakeMint: string;
   rewardMint: string;
+  poolAdmin: string;
+  poolAdminExists: boolean;
+  poolCreator: string | null;
+  reservedRewards: string | null;
+  rewardEndTs: number | null;
+  reclaimableRewards: string | null;
+  requiredRewardAmount: string | null;
+  fundedRewardAmount: string | null;
+  isFullyFunded: boolean;
+  isLegacy: boolean;
   stakeVault: string;
   rewardVault: string;
   stakeTokenDecimals: number | null;
@@ -200,6 +226,20 @@ interface DecodedStakingPoolState {
   rewardRatePerSecond: bigint;
   lastUpdateTs: number;
   rewardPerTokenStored: bigint;
+}
+
+interface DecodedStakingPoolAdminState {
+  pool: PublicKey | null;
+  creator: PublicKey;
+  rewardDurationSeconds: bigint | null;
+  rewardEndTs: number;
+  reservedRewards: bigint;
+}
+
+interface PoolAdminAccountState {
+  address: PublicKey;
+  exists: boolean;
+  decoded: DecodedStakingPoolAdminState | null;
 }
 
 interface EnsureAtaResult {
@@ -380,11 +420,25 @@ export const getRewardVaultPda = (pool: PublicKey) =>
     KEDOLIK_STAKE_LOCK_PROGRAM_ID
   )[0];
 
+export const getPoolAdminPda = (pool: PublicKey) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from('pool_admin'), pool.toBuffer()],
+    KEDOLIK_STAKE_LOCK_PROGRAM_ID
+  )[0];
+
 export const getUserStakePositionPda = (pool: PublicKey, user: PublicKey) =>
   PublicKey.findProgramAddressSync(
     [Buffer.from('position'), pool.toBuffer(), user.toBuffer()],
     KEDOLIK_STAKE_LOCK_PROGRAM_ID
   )[0];
+
+const getStoredOrDerivedPoolAdmin = (poolConfig: KedolikStoredStakingPool) => {
+  try {
+    return poolConfig.poolAdmin ? toPublicKey(poolConfig.poolAdmin) : getPoolAdminPda(toPublicKey(poolConfig.pool));
+  } catch {
+    return getPoolAdminPda(toPublicKey(poolConfig.pool));
+  }
+};
 
 export const deriveKedolikStakingPoolAddresses = (
   stakeMintAddress: string,
@@ -399,6 +453,7 @@ export const deriveKedolikStakingPoolAddresses = (
   return {
     poolId: poolId.toString(),
     pool: pool.toString(),
+    poolAdmin: getPoolAdminPda(pool).toString(),
     stakeVault: getStakeVaultPda(pool).toString(),
     rewardVault: getRewardVaultPda(pool).toString(),
   };
@@ -493,10 +548,12 @@ const decodeOnChainPoolAccount = (
     pool: publicKey.toString(),
     stakeMint: state.stakeMint.toString(),
     rewardMint: state.rewardMint.toString(),
+    poolAdmin: getPoolAdminPda(publicKey).toString(),
     stakeVault: state.stakeVault.toString(),
     rewardVault: state.rewardVault.toString(),
     rewardRatePerSecond: state.rewardRatePerSecond.toString(),
     rewardAmountRaw: '0',
+    fundedRewardAmountRaw: '0',
     rewardDurationSeconds: 0,
     createdAt: 0,
     updatedAt: Date.now(),
@@ -522,6 +579,122 @@ const decodeStakingPoolState = (data: Buffer): DecodedStakingPoolState | null =>
   };
 };
 
+const isReasonableRewardEndTs = (timestamp: number) =>
+  timestamp === 0 || (timestamp >= 1_500_000_000 && timestamp <= 4_500_000_000);
+
+const decodeStakingPoolAdminState = (
+  data: Buffer,
+  expectedPool: PublicKey
+): DecodedStakingPoolAdminState | null => {
+  type LayoutCandidate = {
+    poolOffset: number | null;
+    creatorOffset: number;
+    durationOffset: number | null;
+    rewardEndOffset: number;
+    reservedOffset: number;
+  };
+
+  const candidates: LayoutCandidate[] = [
+    { poolOffset: 8, creatorOffset: 40, durationOffset: 72, rewardEndOffset: 80, reservedOffset: 88 },
+    { poolOffset: 8, creatorOffset: 40, durationOffset: null, rewardEndOffset: 72, reservedOffset: 80 },
+    { poolOffset: null, creatorOffset: 8, durationOffset: 40, rewardEndOffset: 48, reservedOffset: 56 },
+    { poolOffset: null, creatorOffset: 8, durationOffset: null, rewardEndOffset: 40, reservedOffset: 48 },
+    { poolOffset: 40, creatorOffset: 8, durationOffset: 72, rewardEndOffset: 80, reservedOffset: 88 },
+    { poolOffset: 40, creatorOffset: 8, durationOffset: null, rewardEndOffset: 72, reservedOffset: 80 },
+  ];
+
+  let best: { decoded: DecodedStakingPoolAdminState; score: number } | null = null;
+
+  for (const candidate of candidates) {
+    const neededOffsets = [
+      candidate.creatorOffset + 32,
+      candidate.rewardEndOffset + 8,
+      candidate.reservedOffset + 8,
+      candidate.poolOffset === null ? 0 : candidate.poolOffset + 32,
+      candidate.durationOffset === null ? 0 : candidate.durationOffset + 8,
+    ];
+
+    if (data.length < Math.max(...neededOffsets)) {
+      continue;
+    }
+
+    const decodedPool = candidate.poolOffset === null ? null : readPublicKey(data, candidate.poolOffset);
+    const creator = readPublicKey(data, candidate.creatorOffset);
+    const rewardEndTs = readI64(data, candidate.rewardEndOffset);
+    const reservedRewards = readU64(data, candidate.reservedOffset);
+    const rewardDurationSeconds =
+      candidate.durationOffset === null ? null : readU64(data, candidate.durationOffset);
+
+    let score = 0;
+
+    if (decodedPool) {
+      score += decodedPool.equals(expectedPool) ? 50 : -50;
+    }
+
+    score += isReasonableRewardEndTs(rewardEndTs) ? 20 : -20;
+
+    if (!creator.equals(SystemProgram.programId)) {
+      score += 2;
+    }
+
+    if (rewardEndTs > 0) {
+      score += 2;
+    }
+
+    if (!best || score > best.score) {
+      best = {
+        score,
+        decoded: {
+          pool: decodedPool,
+          creator,
+          rewardDurationSeconds,
+          rewardEndTs,
+          reservedRewards,
+        },
+      };
+    }
+  }
+
+  return best && best.score > 0 ? best.decoded : null;
+};
+
+const fetchPoolAdminAccountState = async (
+  connection: Connection,
+  pool: PublicKey,
+  poolConfig?: KedolikStoredStakingPool
+): Promise<PoolAdminAccountState> => {
+  const address = poolConfig ? getStoredOrDerivedPoolAdmin(poolConfig) : getPoolAdminPda(pool);
+  const accountInfo = await connection.getAccountInfo(address, 'confirmed');
+
+  if (!accountInfo || !accountInfo.owner.equals(KEDOLIK_STAKE_LOCK_PROGRAM_ID)) {
+    return {
+      address,
+      exists: false,
+      decoded: null,
+    };
+  }
+
+  return {
+    address,
+    exists: true,
+    decoded: decodeStakingPoolAdminState(Buffer.from(accountInfo.data), pool),
+  };
+};
+
+const getPoolAdminAccountOrThrow = async (
+  connection: Connection,
+  pool: PublicKey,
+  poolConfig?: KedolikStoredStakingPool
+) => {
+  const poolAdminAccount = await fetchPoolAdminAccountState(connection, pool, poolConfig);
+
+  if (!poolAdminAccount.exists) {
+    throw new Error('This staking pool is legacy and cannot be used with the upgraded PoolAdmin staking program.');
+  }
+
+  return poolAdminAccount;
+};
+
 const fetchOnChainPools = async (connection: Connection) => {
   const accounts = await connection.getProgramAccounts(KEDOLIK_STAKE_LOCK_PROGRAM_ID, {
     commitment: 'confirmed',
@@ -536,8 +709,17 @@ const getConfiguredPools = async (connection: Connection) => {
   const stored = getStoredPools();
   const onChain = await fetchOnChainPools(connection).catch(() => []);
   const byPool = new Map<string, KedolikStoredStakingPool>();
+  const withDerivedPoolAdmin = (pool: KedolikStoredStakingPool): KedolikStoredStakingPool => {
+    const poolPublicKey = toPublicKey(pool.pool);
 
-  stored.forEach((pool) => byPool.set(pool.pool, pool));
+    return {
+      ...pool,
+      poolAdmin: pool.poolAdmin ?? getPoolAdminPda(poolPublicKey).toString(),
+      fundedRewardAmountRaw: pool.fundedRewardAmountRaw ?? '0',
+    };
+  };
+
+  stored.forEach((pool) => byPool.set(pool.pool, withDerivedPoolAdmin(pool)));
   onChain.forEach((pool) => {
     const storedPool = byPool.get(pool.pool);
     const storedDuration = Number(storedPool?.rewardDurationSeconds || 0);
@@ -546,7 +728,9 @@ const getConfiguredPools = async (connection: Connection) => {
     byPool.set(pool.pool, {
       ...storedPool,
       ...pool,
+      poolAdmin: storedPool?.poolAdmin ?? pool.poolAdmin,
       rewardAmountRaw: storedPool?.rewardAmountRaw ?? pool.rewardAmountRaw,
+      fundedRewardAmountRaw: storedPool?.fundedRewardAmountRaw ?? pool.fundedRewardAmountRaw ?? '0',
       rewardDurationSeconds: storedDuration > 0 ? storedDuration : pool.rewardDurationSeconds,
       createdAt: storedCreatedAt > 0 ? storedCreatedAt : pool.createdAt,
       updatedAt: Math.max(storedPool?.updatedAt ?? 0, pool.updatedAt ?? 0),
@@ -565,9 +749,32 @@ const getRawTokenAccountBalance = async (connection: Connection, tokenAccount: P
   }
 };
 
-const getPoolTiming = (poolConfig: KedolikStoredStakingPool) => {
+const getPoolTiming = (
+  poolConfig: KedolikStoredStakingPool,
+  poolAdminState?: DecodedStakingPoolAdminState | null
+) => {
   const rewardDurationSeconds = Number(poolConfig.rewardDurationSeconds || 0);
   const createdAtMs = Number(poolConfig.createdAt || 0);
+  const now = Math.floor(Date.now() / 1000);
+
+  if (poolAdminState?.rewardEndTs && poolAdminState.rewardEndTs > 0) {
+    const stakingEndsAt = poolAdminState.rewardEndTs;
+    const stakingStartedAt =
+      rewardDurationSeconds > 0 ? Math.max(0, stakingEndsAt - Math.floor(rewardDurationSeconds)) : null;
+
+    return {
+      rewardDurationSeconds:
+        rewardDurationSeconds > 0
+          ? Math.floor(rewardDurationSeconds)
+          : poolAdminState.rewardDurationSeconds !== null
+            ? Number(poolAdminState.rewardDurationSeconds)
+            : null,
+      stakingStartedAt,
+      stakingEndsAt,
+      stakingSecondsRemaining: Math.max(0, stakingEndsAt - now),
+      isExpired: now >= stakingEndsAt,
+    };
+  }
 
   if (
     !Number.isFinite(rewardDurationSeconds) ||
@@ -586,7 +793,6 @@ const getPoolTiming = (poolConfig: KedolikStoredStakingPool) => {
 
   const stakingStartedAt = Math.floor(createdAtMs / 1000);
   const stakingEndsAt = stakingStartedAt + Math.floor(rewardDurationSeconds);
-  const now = Math.floor(Date.now() / 1000);
   const stakingSecondsRemaining = Math.max(0, stakingEndsAt - now);
 
   return {
@@ -596,6 +802,45 @@ const getPoolTiming = (poolConfig: KedolikStoredStakingPool) => {
     stakingSecondsRemaining,
     isExpired: now >= stakingEndsAt,
   };
+};
+
+const bigintFromString = (value: string | null | undefined) => {
+  try {
+    return BigInt(value ?? '0');
+  } catch {
+    return 0n;
+  }
+};
+
+const getPoolFundingState = (
+  poolConfig: KedolikStoredStakingPool,
+  rewardVaultBalanceRaw: string | null
+) => {
+  const requiredRewardAmount = bigintFromString(poolConfig.rewardAmountRaw);
+  const fundedRewardAmount = bigintFromString(poolConfig.fundedRewardAmountRaw);
+  const rewardVaultBalance = bigintFromString(rewardVaultBalanceRaw);
+  const isFullyFunded =
+    requiredRewardAmount <= 0n
+      ? rewardVaultBalance > 0n
+      : fundedRewardAmount > 0n
+        ? fundedRewardAmount >= requiredRewardAmount
+        : rewardVaultBalance >= requiredRewardAmount;
+
+  return {
+    requiredRewardAmount: requiredRewardAmount.toString(),
+    fundedRewardAmount: fundedRewardAmount.toString(),
+    isFullyFunded,
+  };
+};
+
+const getReclaimableRewards = (
+  rewardVaultBalanceRaw: string | null,
+  reservedRewards: bigint | null | undefined
+) => {
+  const rewardVaultBalance = bigintFromString(rewardVaultBalanceRaw);
+  const reserved = reservedRewards ?? 0n;
+
+  return rewardVaultBalance > reserved ? rewardVaultBalance - reserved : 0n;
 };
 
 const getWalletTokenBalance = async (
@@ -734,6 +979,7 @@ const mapPoolToSummary = async (
   const stakeMint = toPublicKey(poolConfig.stakeMint);
   const rewardMint = toPublicKey(poolConfig.rewardMint);
   const stakeVault = toPublicKey(poolConfig.stakeVault);
+  const poolAdmin = getStoredOrDerivedPoolAdmin(poolConfig);
   const [stakeTokenProgram, rewardTokenProgram] = await Promise.all([
     getTokenProgramForMint(connection, stakeMint).catch(() => TOKEN_PROGRAM_ID),
     getTokenProgramForMint(connection, rewardMint).catch(() => TOKEN_PROGRAM_ID),
@@ -747,6 +993,7 @@ const mapPoolToSummary = async (
     userRewardWalletBalance,
     position,
     poolAccountInfo,
+    poolAdminAccountState,
   ] = await Promise.all([
     getTokenDecimals(connection, stakeMint),
     getTokenDecimals(connection, rewardMint),
@@ -756,6 +1003,7 @@ const mapPoolToSummary = async (
     getWalletTokenBalance(connection, walletPublicKey, rewardMint, rewardTokenProgram),
     fetchUserPosition(connection, pool, walletPublicKey),
     connection.getAccountInfo(pool, 'confirmed'),
+    fetchPoolAdminAccountState(connection, pool, poolConfig),
   ]);
   const livePool = poolAccountInfo ? decodeStakingPoolState(Buffer.from(poolAccountInfo.data)) : null;
   const positionAddress = position.address?.toString() ?? null;
@@ -769,7 +1017,25 @@ const mapPoolToSummary = async (
   const userStake = position.decoded?.amount.toString() ?? '0';
   const claimableRewards = estimatedClaimableRewards?.toString() ?? '0';
   const hasPosition = Boolean(position.decoded);
-  const poolTiming = getPoolTiming(poolConfig);
+  const poolTiming = getPoolTiming(poolConfig, poolAdminAccountState.decoded);
+  const fundingState = getPoolFundingState(poolConfig, rewardVaultBalance);
+  const reservedRewards = poolAdminAccountState.decoded?.reservedRewards ?? null;
+  const reclaimableRewards = getReclaimableRewards(rewardVaultBalance, reservedRewards);
+  const isLegacy = !poolAdminAccountState.exists;
+  const status: KedolikStakingQuarrySummary['status'] = !poolAccountInfo
+    ? 'awaiting_deployment'
+    : isLegacy
+      ? 'legacy'
+      : !fundingState.isFullyFunded
+        ? 'awaiting_rewards'
+        : 'live';
+  const statusMessage = !poolAccountInfo
+    ? 'Pool config is stored in the frontend, but the on-chain pool account was not found.'
+    : isLegacy
+      ? 'Legacy staking pool created before the PoolAdmin upgrade.'
+      : !fundingState.isFullyFunded
+        ? 'Pool is created, but rewards are not fully funded yet.'
+        : 'Live Stake Lock V1 pool';
   const objectStatus = (address: string, exists: boolean): KedolikStakingObjectStatus => ({
     address,
     exists,
@@ -783,6 +1049,16 @@ const mapPoolToSummary = async (
     rewarderAddress: KEDOLIK_STAKE_LOCK_ADMIN_CONFIG.toString(),
     mintWrapperAddress: KEDOLIK_STAKE_LOCK_PROGRAM_ID.toString(),
     minterAddress: poolConfig.rewardVault,
+    poolAdminAddress: poolAdmin.toString(),
+    poolAdminExists: poolAdminAccountState.exists,
+    poolCreator: poolAdminAccountState.decoded?.creator.toString() ?? null,
+    reservedRewards: reservedRewards?.toString() ?? null,
+    rewardEndTs: poolAdminAccountState.decoded?.rewardEndTs ?? null,
+    reclaimableRewards: reclaimableRewards.toString(),
+    requiredRewardAmount: fundingState.requiredRewardAmount,
+    fundedRewardAmount: fundingState.fundedRewardAmount,
+    isFullyFunded: fundingState.isFullyFunded,
+    isLegacy,
     sampleMinerAddress: positionAddress ?? '',
     derivedUserMinerAddress: positionAddress,
     stakeTokenMint: poolConfig.stakeMint,
@@ -807,10 +1083,8 @@ const mapPoolToSummary = async (
     claimableRewardsState: hasPosition ? 'ready' : 'pending',
     lastCheckpointTs: livePool?.lastUpdateTs ?? (poolConfig.updatedAt ? Math.floor(poolConfig.updatedAt / 1000) : null),
     hasMiner: hasPosition,
-    status: poolAccountInfo ? 'live' : 'awaiting_deployment',
-    statusMessage: poolAccountInfo
-      ? 'Live Stake Lock V1 pool'
-      : 'Pool config is stored in the frontend, but the on-chain pool account was not found.',
+    status,
+    statusMessage,
     sampleStakeWalletBalance: null,
     sampleRewardWalletBalance: rewardVaultBalance,
     objectStatuses: {
@@ -827,7 +1101,9 @@ const mapPoolToSummary = async (
 const getAdminPoolStatus = (
   rewardRatePerSecondRaw: string,
   rewardVaultBalanceRaw: string | null,
-  exists: boolean
+  exists: boolean,
+  poolAdminExists: boolean,
+  isFullyFunded: boolean
 ): {
   status: KedolikStakingAdminPoolStatus;
   statusLabel: string;
@@ -843,15 +1119,24 @@ const getAdminPoolStatus = (
     };
   }
 
+  if (!poolAdminExists) {
+    return {
+      status: 'legacy',
+      statusLabel: 'Legacy',
+      statusMessage: 'This pool was created before the PoolAdmin upgrade and is hidden from the new staking UI.',
+      secondsOfRewardsRemaining: null,
+    };
+  }
+
   const rewardRatePerSecond = BigInt(rewardRatePerSecondRaw || '0');
   const rewardVaultBalance = BigInt(rewardVaultBalanceRaw ?? '0');
 
-  if (rewardRatePerSecond === 0n) {
+  if (!isFullyFunded) {
     return {
-      status: 'rewards_stopped',
-      statusLabel: 'Rewards stopped',
-      statusMessage: 'Future reward accrual is stopped. Users can still unstake and claim accrued rewards.',
-      secondsOfRewardsRemaining: null,
+      status: 'unfunded',
+      statusLabel: 'Created, not fully funded',
+      statusMessage: 'Pool is created, but the configured reward amount has not been fully funded yet.',
+      secondsOfRewardsRemaining: 0,
     };
   }
 
@@ -861,6 +1146,15 @@ const getAdminPoolStatus = (
       statusLabel: 'Unfunded',
       statusMessage: 'Rewards are not funded yet.',
       secondsOfRewardsRemaining: 0,
+    };
+  }
+
+  if (rewardRatePerSecond === 0n) {
+    return {
+      status: 'rewards_stopped',
+      statusLabel: 'Rewards stopped',
+      statusMessage: 'Future reward accrual is stopped. Users can still unstake and claim accrued rewards.',
+      secondsOfRewardsRemaining: null,
     };
   }
 
@@ -890,6 +1184,7 @@ const mapPoolToAdminPool = async (
   const pool = toPublicKey(poolConfig.pool);
   const stakeMint = toPublicKey(poolConfig.stakeMint);
   const rewardMint = toPublicKey(poolConfig.rewardMint);
+  const poolAdmin = getStoredOrDerivedPoolAdmin(poolConfig);
   const stakeVault = toPublicKey(poolConfig.stakeVault);
   const rewardVault = toPublicKey(poolConfig.rewardVault);
   const [
@@ -898,24 +1193,38 @@ const mapPoolToAdminPool = async (
     stakeVaultBalance,
     rewardVaultBalance,
     poolAccountInfo,
+    poolAdminAccountState,
   ] = await Promise.all([
     getTokenDecimals(connection, stakeMint),
     getTokenDecimals(connection, rewardMint),
     getRawTokenAccountBalance(connection, stakeVault),
     getRawTokenAccountBalance(connection, rewardVault),
     connection.getAccountInfo(pool, 'confirmed'),
+    fetchPoolAdminAccountState(connection, pool, poolConfig),
   ]);
   const livePool = poolAccountInfo ? decodeStakingPoolState(Buffer.from(poolAccountInfo.data)) : null;
   const rewardRatePerSecond =
     livePool?.rewardRatePerSecond.toString() ?? poolConfig.rewardRatePerSecond ?? '0';
   const totalStaked = livePool?.totalStaked.toString() ?? stakeVaultBalance;
-  const poolTiming = getPoolTiming(poolConfig);
-  const rewardStatus = getAdminPoolStatus(rewardRatePerSecond, rewardVaultBalance, Boolean(livePool));
-  const status = poolTiming.isExpired
+  const poolTiming = getPoolTiming(poolConfig, poolAdminAccountState.decoded);
+  const fundingState = getPoolFundingState(poolConfig, rewardVaultBalance);
+  const reservedRewards = poolAdminAccountState.decoded?.reservedRewards ?? null;
+  const reclaimableRewards = getReclaimableRewards(rewardVaultBalance, reservedRewards);
+  const rewardStatus = getAdminPoolStatus(
+    rewardRatePerSecond,
+    rewardVaultBalance,
+    Boolean(livePool),
+    poolAdminAccountState.exists,
+    fundingState.isFullyFunded
+  );
+  const status = !poolAdminAccountState.exists
+    ? rewardStatus
+    : poolTiming.isExpired
     ? {
         status: 'expired' as const,
         statusLabel: 'Expired',
-        statusMessage: 'The configured staking duration has ended. Users can still unstake and claim available rewards.',
+        statusMessage:
+          'The configured staking duration has ended. Creator can reclaim unreserved leftover rewards.',
         secondsOfRewardsRemaining: rewardStatus.secondsOfRewardsRemaining,
       }
     : rewardStatus;
@@ -925,6 +1234,16 @@ const mapPoolToAdminPool = async (
     pool: pool.toString(),
     stakeMint: poolConfig.stakeMint,
     rewardMint: poolConfig.rewardMint,
+    poolAdmin: poolAdmin.toString(),
+    poolAdminExists: poolAdminAccountState.exists,
+    poolCreator: poolAdminAccountState.decoded?.creator.toString() ?? null,
+    reservedRewards: reservedRewards?.toString() ?? null,
+    rewardEndTs: poolAdminAccountState.decoded?.rewardEndTs ?? null,
+    reclaimableRewards: reclaimableRewards.toString(),
+    requiredRewardAmount: fundingState.requiredRewardAmount,
+    fundedRewardAmount: fundingState.fundedRewardAmount,
+    isFullyFunded: fundingState.isFullyFunded,
+    isLegacy: !poolAdminAccountState.exists,
     stakeVault: poolConfig.stakeVault,
     rewardVault: poolConfig.rewardVault,
     stakeTokenDecimals,
@@ -1011,10 +1330,12 @@ const buildInitializeStakingPoolInstruction = (
   stakeMint: PublicKey,
   rewardMint: PublicKey,
   pool: PublicKey,
+  poolAdmin: PublicKey,
   stakeVault: PublicKey,
   rewardVault: PublicKey,
   poolId: bigint,
   rewardRatePerSecond: bigint,
+  rewardDurationSeconds: bigint,
   tokenProgram: PublicKey
 ) =>
   new TransactionInstruction({
@@ -1025,6 +1346,7 @@ const buildInitializeStakingPoolInstruction = (
       { pubkey: stakeMint, isSigner: false, isWritable: false },
       { pubkey: rewardMint, isSigner: false, isWritable: false },
       { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
       { pubkey: stakeVault, isSigner: false, isWritable: true },
       { pubkey: rewardVault, isSigner: false, isWritable: true },
       { pubkey: tokenProgram, isSigner: false, isWritable: false },
@@ -1035,6 +1357,7 @@ const buildInitializeStakingPoolInstruction = (
       INITIALIZE_STAKING_POOL_DISCRIMINATOR,
       writeU64(poolId),
       writeU64(rewardRatePerSecond),
+      writeU64(rewardDurationSeconds),
     ]),
   });
 
@@ -1058,12 +1381,18 @@ const buildFundRewardsInstruction = (
     data: Buffer.concat([FUND_REWARDS_DISCRIMINATOR, writeU64(amount)]),
   });
 
-const buildOpenPositionInstruction = (user: PublicKey, pool: PublicKey, position: PublicKey) =>
+const buildOpenPositionInstruction = (
+  user: PublicKey,
+  pool: PublicKey,
+  poolAdmin: PublicKey,
+  position: PublicKey
+) =>
   new TransactionInstruction({
     programId: KEDOLIK_STAKE_LOCK_PROGRAM_ID,
     keys: [
       { pubkey: user, isSigner: true, isWritable: true },
       { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
       { pubkey: position, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
@@ -1073,6 +1402,7 @@ const buildOpenPositionInstruction = (user: PublicKey, pool: PublicKey, position
 const buildStakeInstruction = (
   user: PublicKey,
   pool: PublicKey,
+  poolAdmin: PublicKey,
   position: PublicKey,
   userStakeToken: PublicKey,
   stakeVault: PublicKey,
@@ -1084,6 +1414,7 @@ const buildStakeInstruction = (
     keys: [
       { pubkey: user, isSigner: true, isWritable: false },
       { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
       { pubkey: position, isSigner: false, isWritable: true },
       { pubkey: userStakeToken, isSigner: false, isWritable: true },
       { pubkey: stakeVault, isSigner: false, isWritable: true },
@@ -1095,6 +1426,7 @@ const buildStakeInstruction = (
 const buildUnstakeInstruction = (
   user: PublicKey,
   pool: PublicKey,
+  poolAdmin: PublicKey,
   position: PublicKey,
   userStakeToken: PublicKey,
   stakeVault: PublicKey,
@@ -1106,6 +1438,7 @@ const buildUnstakeInstruction = (
     keys: [
       { pubkey: user, isSigner: true, isWritable: false },
       { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
       { pubkey: position, isSigner: false, isWritable: true },
       { pubkey: userStakeToken, isSigner: false, isWritable: true },
       { pubkey: stakeVault, isSigner: false, isWritable: true },
@@ -1117,6 +1450,7 @@ const buildUnstakeInstruction = (
 const buildClaimRewardsInstruction = (
   user: PublicKey,
   pool: PublicKey,
+  poolAdmin: PublicKey,
   position: PublicKey,
   userRewardToken: PublicKey,
   rewardVault: PublicKey,
@@ -1127,6 +1461,7 @@ const buildClaimRewardsInstruction = (
     keys: [
       { pubkey: user, isSigner: true, isWritable: false },
       { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
       { pubkey: position, isSigner: false, isWritable: true },
       { pubkey: userRewardToken, isSigner: false, isWritable: true },
       { pubkey: rewardVault, isSigner: false, isWritable: true },
@@ -1138,6 +1473,7 @@ const buildClaimRewardsInstruction = (
 const buildSetRewardRateInstruction = (
   authority: PublicKey,
   pool: PublicKey,
+  poolAdmin: PublicKey,
   rewardRatePerSecond: bigint
 ) =>
   new TransactionInstruction({
@@ -1145,9 +1481,31 @@ const buildSetRewardRateInstruction = (
     keys: [
       { pubkey: KEDOLIK_STAKE_LOCK_ADMIN_CONFIG, isSigner: false, isWritable: false },
       { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
       { pubkey: authority, isSigner: true, isWritable: false },
     ],
     data: Buffer.concat([SET_REWARD_RATE_DISCRIMINATOR, writeU64(rewardRatePerSecond)]),
+  });
+
+const buildReclaimUnclaimedRewardsInstruction = (
+  authority: PublicKey,
+  pool: PublicKey,
+  poolAdmin: PublicKey,
+  rewardVault: PublicKey,
+  adminRewardToken: PublicKey,
+  tokenProgram: PublicKey
+) =>
+  new TransactionInstruction({
+    programId: KEDOLIK_STAKE_LOCK_PROGRAM_ID,
+    keys: [
+      { pubkey: authority, isSigner: true, isWritable: false },
+      { pubkey: pool, isSigner: false, isWritable: true },
+      { pubkey: poolAdmin, isSigner: false, isWritable: true },
+      { pubkey: rewardVault, isSigner: false, isWritable: true },
+      { pubkey: adminRewardToken, isSigner: false, isWritable: true },
+      { pubkey: tokenProgram, isSigner: false, isWritable: false },
+    ],
+    data: RECLAIM_UNCLAIMED_REWARDS_DISCRIMINATOR,
   });
 
 const buildClosePositionInstruction = (user: PublicKey, pool: PublicKey, position: PublicKey) =>
@@ -1222,6 +1580,7 @@ export const initializeKedolikStakingPool = async (
   }
 
   const pool = getStakingPoolPda(stakeMint, rewardMint, poolId);
+  const poolAdmin = getPoolAdminPda(pool);
   const stakeVault = getStakeVaultPda(pool);
   const rewardVault = getRewardVaultPda(pool);
 
@@ -1244,10 +1603,12 @@ export const initializeKedolikStakingPool = async (
       stakeMint,
       rewardMint,
       pool,
+      poolAdmin,
       stakeVault,
       rewardVault,
       poolId,
       rewardRatePerSecond,
+      rewardDurationSeconds,
       rewardTokenProgram
     )
   );
@@ -1257,10 +1618,12 @@ export const initializeKedolikStakingPool = async (
     pool: pool.toString(),
     stakeMint: stakeMint.toString(),
     rewardMint: rewardMint.toString(),
+    poolAdmin: poolAdmin.toString(),
     stakeVault: stakeVault.toString(),
     rewardVault: rewardVault.toString(),
     rewardRatePerSecond: rewardRatePerSecond.toString(),
     rewardAmountRaw: rewardAmountRaw.toString(),
+    fundedRewardAmountRaw: '0',
     rewardDurationSeconds: Number(rewardDurationSeconds),
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -1303,8 +1666,14 @@ export const createKedolikStakingPool = async (
   }
 
   const pool = getStakingPoolPda(stakeMint, rewardMint, poolId);
+  const poolAdmin = getPoolAdminPda(pool);
   const stakeVault = getStakeVaultPda(pool);
   const rewardVault = getRewardVaultPda(pool);
+
+  if (await connection.getAccountInfo(pool, 'confirmed')) {
+    throw new Error('A staking pool already exists for this stake mint, reward mint, and pool ID.');
+  }
+
   const [stakeTokenProgram, rewardTokenProgram] = await Promise.all([
     getTokenProgramForMint(connection, stakeMint),
     getTokenProgramForMint(connection, rewardMint),
@@ -1333,10 +1702,12 @@ export const createKedolikStakingPool = async (
       stakeMint,
       rewardMint,
       pool,
+      poolAdmin,
       stakeVault,
       rewardVault,
       poolId,
       rewardRatePerSecond,
+      rewardDurationSeconds,
       rewardTokenProgram
     )
   );
@@ -1357,10 +1728,12 @@ export const createKedolikStakingPool = async (
     pool: pool.toString(),
     stakeMint: stakeMint.toString(),
     rewardMint: rewardMint.toString(),
+    poolAdmin: poolAdmin.toString(),
     stakeVault: stakeVault.toString(),
     rewardVault: rewardVault.toString(),
     rewardRatePerSecond: rewardRatePerSecond.toString(),
     rewardAmountRaw: rewardAmountRaw.toString(),
+    fundedRewardAmountRaw: rewardAmountRaw.toString(),
     rewardDurationSeconds: Number(rewardDurationSeconds),
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -1416,10 +1789,10 @@ export const fundKedolikStakingRewards = async (
     )
   );
   const signature = await sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
-  const currentRewardAmount = BigInt(poolConfig.rewardAmountRaw || '0');
+  const currentFundedAmount = BigInt(poolConfig.fundedRewardAmountRaw || '0');
 
   updateStoredPool(pool.toString(), {
-    rewardAmountRaw: (currentRewardAmount + rawAmount).toString(),
+    fundedRewardAmountRaw: (currentFundedAmount + rawAmount).toString(),
   });
 
   return signature;
@@ -1440,9 +1813,10 @@ export const setKedolikStakingRewardRate = async (
   }
 
   const pool = toPublicKey(poolAddress);
+  const poolAdmin = (await getPoolAdminAccountOrThrow(connection, pool)).address;
   const rewardRatePerSecond = assertU64String(rewardRatePerSecondRaw, 'Reward rate per second');
   const transaction = new Transaction().add(
-    buildSetRewardRateInstruction(signerWallet.publicKey, pool, rewardRatePerSecond)
+    buildSetRewardRateInstruction(signerWallet.publicKey, pool, poolAdmin, rewardRatePerSecond)
   );
   const signature = await sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
 
@@ -1459,6 +1833,68 @@ export const setKedolikStakingRewardRate = async (
   return signature;
 };
 
+export const reclaimKedolikStakingUnclaimedRewards = async (
+  connection: Connection,
+  wallet: AnchorWallet,
+  poolAddress: string
+) => {
+  const signerWallet = assertWallet(wallet);
+  const poolConfig = await getPoolOrThrow(connection, poolAddress);
+  const pool = toPublicKey(poolConfig.pool);
+  const rewardMint = toPublicKey(poolConfig.rewardMint);
+  const rewardVault = toPublicKey(poolConfig.rewardVault);
+  const poolAdminAccount = await getPoolAdminAccountOrThrow(connection, pool, poolConfig);
+
+  if (!poolAdminAccount.decoded) {
+    throw new Error('PoolAdmin account exists, but its data could not be decoded by the frontend.');
+  }
+
+  if (!poolAdminAccount.decoded.creator.equals(signerWallet.publicKey)) {
+    throw new Error('Only the original pool creator can reclaim leftover staking rewards.');
+  }
+
+  if (poolAdminAccount.decoded.rewardEndTs > Math.floor(Date.now() / 1000)) {
+    throw new Error('Leftover rewards can only be reclaimed after staking expiry.');
+  }
+
+  const rewardTokenProgram = await getTokenProgramForMint(connection, rewardMint);
+  const adminRewardToken = await ensureAta(
+    connection,
+    signerWallet.publicKey,
+    signerWallet.publicKey,
+    rewardMint,
+    rewardTokenProgram
+  );
+  const rewardVaultBalance = await getRawTokenAccountBalance(connection, rewardVault);
+  const reclaimableRewards = getReclaimableRewards(
+    rewardVaultBalance,
+    poolAdminAccount.decoded.reservedRewards
+  );
+
+  if (reclaimableRewards <= 0n) {
+    throw new Error('There are no unreserved leftover rewards to reclaim.');
+  }
+
+  const transaction = new Transaction();
+
+  if (adminRewardToken.instruction) {
+    transaction.add(adminRewardToken.instruction);
+  }
+
+  transaction.add(
+    buildReclaimUnclaimedRewardsInstruction(
+      signerWallet.publicKey,
+      pool,
+      poolAdminAccount.address,
+      rewardVault,
+      adminRewardToken.address,
+      rewardTokenProgram
+    )
+  );
+
+  return sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
+};
+
 export const createKedolikStakingService = (
   connection: Connection,
   wallet?: AnchorWallet | null
@@ -1472,13 +1908,16 @@ export const createKedolikStakingService = (
       return [];
     }
 
-    return Promise.all(pools.map((pool) => mapPoolToSummary(connection, pool, walletPublicKey)));
+    const summaries = await Promise.all(pools.map((pool) => mapPoolToSummary(connection, pool, walletPublicKey)));
+
+    return summaries.filter((pool) => !pool.isLegacy);
   },
   stake: async (amountRaw, poolAddress) => {
     const signerWallet = assertWallet(wallet);
     const rawAmount = assertRawAmount(amountRaw);
     const poolConfig = await getPoolOrThrow(connection, poolAddress);
     const pool = toPublicKey(poolConfig.pool);
+    const poolAdmin = (await getPoolAdminAccountOrThrow(connection, pool, poolConfig)).address;
     const stakeMint = toPublicKey(poolConfig.stakeMint);
     const stakeVault = toPublicKey(poolConfig.stakeVault);
     const tokenProgram = await getTokenProgramForMint(connection, stakeMint);
@@ -1504,13 +1943,14 @@ export const createKedolikStakingService = (
     }
 
     if (!positionInfo) {
-      transaction.add(buildOpenPositionInstruction(signerWallet.publicKey, pool, positionAddress));
+      transaction.add(buildOpenPositionInstruction(signerWallet.publicKey, pool, poolAdmin, positionAddress));
     }
 
     transaction.add(
       buildStakeInstruction(
         signerWallet.publicKey,
         pool,
+        poolAdmin,
         positionAddress,
         userStakeToken.address,
         stakeVault,
@@ -1526,6 +1966,7 @@ export const createKedolikStakingService = (
     const rawAmount = assertRawAmount(amountRaw);
     const poolConfig = await getPoolOrThrow(connection, poolAddress);
     const pool = toPublicKey(poolConfig.pool);
+    const poolAdmin = (await getPoolAdminAccountOrThrow(connection, pool, poolConfig)).address;
     const stakeMint = toPublicKey(poolConfig.stakeMint);
     const stakeVault = toPublicKey(poolConfig.stakeVault);
     const tokenProgram = await getTokenProgramForMint(connection, stakeMint);
@@ -1559,6 +2000,7 @@ export const createKedolikStakingService = (
       buildUnstakeInstruction(
         signerWallet.publicKey,
         pool,
+        poolAdmin,
         positionAddress,
         userStakeToken.address,
         stakeVault,
@@ -1573,6 +2015,7 @@ export const createKedolikStakingService = (
     const signerWallet = assertWallet(wallet);
     const poolConfig = await getPoolOrThrow(connection, poolAddress);
     const pool = toPublicKey(poolConfig.pool);
+    const poolAdmin = (await getPoolAdminAccountOrThrow(connection, pool, poolConfig)).address;
     const rewardMint = toPublicKey(poolConfig.rewardMint);
     const rewardVault = toPublicKey(poolConfig.rewardVault);
     const tokenProgram = await getTokenProgramForMint(connection, rewardMint);
@@ -1600,6 +2043,7 @@ export const createKedolikStakingService = (
       buildClaimRewardsInstruction(
         signerWallet.publicKey,
         pool,
+        poolAdmin,
         positionAddress,
         userRewardToken.address,
         rewardVault,
@@ -1608,6 +2052,12 @@ export const createKedolikStakingService = (
     );
 
     return sendAndConfirmStakingTransaction(connection, signerWallet, transaction);
+  },
+  reclaimUnclaimedRewards: async (poolAddress) => {
+    const signerWallet = assertWallet(wallet);
+    const poolConfig = await getPoolOrThrow(connection, poolAddress);
+
+    return reclaimKedolikStakingUnclaimedRewards(connection, signerWallet, poolConfig.pool);
   },
   getUserMinerAddress: (authority) => {
     const pool = getStoredPools()[0]?.pool;

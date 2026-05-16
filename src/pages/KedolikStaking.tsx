@@ -16,8 +16,9 @@ import { useKedolikStaking } from '../hooks/useKedolikStaking';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import type { TokenInfo } from '../config/tokens';
 import {
-  createKedolikStakingPool,
   fetchKedolikStakeLockAdminConfig,
+  fundKedolikStakingRewards,
+  initializeKedolikStakingPool,
   KedolikStakeLockAdminConfig,
   setKedolikStakingRewardRate,
   transferKedolikStakingAdmin,
@@ -34,7 +35,7 @@ import {
 const DEFAULT_ADMIN_FORM = {
   stakeMint: '',
   rewardMint: '',
-  poolId: '1',
+  poolId: '',
   rewardAmount: '',
   rewardDurationSeconds: '2592000',
 };
@@ -47,6 +48,32 @@ const formatMetricAmount = (
 
 const formatInputAmount = (rawValue: string | null, decimals: number | null) =>
   rawValue === null ? '' : formatKedolikTokenAmount(rawValue, decimals);
+
+const formatRawTokenInput = (rawValue: string | null | undefined, decimals: number | null | undefined) => {
+  if (!rawValue) {
+    return '';
+  }
+
+  if (decimals === null || decimals === undefined) {
+    return rawValue;
+  }
+
+  try {
+    const raw = BigInt(rawValue);
+    const scale = 10n ** BigInt(decimals);
+    const whole = raw / scale;
+    const fraction = raw % scale;
+
+    if (fraction === 0n) {
+      return whole.toString();
+    }
+
+    const fractionText = fraction.toString().padStart(decimals, '0').replace(/0+$/, '');
+    return `${whole.toString()}.${fractionText}`;
+  } catch {
+    return '';
+  }
+};
 
 const formatPercentHundredths = (value: bigint) => {
   const compactUnits = [
@@ -211,6 +238,15 @@ const FieldCard = ({
   </div>
 );
 
+const ExpiredTag = ({ label = 'Expired' }: { label?: string }) => (
+  <span className="inline-flex items-center gap-1.5 rounded-full border border-red-400/30 bg-red-400/10 px-3 py-1 text-xs font-semibold text-red-200 shadow-[0_0_18px_rgba(248,113,113,0.12)]">
+    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-red-400/20 text-[10px] font-bold text-red-100">
+      !
+    </span>
+    {label}
+  </span>
+);
+
 const TokenAvatar = ({
   token,
   fallback,
@@ -295,7 +331,9 @@ export default function KedolikStaking() {
   const [isLoadingAdminConfig, setIsLoadingAdminConfig] = useState(false);
   const [adminForm, setAdminForm] = useState(DEFAULT_ADMIN_FORM);
   const [adminRewardDecimals, setAdminRewardDecimals] = useState<number | null>(null);
-  const [adminActionLoading, setAdminActionLoading] = useState<'createPool' | 'setRewardRate' | 'transferAdmin' | null>(null);
+  const [adminActionLoading, setAdminActionLoading] = useState<
+    'createPool' | 'setRewardRate' | 'transferAdmin' | 'reclaimRewards' | null
+  >(null);
   const [newAdminAuthority, setNewAdminAuthority] = useState('');
   const [rewardRateRaw, setRewardRateRaw] = useState('');
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
@@ -529,16 +567,20 @@ export default function KedolikStaking() {
   const rewardRatePerSecondRaw = activePool?.rewardsPerSecondEstimate
     ? BigInt(activePool.rewardsPerSecondEstimate)
     : 0n;
+  const reclaimableRewardsRaw = activePool?.reclaimableRewards ? BigInt(activePool.reclaimableRewards) : 0n;
+  const isPoolCreator = Boolean(
+    connectedWalletAddress && activePool?.poolCreator === connectedWalletAddress
+  );
   const hasValidAmount = parsedAmountRaw !== null;
   const hasPositiveAmount = parsedAmountRaw !== null && parsedAmountRaw > 0n;
   const hasStakedTokens = Boolean(userStakeRaw && userStakeRaw > 0n);
   const stakingRewardsUnavailable = Boolean(
-    activePool && (rewardVaultBalanceRaw === 0n || rewardRatePerSecondRaw === 0n)
+    activePool && (rewardVaultBalanceRaw === 0n || rewardRatePerSecondRaw === 0n || !activePool.isFullyFunded)
   );
   const stakingDisabledReason = activePoolTiming.isExpired
     ? 'This staking period has expired. Existing users can still unstake and claim available rewards.'
     : stakingRewardsUnavailable
-      ? 'This pool is not currently funded for new staking rewards. You can still view the pool, but staking is disabled until rewards are funded and the reward rate is greater than zero.'
+      ? 'This pool is not currently fully funded for new staking rewards. You can still view the pool, but staking is disabled until rewards are funded and the reward rate is greater than zero.'
       : null;
   const exceedsWalletBalance = Boolean(
     connected && parsedAmountRaw !== null && walletBalanceRaw !== null && parsedAmountRaw > walletBalanceRaw
@@ -562,6 +604,8 @@ export default function KedolikStaking() {
     ? 'border-red-400/30 bg-red-400/10 text-red-200'
     : activePool?.status === 'live'
       ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+      : activePool?.status === 'awaiting_rewards'
+        ? 'border-orange-400/30 bg-orange-400/10 text-orange-200'
       : 'border-white/10 bg-white/5 text-gray-300';
   const amountActionDisabled =
     !connected ||
@@ -572,6 +616,12 @@ export default function KedolikStaking() {
     (amountMode === 'stake'
       ? exceedsWalletBalance || Boolean(stakingDisabledReason)
       : !activePool.hasMiner || !hasStakedTokens || exceedsStakeBalance);
+  const reclaimActionDisabled =
+    !activePool ||
+    !isPoolCreator ||
+    !activePoolTiming.isExpired ||
+    reclaimableRewardsRaw <= 0n ||
+    adminActionLoading !== null;
   const rewardAmountRaw = parseAmountToRaw(adminForm.rewardAmount, adminRewardDecimals);
   const rewardDurationSeconds = Number(adminForm.rewardDurationSeconds);
   const computedAdminRewardRate =
@@ -613,6 +663,27 @@ export default function KedolikStaking() {
       label: 'Ends On',
       value: activePoolTiming.isExpired ? `Expired ${stakingEndsAt}` : stakingEndsAt,
       valueClassName: activePoolTiming.isExpired ? 'text-red-200' : '',
+    },
+    {
+      label: 'Pool Creator',
+      value: activePool?.poolCreator ? formatKedolikAddress(activePool.poolCreator) : 'Unknown',
+    },
+    {
+      label: 'Reserved Rewards',
+      value: activePool
+        ? formatMetricAmount(activePool.reservedRewards, activePool.rewardTokenDecimals, 'Loading...')
+        : 'Loading...',
+    },
+    {
+      label: 'Reclaimable',
+      value: activePool
+        ? formatMetricAmount(activePool.reclaimableRewards, activePool.rewardTokenDecimals, '0')
+        : 'Loading...',
+    },
+    {
+      label: 'Funding',
+      value: activePool?.isFullyFunded ? 'Funded' : 'Not fully funded',
+      valueClassName: activePool?.isFullyFunded ? '' : 'text-orange-200',
     },
     { label: 'Reward Wallet', value: rewardWalletBalance },
   ];
@@ -778,15 +849,27 @@ export default function KedolikStaking() {
     setAdminActionLoading('createPool');
 
     try {
-      const result = await createKedolikStakingPool(connection, anchorWallet, {
+      const poolId = adminForm.poolId.trim() || Date.now().toString();
+      const result = await initializeKedolikStakingPool(connection, anchorWallet, {
         stakeMint: adminForm.stakeMint.trim(),
         rewardMint: adminForm.rewardMint.trim(),
-        poolId: adminForm.poolId.trim(),
+        poolId,
         rewardAmountRaw: rewardAmountRaw.toString(),
         rewardDurationSeconds: Math.floor(rewardDurationSeconds),
       });
 
-      toast.success(`Staking pool created: ${formatKedolikAddress(result.pool.pool)}`);
+      try {
+        await fundKedolikStakingRewards(
+          connection,
+          anchorWallet,
+          result.pool.pool,
+          rewardAmountRaw.toString()
+        );
+        toast.success(`Staking pool created and funded: ${formatKedolikAddress(result.pool.pool)}`);
+      } catch (fundError) {
+        toast.error(`Pool created, but funding failed: ${getActionErrorMessage(fundError)}`);
+      }
+
       setAdminForm((current) => ({
         ...current,
         rewardAmount: '',
@@ -871,6 +954,72 @@ export default function KedolikStaking() {
     }
   };
 
+  const handleReclaimRewards = async () => {
+    if (connectWalletIfNeeded()) {
+      return;
+    }
+
+    if (!activePool) {
+      toast.error('Select a staking pool before reclaiming rewards.');
+      return;
+    }
+
+    if (!isPoolCreator) {
+      toast.error('Only the original pool creator can reclaim leftover rewards.');
+      return;
+    }
+
+    if (!activePoolTiming.isExpired) {
+      toast.error('Leftover rewards can only be reclaimed after staking expiry.');
+      return;
+    }
+
+    if (reclaimableRewardsRaw <= 0n) {
+      toast.error('There are no unreserved leftover rewards to reclaim.');
+      return;
+    }
+
+    setAdminActionLoading('reclaimRewards');
+
+    try {
+      await stakingService.reclaimUnclaimedRewards(activePool.id);
+      toast.success('Leftover rewards reclaim submitted.');
+      await refresh();
+      await refreshProgramStatus();
+    } catch (adminError) {
+      toast.error(getActionErrorMessage(adminError));
+    } finally {
+      setAdminActionLoading(null);
+    }
+  };
+
+  const handleReplayActivePool = () => {
+    if (!activePool) {
+      toast.error('Select an expired staking pool first.');
+      return;
+    }
+
+    if (!isStakeAdmin) {
+      toast.error('Only the current staking admin can start a new staking period.');
+      return;
+    }
+
+    if (!activePoolTiming.isExpired) {
+      toast.error('Replay is available only after the staking period expires.');
+      return;
+    }
+
+    setAdminForm((current) => ({
+      ...current,
+      stakeMint: activePool.stakeTokenMint,
+      rewardMint: activePool.rewardTokenMint,
+      poolId: '',
+      rewardAmount: formatRawTokenInput(activePool.requiredRewardAmount, activePool.rewardTokenDecimals),
+      rewardDurationSeconds: activePool.rewardDurationSeconds?.toString() ?? current.rewardDurationSeconds,
+    }));
+    toast.success('Expired pool copied into Create Staking Instance. Review reward amount, then create the next period.');
+  };
+
   return (
     <KedolikPageFrame>
       <div className="mx-auto max-w-6xl">
@@ -888,9 +1037,7 @@ export default function KedolikStaking() {
                   />
                 )}
                 {activePoolTiming.isExpired && (
-                  <span className="rounded-full border border-red-400/30 bg-red-400/10 px-4 py-1 text-xs font-semibold text-red-200">
-                    Expired
-                  </span>
+                  <ExpiredTag />
                 )}
               </div>
 
@@ -970,11 +1117,15 @@ export default function KedolikStaking() {
                             ? 'Expired'
                             : pool.status === 'live'
                               ? 'Live'
+                              : pool.status === 'awaiting_rewards'
+                                ? 'Funding'
                               : 'Pending';
                           const poolStatusClass = poolTiming.isExpired
                             ? 'border-red-400/30 bg-red-400/10 text-red-200'
                             : pool.status === 'live'
                               ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                              : pool.status === 'awaiting_rewards'
+                                ? 'border-orange-400/30 bg-orange-400/10 text-orange-200'
                               : 'border-white/10 text-gray-300';
                           const apy = formatStakingApy(
                             pool.rewardRate,
@@ -1009,9 +1160,13 @@ export default function KedolikStaking() {
                                     <div className="text-[11px] text-gray-400">{poolLabel}</div>
                                   </div>
                                 </div>
-                                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${poolStatusClass}`}>
-                                  {poolStatusLabel}
-                                </span>
+                                {poolTiming.isExpired ? (
+                                  <ExpiredTag />
+                                ) : (
+                                  <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${poolStatusClass}`}>
+                                    {poolStatusLabel}
+                                  </span>
+                                )}
                               </div>
                               <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-gray-400 sm:grid-cols-4">
                                 <span className="min-w-0">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
@@ -1032,9 +1187,13 @@ export default function KedolikStaking() {
                           Selected pool: {activePoolDisplayName}
                         </p>
                       </div>
-                      <span className={`w-fit rounded-full border px-4 py-1 text-xs font-semibold ${activePoolStatusClass}`}>
-                        {positionStatusLabel}
-                      </span>
+                      {activePoolTiming.isExpired ? (
+                        <ExpiredTag />
+                      ) : (
+                        <span className={`w-fit rounded-full border px-4 py-1 text-xs font-semibold ${activePoolStatusClass}`}>
+                          {positionStatusLabel}
+                        </span>
+                      )}
                     </div>
 
                     <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -1066,6 +1225,7 @@ export default function KedolikStaking() {
                       <div className="mt-3 grid gap-3 md:grid-cols-2">
                         <FieldCard label="Stake Mint CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
                         <FieldCard label="Reward Mint CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
+                        <FieldCard label="Pool Admin PDA" value={formatKedolikAddress(activePool.poolAdminAddress)} />
                       </div>
                     </details>
                   </div>
@@ -1204,19 +1364,19 @@ export default function KedolikStaking() {
               )}
             </section>
 
-            {connected && isStakeAdmin && (
+            {connected && (isStakeAdmin || isPoolCreator) && (
               <>
             <section className="card mt-6 p-6 sm:p-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 className="text-2xl font-bold font-heading text-white">Staking Pool Admin</h2>
                   <p className="mt-2 max-w-2xl text-sm text-gray-300">
-                    Admin controls are only available to the wallet stored in the Stake Lock V1
-                    admin config account.
+                    Admin controls are available to the Stake Lock V1 admin. Reclaim is available
+                    only to the selected pool creator after expiry.
                   </p>
                 </div>
                 <span className="w-fit rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold text-gray-200">
-                  {isLoadingAdminConfig ? 'Loading admin' : isStakeAdmin ? 'Admin wallet' : 'Read only'}
+                  {isLoadingAdminConfig ? 'Loading admin' : isStakeAdmin ? 'Admin wallet' : 'Pool creator'}
                 </span>
               </div>
 
@@ -1258,10 +1418,10 @@ export default function KedolikStaking() {
                         placeholder="Reward mint address"
                       />
                       <AdminInput
-                        label="Pool ID"
+                        label="Pool ID (optional)"
                         value={adminForm.poolId}
                         onChange={(value) => setAdminForm((current) => ({ ...current, poolId: value }))}
-                        placeholder="1"
+                        placeholder="Date.now() if empty"
                       />
                       <AdminInput
                         label="Reward Duration Seconds"
@@ -1276,6 +1436,26 @@ export default function KedolikStaking() {
                       Duration preview:{' '}
                       <span className="font-semibold text-white">{adminRewardDurationPreview}</span>
                     </div>
+
+                    {activePoolTiming.isExpired && activePool && (
+                      <div className="mt-3 rounded-lg border border-brand-cyan/20 bg-brand-cyan/10 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <div className="text-sm font-semibold text-white">Start a new period</div>
+                            <p className="mt-1 text-xs text-gray-300">
+                              Replay copies the expired pool mints and duration into this form, then uses a fresh Date.now pool ID.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleReplayActivePool}
+                            className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-2 text-xs font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/20"
+                          >
+                            Replay expired pool
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <label className="mt-3 block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
                       <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
@@ -1330,10 +1510,25 @@ export default function KedolikStaking() {
                       {adminActionLoading === 'setRewardRate' ? 'Updating...' : 'Update Reward Rate'}
                     </button>
 
-                    <div className="mt-4 rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-xs leading-relaxed text-yellow-100">
-                      Stake Lock V1 does not include an admin withdraw-unused-rewards instruction.
-                      Leftover rewards remain in the reward vault unless users claim them or the
-                      program is upgraded.
+                    <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-xs leading-relaxed text-emerald-100">
+                      Creator reclaim becomes available after staking expiry. The button only
+                      withdraws unreserved leftover rewards; user-earned rewards stay reserved.
+                      <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-gray-200">
+                        Reclaimable:{' '}
+                        <span className="font-semibold text-white">
+                          {activePool
+                            ? formatMetricAmount(activePool.reclaimableRewards, activePool.rewardTokenDecimals, '0')
+                            : 'No pool selected'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleReclaimRewards()}
+                        disabled={reclaimActionDisabled}
+                        className="mt-3 w-full rounded-full border border-emerald-400/30 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-100 transition-colors hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {adminActionLoading === 'reclaimRewards' ? 'Reclaiming...' : 'Reclaim Leftover Rewards'}
+                      </button>
                     </div>
 
                     <div className="my-5 h-px bg-white/10" />
@@ -1362,7 +1557,31 @@ export default function KedolikStaking() {
 
               {connected && !isStakeAdmin && (
                 <div className="mt-6 rounded-2xl border border-white/10 bg-dark-900/60 p-5 text-sm text-gray-300">
-                  Your connected wallet is not the staking admin, so create/update controls are hidden.
+                  <div>Your connected wallet is not the staking admin, so create/update controls are hidden.</div>
+                  {isPoolCreator && (
+                    <div className="mt-4 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-emerald-100">
+                      <div className="font-semibold text-white">Creator reclaim</div>
+                      <div className="mt-2 text-xs leading-relaxed">
+                        Reclaim is available after expiry for unreserved leftover rewards only.
+                      </div>
+                      <div className="mt-3 text-xs">
+                        Reclaimable:{' '}
+                        <span className="font-semibold text-white">
+                          {activePool
+                            ? formatMetricAmount(activePool.reclaimableRewards, activePool.rewardTokenDecimals, '0')
+                            : 'No pool selected'}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleReclaimRewards()}
+                        disabled={reclaimActionDisabled}
+                        className="mt-3 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-5 py-3 text-sm font-semibold text-emerald-100 transition-colors hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {adminActionLoading === 'reclaimRewards' ? 'Reclaiming...' : 'Reclaim Leftover Rewards'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1389,6 +1608,10 @@ export default function KedolikStaking() {
                 <KedolikInfoRow
                   label="Selected Pool"
                   value={activePool?.quarryAddress ?? 'No staking pool configured yet'}
+                />
+                <KedolikInfoRow
+                  label="Pool Admin PDA"
+                  value={activePool?.poolAdminAddress ?? 'No pool admin loaded'}
                 />
                 <KedolikInfoRow
                   label="Position PDA"

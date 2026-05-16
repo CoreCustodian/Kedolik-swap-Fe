@@ -7,7 +7,7 @@ export const KEDOLIK_STAKE_LOCK_V1 = {
   upgradeAuthority: '68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot',
   adminConfigPda: '6zJinApyxvq5FK84oQjvuwj4i1xnoLNbD28WEmmyDQPR',
   currentStakingAdmin: '68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot',
-  expectedIdlPath: 'staking-locking/target/idl/kedolik_stake_lock.json',
+  expectedIdlPath: 'staking-locking/deployments/kedolik_stake_lock.devnet.idl.json',
   expectedFrontendExportPath: 'staking-locking/deployments/frontend-stake-lock-v1-devnet.ts',
 } as const;
 

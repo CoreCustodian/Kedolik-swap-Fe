@@ -15,6 +15,7 @@ import {
   KedolikStakeLockAdminConfig,
   KedolikStakingAdminPool,
   KedolikStoredStakingPool,
+  reclaimKedolikStakingUnclaimedRewards,
   setKedolikStakingRewardRate,
   transferKedolikStakingAdmin,
 } from '../services/kedolikStaking';
@@ -68,6 +69,32 @@ const formatRawTokenAmount = (rawValue: string | null | undefined, decimals: num
     return `${whole.toLocaleString('en-US')}.${fractionText}`;
   } catch {
     return rawValue;
+  }
+};
+
+const formatRawTokenInput = (rawValue: string | null | undefined, decimals: number | null | undefined) => {
+  if (!rawValue) {
+    return '';
+  }
+
+  if (decimals === null || decimals === undefined) {
+    return rawValue;
+  }
+
+  try {
+    const raw = BigInt(rawValue);
+    const scale = 10n ** BigInt(decimals);
+    const whole = raw / scale;
+    const fraction = raw % scale;
+
+    if (fraction === 0n) {
+      return whole.toString();
+    }
+
+    const fractionText = fraction.toString().padStart(decimals, '0').replace(/0+$/, '');
+    return `${whole.toString()}.${fractionText}`;
+  } catch {
+    return '';
   }
 };
 
@@ -167,19 +194,6 @@ const getStakingTiming = (
   };
 };
 
-const getNextStakingPoolId = (pools: KedolikStakingAdminPool[]) => {
-  const maxPoolId = pools.reduce((max, pool) => {
-    try {
-      const current = BigInt(pool.poolId || '0');
-      return current > max ? current : max;
-    } catch {
-      return max;
-    }
-  }, 0n);
-
-  return (maxPoolId > 0n ? maxPoolId + 1n : BigInt(Date.now())).toString();
-};
-
 const getPoolStatusClasses = (status: KedolikStakingAdminPool['status']) => {
   switch (status) {
     case 'active':
@@ -192,10 +206,21 @@ const getPoolStatusClasses = (status: KedolikStakingAdminPool['status']) => {
       return 'border-orange-500/30 bg-orange-500/10 text-orange-300';
     case 'rewards_stopped':
       return 'border-gray-500/30 bg-gray-500/10 text-gray-300';
+    case 'legacy':
+      return 'border-purple-500/30 bg-purple-500/10 text-purple-300';
     default:
       return 'border-red-500/30 bg-red-500/10 text-red-300';
   }
 };
+
+const ExpiredTag = ({ label = 'Expired' }: { label?: string }) => (
+  <span className="inline-flex items-center gap-1.5 rounded-full border border-red-400/30 bg-red-400/10 px-3 py-1 text-xs font-semibold text-red-200 shadow-[0_0_18px_rgba(248,113,113,0.12)]">
+    <span className="flex h-4 w-4 items-center justify-center rounded-full bg-red-400/20 text-[10px] font-bold text-red-100">
+      !
+    </span>
+    {label}
+  </span>
+);
 
 export default function Admin() {
   const { connection } = useConnection();
@@ -237,6 +262,7 @@ export default function Admin() {
   >({});
   const [stakingPoolActionLoading, setStakingPoolActionLoading] = useState<string | null>(null);
   const [fundingRecoveryPool, setFundingRecoveryPool] = useState<KedolikStoredStakingPool | null>(null);
+  const [fundingRecoveryAdminRewardBalance, setFundingRecoveryAdminRewardBalance] = useState<string | null>(null);
   const [newStakingAdmin, setNewStakingAdmin] = useState('');
   const [transferringStakingAdmin, setTransferringStakingAdmin] = useState(false);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
@@ -249,16 +275,19 @@ export default function Admin() {
   const isStakingAdmin = Boolean(
     connectedWalletAddress && stakingAdminConfig?.authority === connectedWalletAddress
   );
+  const isStakingPoolCreator = Boolean(
+    connectedWalletAddress && stakingPools.some((pool) => pool.poolCreator === connectedWalletAddress)
+  );
   const isAdmin = isOnChainAdmin;
   const isFeeReceiver = publicKey && currentFeeReceiver ? publicKey.toString() === currentFeeReceiver : false;
-  const canAccessAdmin = isAdmin || isFeeReceiver || isStakingAdmin;
+  const canAccessAdmin = isAdmin || isFeeReceiver || isStakingAdmin || isStakingPoolCreator;
   
   // In the new contract model:
   // - Admin can ONLY change admin and fee receiver (cannot claim fees)
   // - Fee receiver can ONLY claim fees (cannot change settings)
   const canClaimFees = isFeeReceiver;
   const canChangeSettings = isAdmin;
-  const canViewStakingInstance = isAdmin || isStakingAdmin;
+  const canViewStakingInstance = isAdmin || isStakingAdmin || isStakingPoolCreator;
   const canCreateStakingInstance = isStakingAdmin;
   const stakingDashboardSummary = useMemo(() => ({
     totalPools: stakingPools.length,
@@ -328,10 +357,6 @@ export default function Admin() {
     try {
       const pools = await fetchKedolikStakingAdminPools(connection);
       setStakingPools(pools);
-      setStakingPoolForm((current) => ({
-        ...current,
-        poolId: current.poolId || getNextStakingPoolId(pools),
-      }));
     } catch (error) {
       console.error('Error fetching staking pools:', error);
       showToast(`Failed to load staking pools: ${(error as Error)?.message || String(error)}`, 'error');
@@ -362,11 +387,11 @@ export default function Admin() {
   }, []);
 
   useEffect(() => {
-    if (connected && canViewStakingInstance) {
+    if (connected) {
       void refreshStakingPools();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, canViewStakingInstance, connection]);
+  }, [connected, connection]);
 
   useEffect(() => {
     if (!connected || !canAccessAdmin) {
@@ -855,7 +880,7 @@ export default function Admin() {
       return;
     }
 
-    const poolId = stakingPoolForm.poolId || getNextStakingPoolId(stakingPools);
+    const poolId = stakingPoolForm.poolId.trim() || Date.now().toString();
     const duration = Number(stakingPoolForm.rewardDistributionSeconds);
     if (!Number.isFinite(duration) || duration <= 0) {
       showToast('Reward distribution seconds must be greater than zero', 'warning');
@@ -872,11 +897,7 @@ export default function Admin() {
         stakingPoolForm.rewardMint.trim()
       );
       const rewardAmountRaw = parseUiTokenAmount(stakingPoolForm.rewardAmount, rewardBalance.decimals);
-
-      if (BigInt(rewardBalance.balanceRaw) < rewardAmountRaw) {
-        showToast('Admin reward token balance is lower than the configured reward amount', 'error');
-        return;
-      }
+      setFundingRecoveryAdminRewardBalance(rewardBalance.balanceRaw);
 
       const rewardRatePerSecond = rewardAmountRaw / BigInt(Math.floor(duration));
 
@@ -914,6 +935,7 @@ export default function Admin() {
 
         showToast(`Staking pool funded: ${formatAddress(initialized.pool.pool)}`, 'success', fundSignature);
         setFundingRecoveryPool(null);
+        setFundingRecoveryAdminRewardBalance(null);
       } catch (fundError: unknown) {
         showToast('Pool was created, but rewards are not funded yet', 'warning');
         showToast(`Funding failed: ${(fundError as Error)?.message || String(fundError)}`, 'error');
@@ -954,6 +976,7 @@ export default function Admin() {
       setStakingPoolActionLoading(`fund:${pool.pool}`);
       const rewardBalance = await fetchKedolikWalletTokenBalance(connection, anchorWallet.publicKey, pool.rewardMint);
       const amountRaw = parseUiTokenAmount(amountUi, rewardBalance.decimals);
+      setFundingRecoveryAdminRewardBalance(rewardBalance.balanceRaw);
 
       if (BigInt(rewardBalance.balanceRaw) < amountRaw) {
         showToast('Admin reward token balance is lower than the funding amount', 'error');
@@ -963,6 +986,7 @@ export default function Admin() {
       const signature = await fundKedolikStakingRewards(connection, anchorWallet, pool.pool, amountRaw.toString());
       showToast(`Funded rewards for pool ${formatAddress(pool.pool)}`, 'success', signature);
       setFundingRecoveryPool((current) => current?.pool === pool.pool ? null : current);
+      setFundingRecoveryAdminRewardBalance(null);
       setPoolActionFormValue(pool.pool, 'fundAmount', '');
       await refreshStakingPools();
     } catch (error: unknown) {
@@ -1052,6 +1076,69 @@ export default function Admin() {
     }
   };
 
+  const reclaimStakingPoolRewards = async (pool: KedolikStakingAdminPool) => {
+    if (!anchorWallet) {
+      showToast('Connect the pool creator wallet before reclaiming rewards', 'error');
+      return;
+    }
+
+    if (pool.poolCreator !== anchorWallet.publicKey.toString()) {
+      showToast('Only the original pool creator can reclaim leftover rewards', 'error');
+      return;
+    }
+
+    const reclaimableRaw = BigInt(pool.reclaimableRewards ?? '0');
+
+    if (reclaimableRaw <= 0n) {
+      showToast('There are no unreserved leftover rewards to reclaim', 'warning');
+      return;
+    }
+
+    const poolTiming = getStakingTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
+
+    if (!poolTiming.isExpired) {
+      showToast('Leftover rewards can only be reclaimed after staking expiry', 'warning');
+      return;
+    }
+
+    try {
+      setStakingPoolActionLoading(`reclaim:${pool.pool}`);
+      const signature = await reclaimKedolikStakingUnclaimedRewards(connection, anchorWallet, pool.pool);
+      showToast(`Reclaimed leftover rewards for pool ${formatAddress(pool.pool)}`, 'success', signature);
+      await refreshStakingPools();
+    } catch (error: unknown) {
+      showToast(`Reclaim failed: ${(error as Error)?.message || String(error)}`, 'error');
+    } finally {
+      setStakingPoolActionLoading(null);
+    }
+  };
+
+  const replayExpiredStakingPool = (pool: KedolikStakingAdminPool) => {
+    if (!canCreateStakingInstance) {
+      showToast('Only the current staking admin can start a new staking period', 'error');
+      return;
+    }
+
+    const poolTiming = getStakingTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
+
+    if (!poolTiming.isExpired) {
+      showToast('Replay is available only after the staking period expires', 'warning');
+      return;
+    }
+
+    setStakingPoolForm((current) => ({
+      ...current,
+      stakeMint: pool.stakeMint,
+      rewardMint: pool.rewardMint,
+      poolId: '',
+      rewardAmount: formatRawTokenInput(pool.requiredRewardAmount, pool.rewardTokenDecimals),
+      rewardDistributionSeconds: pool.rewardDurationSeconds?.toString() ?? current.rewardDistributionSeconds,
+      rewardAmountRaw: '',
+      rewardDurationSeconds: pool.rewardDurationSeconds?.toString() ?? current.rewardDurationSeconds,
+    }));
+    showToast('Expired pool copied into Create Staking Pool. Review reward amount, then create the next period.', 'success');
+  };
+
   const transferStakingAdminAuthority = async () => {
     if (!anchorWallet) {
       showToast('Connect the staking admin wallet before transferring authority', 'error');
@@ -1109,17 +1196,23 @@ export default function Admin() {
 
           {/* Admin Check */}
           {!connected && (
-            <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
-              <div className="text-4xl mb-3">⚠️</div>
-              <p className="text-yellow-400 font-medium">Please connect your wallet to access the admin panel</p>
+            <div className="rounded-2xl border border-yellow-500/30 bg-yellow-500/10 p-5 text-center sm:p-6">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-yellow-400/30 bg-yellow-400/10 text-lg font-bold text-yellow-200">
+                !
+              </div>
+              <p className="text-sm font-semibold text-yellow-200 sm:text-base">
+                Connect your wallet to access the admin panel.
+              </p>
             </div>
           )}
 
           {connected && !canAccessAdmin && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
-              <div className="text-4xl mb-3">🚫</div>
-              <p className="text-red-400 font-semibold mb-2">Access Denied</p>
-              <p className="text-gray-400 mb-4">
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-5 text-center sm:p-6">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-red-400/30 bg-red-400/10 text-lg font-bold text-red-200">
+                !
+              </div>
+              <p className="mb-2 text-sm font-semibold text-red-200 sm:text-base">Access denied</p>
+              <p className="mb-4 text-sm text-gray-400">
                 Only the protocol admin, staking admin, or fee receiver can access this panel
               </p>
               <div className="text-xs text-gray-500 space-y-1">
@@ -1141,9 +1234,9 @@ export default function Admin() {
                     fetchCurrentFeeReceiver();
                     fetchStakingAdminConfig();
                   }}
-                  className="mt-2 text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
+                  className="mt-3 rounded-lg border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-2 text-xs font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/20"
                 >
-                  🔄 Refresh Status
+                  Refresh Status
                 </button>
               </div>
             </div>
@@ -1169,7 +1262,7 @@ export default function Admin() {
                       )}
                       {isFeeReceiver && (
                         <span className="px-3 py-1 bg-brand-cyan/20 text-brand-cyan rounded-full text-xs font-semibold border border-brand-cyan/30">
-                          💰 Fee Receiver (Can claim fees)
+                          Fee Receiver (Can claim fees)
                         </span>
                       )}
                     </div>
@@ -1180,16 +1273,16 @@ export default function Admin() {
                       fetchCurrentFeeReceiver();
                       fetchStakingAdminConfig();
                     }}
-                    className="px-4 py-2 text-xs font-semibold bg-white/5 hover:bg-white/10 rounded-lg transition-all whitespace-nowrap"
+                    className="w-full rounded-lg bg-white/5 px-4 py-2 text-xs font-semibold transition-all hover:bg-white/10 sm:w-auto sm:whitespace-nowrap"
                   >
-                    🔄 Refresh Status
+                    Refresh Status
                   </button>
                 </div>
               </div>
 
               {/* Tabs */}
               <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-2 mb-6">
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   {canClaimFees && (
                     <button
                       onClick={() => setActiveTab('fees')}
@@ -1199,7 +1292,6 @@ export default function Admin() {
                           : 'text-gray-400 hover:text-white hover:bg-white/5'
                       }`}
                     >
-                      <span className="mr-2">💰</span>
                       Fee Collection
                     </button>
                   )}
@@ -1212,7 +1304,6 @@ export default function Admin() {
                           : 'text-gray-400 hover:text-white hover:bg-white/5'
                       }`}
                     >
-                      <span className="mr-2">⚙️</span>
                       Settings
                     </button>
                   )}
@@ -1225,7 +1316,6 @@ export default function Admin() {
                           : 'text-gray-400 hover:text-white hover:bg-white/5'
                       }`}
                     >
-                      <span className="mr-2">⚡</span>
                       Staking Instance
                     </button>
                   )}
@@ -1236,8 +1326,10 @@ export default function Admin() {
               {activeTab === 'fees' && (
                 <>
                   {!canClaimFees && (
-                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
-                      <div className="text-4xl mb-3">⚠️</div>
+                    <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-5 text-center sm:p-6">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-yellow-400/30 bg-yellow-400/10 text-sm font-bold text-yellow-200">
+                        !
+                      </div>
                       <p className="text-yellow-400 font-semibold mb-2">Fee Collection Not Available</p>
                       <p className="text-gray-400 mb-2">Only the fee receiver wallet can claim fees.</p>
                       <p className="text-xs text-gray-500">You are the admin and can change the fee receiver in Settings.</p>
@@ -1256,9 +1348,9 @@ export default function Admin() {
                           <button
                             onClick={fetchPoolFees}
                             disabled={loading}
-                            className="btn-primary whitespace-nowrap"
+                            className="btn-primary w-full whitespace-nowrap sm:w-auto"
                           >
-                            {loading ? '🔄 Loading...' : '🔄 Refresh'}
+                            {loading ? 'Loading...' : 'Refresh'}
                           </button>
                         </div>
                       </div>
@@ -1266,10 +1358,7 @@ export default function Admin() {
                   {/* Total Fees Summary */}
                   {Object.keys(totalFees).length > 0 && (
                     <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 sm:p-6 mb-6">
-                      <h3 className="text-base sm:text-lg font-bold mb-4 flex items-center gap-2">
-                        <span>📊</span>
-                        <span>Total Collectable Fees</span>
-                      </h3>
+                      <h3 className="text-base sm:text-lg font-bold mb-4">Total Collectable Fees</h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                         {Object.entries(totalFees).map(([token, fees]) => {
                           const totalFees = fees.protocol + fees.fund + fees.creator;
@@ -1490,8 +1579,8 @@ export default function Admin() {
                       <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
                         <div className="mb-1 text-xs text-gray-400">Leftover Rewards</div>
                         <div className="text-xs text-white">
-                          Stake Lock V1 has no withdraw-unused-rewards instruction. Leftover reward
-                          vault tokens stay in the pool unless users claim them or the program is upgraded.
+                          After staking expiry, only the original pool creator can reclaim unreserved
+                          leftover rewards through reclaimUnclaimedRewards.
                         </div>
                       </div>
                     </div>
@@ -1513,25 +1602,43 @@ export default function Admin() {
                         {(() => {
                           const recoveryPool = stakingPools.find((pool) => pool.pool === fundingRecoveryPool.pool);
                           const form = getPoolActionForm(fundingRecoveryPool.pool);
+                          const rewardDecimals = recoveryPool?.rewardTokenDecimals ?? null;
 
-                          return recoveryPool && canCreateStakingInstance ? (
-                            <div className="flex min-w-[260px] flex-col gap-2">
-                              <input
-                                value={form.fundAmount}
-                                onChange={(event) => setPoolActionFormValue(fundingRecoveryPool.pool, 'fundAmount', event.target.value)}
-                                placeholder="Reward amount"
-                                className="rounded-lg border border-orange-500/30 bg-dark-900 px-3 py-2 text-sm text-white outline-none focus:border-orange-300"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => void fundStakingPool(recoveryPool, form.fundAmount)}
-                                disabled={!form.fundAmount.trim() || stakingPoolActionLoading !== null}
-                                className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
-                              >
-                                Fund rewards
-                              </button>
-                            </div>
-                          ) : null;
+                          return (
+                            <>
+                              <div className="grid gap-2 text-xs text-orange-100 md:grid-cols-3 lg:max-w-xl">
+                                <span>Required: {formatRawTokenAmount(fundingRecoveryPool.rewardAmountRaw, rewardDecimals)}</span>
+                                <span>
+                                  Admin balance:{' '}
+                                  {fundingRecoveryAdminRewardBalance !== null
+                                    ? formatRawTokenAmount(fundingRecoveryAdminRewardBalance, rewardDecimals)
+                                    : 'Unavailable'}
+                                </span>
+                                <span>
+                                  Vault balance:{' '}
+                                  {formatRawTokenAmount(recoveryPool?.rewardVaultBalance, rewardDecimals)}
+                                </span>
+                              </div>
+                              {recoveryPool && canCreateStakingInstance ? (
+                                <div className="flex min-w-[260px] flex-col gap-2">
+                                  <input
+                                    value={form.fundAmount}
+                                    onChange={(event) => setPoolActionFormValue(fundingRecoveryPool.pool, 'fundAmount', event.target.value)}
+                                    placeholder="Reward amount"
+                                    className="rounded-lg border border-orange-500/30 bg-dark-900 px-3 py-2 text-sm text-white outline-none focus:border-orange-300"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => void fundStakingPool(recoveryPool, form.fundAmount)}
+                                    disabled={!form.fundAmount.trim() || stakingPoolActionLoading !== null}
+                                    className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-orange-600 disabled:opacity-50"
+                                  >
+                                    Fund rewards
+                                  </button>
+                                </div>
+                              ) : null}
+                            </>
+                          );
                         })()}
                       </div>
                     </div>
@@ -1571,13 +1678,28 @@ export default function Admin() {
                             pool.isExpired,
                             nowSeconds
                           );
-                          const poolStatus: KedolikStakingAdminPool['status'] = poolTiming.isExpired ? 'expired' : pool.status;
-                          const poolStatusLabel = poolTiming.isExpired ? 'Expired' : pool.statusLabel;
-                          const poolStatusMessage = poolTiming.isExpired
-                            ? 'The configured staking duration has ended. Users can still unstake and claim available rewards.'
+                          const poolStatus: KedolikStakingAdminPool['status'] = pool.isLegacy
+                            ? 'legacy'
+                            : poolTiming.isExpired
+                              ? 'expired'
+                              : pool.status;
+                          const poolStatusLabel = pool.isLegacy ? 'Legacy' : poolTiming.isExpired ? 'Expired' : pool.statusLabel;
+                          const poolStatusMessage = pool.isLegacy
+                            ? 'This pool has no PoolAdmin PDA and is hidden from the upgraded staking UI.'
+                            : poolTiming.isExpired
+                            ? 'The configured staking duration has ended. Users can still claim reserved rewards; creator can reclaim unreserved leftovers.'
                             : pool.statusMessage;
                           const rateActionLabel = pool.status === 'rewards_stopped' ? 'Resume Rewards' : 'Change Reward Rate';
                           const actionDurationSeconds = parseDurationSeconds(actionForm.rateDistributionSeconds);
+                          const reclaimableRewardsRaw = BigInt(pool.reclaimableRewards ?? '0');
+                          const canReclaimPool = Boolean(
+                            connectedWalletAddress && pool.poolCreator === connectedWalletAddress
+                          );
+                          const reclaimDisabled =
+                            !canReclaimPool ||
+                            !poolTiming.isExpired ||
+                            reclaimableRewardsRaw <= 0n ||
+                            stakingPoolActionLoading !== null;
 
                           return (
                             <div key={pool.pool} className="rounded-xl border border-white/10 bg-dark-900/80 p-4">
@@ -1585,9 +1707,13 @@ export default function Admin() {
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <h4 className="font-bold text-white">Stake Lock Pool #{pool.poolId}</h4>
-                                    <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getPoolStatusClasses(poolStatus)}`}>
-                                      {poolStatusLabel}
-                                    </span>
+                                    {poolStatus === 'expired' ? (
+                                      <ExpiredTag />
+                                    ) : (
+                                      <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getPoolStatusClasses(poolStatus)}`}>
+                                        {poolStatusLabel}
+                                      </span>
+                                    )}
                                   </div>
                                   <p className="mt-1 text-xs text-gray-400">{poolStatusMessage}</p>
                                 </div>
@@ -1629,6 +1755,18 @@ export default function Admin() {
                                   </div>
                                 </div>
                                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Required Rewards</div>
+                                  <div className="mt-1 text-sm font-semibold text-white">
+                                    {formatRawTokenAmount(pool.requiredRewardAmount, pool.rewardTokenDecimals)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Funded Rewards</div>
+                                  <div className={`mt-1 text-sm font-semibold ${pool.isFullyFunded ? 'text-white' : 'text-orange-300'}`}>
+                                    {formatRawTokenAmount(pool.fundedRewardAmount, pool.rewardTokenDecimals)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                                   <div className="text-xs text-gray-400">Staking Duration</div>
                                   <div className="mt-1 text-sm font-semibold text-white">
                                     {formatStakingDuration(pool.rewardDurationSeconds)}
@@ -1647,9 +1785,28 @@ export default function Admin() {
                                   </div>
                                 </div>
                                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Reserved Rewards</div>
+                                  <div className="mt-1 text-sm font-semibold text-white">
+                                    {formatRawTokenAmount(pool.reservedRewards, pool.rewardTokenDecimals)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                  <div className="text-xs text-gray-400">Reclaimable After Expiry</div>
+                                  <div className="mt-1 text-sm font-semibold text-white">
+                                    {formatRawTokenAmount(pool.reclaimableRewards, pool.rewardTokenDecimals)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                                   <div className="text-xs text-gray-400">Stake Vault Balance</div>
                                   <div className="mt-1 text-sm font-semibold text-white">
                                     {formatRawTokenAmount(pool.stakeVaultBalance, pool.stakeTokenDecimals)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 md:col-span-2">
+                                  <div className="text-xs text-gray-400">Pool Admin</div>
+                                  <div className="mt-1 break-all font-mono text-xs text-white">{pool.poolAdmin}</div>
+                                  <div className="mt-1 break-all font-mono text-xs text-gray-300">
+                                    Creator: {pool.poolCreator ?? 'Unknown'}
                                   </div>
                                 </div>
                                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 md:col-span-2">
@@ -1666,6 +1823,18 @@ export default function Admin() {
                                 </div>
                               )}
 
+                              {pool.isLegacy && (
+                                <div className="mt-3 rounded-lg border border-purple-500/30 bg-purple-500/10 p-3 text-xs text-purple-200">
+                                  This legacy pool has no PoolAdmin PDA, so it is hidden from the upgraded staking UI.
+                                </div>
+                              )}
+
+                              {!pool.isFullyFunded && !pool.isLegacy && (
+                                <div className="mt-3 rounded-lg border border-orange-500/30 bg-orange-500/10 p-3 text-xs text-orange-200">
+                                  Created, not fully funded. Users will not see it as fully live until rewards are funded.
+                                </div>
+                              )}
+
                               {poolTiming.isExpired && (
                                 <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-200">
                                   This pool is marked Expired in the UI because its configured duration has ended.
@@ -1673,88 +1842,132 @@ export default function Admin() {
                                 </div>
                               )}
 
-                              {canCreateStakingInstance && (
+                              {(canCreateStakingInstance || canReclaimPool) && (
                                 <details className="mt-4 rounded-lg border border-white/10 bg-black/20 p-3">
                                   <summary className="cursor-pointer text-sm font-semibold text-white">
                                     Pool actions
                                   </summary>
-                                  <div className="mt-4 grid gap-4 lg:grid-cols-3">
-                                    <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
-                                      <h5 className="text-sm font-semibold text-white">Add More Rewards</h5>
-                                      <p className="mt-2 text-xs text-gray-400">
-                                        Transfers more reward tokens into this pool reward vault. This does not change
-                                        the reward rate by itself.
-                                      </p>
-                                      <input
-                                        value={actionForm.fundAmount}
-                                        onChange={(event) => setPoolActionFormValue(pool.pool, 'fundAmount', event.target.value)}
-                                        placeholder="Reward amount"
-                                        className="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={() => void fundStakingPool(pool, actionForm.fundAmount)}
-                                        disabled={!actionForm.fundAmount.trim() || stakingPoolActionLoading !== null}
-                                        className="mt-3 w-full rounded-lg bg-brand-cyan/20 px-4 py-2 text-sm font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/30 disabled:opacity-50"
-                                      >
-                                        {stakingPoolActionLoading === `fund:${pool.pool}` ? 'Funding...' : 'Fund rewards'}
-                                      </button>
-                                    </div>
+                                  <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                    {canCreateStakingInstance && (
+                                      <>
+                                        <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
+                                          <h5 className="text-sm font-semibold text-white">Add More Rewards</h5>
+                                          <p className="mt-2 text-xs text-gray-400">
+                                            Transfers more reward tokens into this pool reward vault. This does not change
+                                            the reward rate by itself.
+                                          </p>
+                                          <input
+                                            value={actionForm.fundAmount}
+                                            onChange={(event) => setPoolActionFormValue(pool.pool, 'fundAmount', event.target.value)}
+                                            placeholder="Reward amount"
+                                            className="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
+                                          />
+                                          <button
+                                            type="button"
+                                            onClick={() => void fundStakingPool(pool, actionForm.fundAmount)}
+                                            disabled={!actionForm.fundAmount.trim() || stakingPoolActionLoading !== null}
+                                            className="mt-3 w-full rounded-lg bg-brand-cyan/20 px-4 py-2 text-sm font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/30 disabled:opacity-50"
+                                          >
+                                            {stakingPoolActionLoading === `fund:${pool.pool}` ? 'Funding...' : 'Fund rewards'}
+                                          </button>
+                                        </div>
 
-                                    <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
-                                      <h5 className="text-sm font-semibold text-white">{rateActionLabel}</h5>
-                                      <p className="mt-2 text-xs text-gray-400">
-                                        Calculates a new total pool emission rate from reward amount divided by
-                                        distribution seconds, then calls setRewardRate.
-                                      </p>
-                                      <input
-                                        value={actionForm.rateAmount}
-                                        onChange={(event) => setPoolActionFormValue(pool.pool, 'rateAmount', event.target.value)}
-                                        placeholder="Reward amount in vault"
-                                        className="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
-                                      />
-                                      <input
-                                        value={actionForm.rateDistributionSeconds}
-                                        onChange={(event) => setPoolActionFormValue(pool.pool, 'rateDistributionSeconds', event.target.value)}
-                                        placeholder="Distribution seconds"
-                                        className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
-                                      />
-                                      <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-300">
-                                        Duration: <span className="font-semibold text-white">{formatStakingDuration(actionDurationSeconds)}</span>
-                                        <span className="mt-1 block">
-                                          New end: {actionDurationSeconds ? formatDateTime(nowSeconds + actionDurationSeconds) : 'Unavailable'}
-                                        </span>
+                                        <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
+                                          <h5 className="text-sm font-semibold text-white">{rateActionLabel}</h5>
+                                          <p className="mt-2 text-xs text-gray-400">
+                                            Calculates a new total pool emission rate from reward amount divided by
+                                            distribution seconds, then calls setRewardRate.
+                                          </p>
+                                          <input
+                                            value={actionForm.rateAmount}
+                                            onChange={(event) => setPoolActionFormValue(pool.pool, 'rateAmount', event.target.value)}
+                                            placeholder="Reward amount in vault"
+                                            className="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
+                                          />
+                                          <input
+                                            value={actionForm.rateDistributionSeconds}
+                                            onChange={(event) => setPoolActionFormValue(pool.pool, 'rateDistributionSeconds', event.target.value)}
+                                            placeholder="Distribution seconds"
+                                            className="mt-2 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-brand-cyan"
+                                          />
+                                          <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-300">
+                                            Duration: <span className="font-semibold text-white">{formatStakingDuration(actionDurationSeconds)}</span>
+                                            <span className="mt-1 block">
+                                              New end: {actionDurationSeconds ? formatDateTime(nowSeconds + actionDurationSeconds) : 'Unavailable'}
+                                            </span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => void updateStakingPoolRewardRate(pool)}
+                                            disabled={
+                                              !actionForm.rateAmount.trim() ||
+                                              !actionForm.rateDistributionSeconds.trim() ||
+                                              rewardVaultBalanceRaw === 0n ||
+                                              stakingPoolActionLoading !== null
+                                            }
+                                            className="mt-3 w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:opacity-50"
+                                          >
+                                            {stakingPoolActionLoading === `rate:${pool.pool}` ? 'Updating...' : rateActionLabel}
+                                          </button>
+                                        </div>
+
+                                        <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                                          <h5 className="text-sm font-semibold text-red-200">Stop Rewards</h5>
+                                          <p className="mt-2 text-xs text-red-100">
+                                            This sets rewardRatePerSecond to 0, so no future rewards accrue.
+                                            Users can still unstake and claim rewards already accrued by the contract.
+                                          </p>
+                                          <button
+                                            type="button"
+                                            onClick={() => void stopStakingPoolRewards(pool)}
+                                            disabled={rewardRateRaw === 0n || stakingPoolActionLoading !== null}
+                                            className="mt-3 w-full rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+                                          >
+                                            {stakingPoolActionLoading === `stop:${pool.pool}` ? 'Stopping...' : 'Stop rewards'}
+                                          </button>
+                                        </div>
+
+                                        {poolTiming.isExpired && !pool.isLegacy && (
+                                          <div className="rounded-lg border border-brand-cyan/20 bg-brand-cyan/5 p-3">
+                                            <h5 className="text-sm font-semibold text-brand-cyan">Start Next Period</h5>
+                                            <p className="mt-2 text-xs text-gray-300">
+                                              Copies this expired pool into the create form with a fresh Date.now pool ID.
+                                            </p>
+                                            <button
+                                              type="button"
+                                              onClick={() => replayExpiredStakingPool(pool)}
+                                              disabled={stakingPoolActionLoading !== null}
+                                              className="mt-3 w-full rounded-lg bg-brand-cyan/20 px-4 py-2 text-sm font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/30 disabled:opacity-50"
+                                            >
+                                              Replay expired pool
+                                            </button>
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+
+                                    {!pool.isLegacy && (
+                                      <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                                        <h5 className="text-sm font-semibold text-emerald-200">Reclaim Leftovers</h5>
+                                        <p className="mt-2 text-xs text-emerald-100">
+                                          After expiry, creator can reclaim only unreserved rewards. User-earned rewards stay reserved.
+                                        </p>
+                                        <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-gray-300">
+                                          Reclaimable:{' '}
+                                          <span className="font-semibold text-white">
+                                            {formatRawTokenAmount(pool.reclaimableRewards, pool.rewardTokenDecimals)}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => void reclaimStakingPoolRewards(pool)}
+                                          disabled={reclaimDisabled}
+                                          className="mt-3 w-full rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
+                                        >
+                                          {stakingPoolActionLoading === `reclaim:${pool.pool}` ? 'Reclaiming...' : 'Reclaim leftovers'}
+                                        </button>
                                       </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => void updateStakingPoolRewardRate(pool)}
-                                        disabled={
-                                          !actionForm.rateAmount.trim() ||
-                                          !actionForm.rateDistributionSeconds.trim() ||
-                                          rewardVaultBalanceRaw === 0n ||
-                                          stakingPoolActionLoading !== null
-                                        }
-                                        className="mt-3 w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-white/15 disabled:opacity-50"
-                                      >
-                                        {stakingPoolActionLoading === `rate:${pool.pool}` ? 'Updating...' : rateActionLabel}
-                                      </button>
-                                    </div>
-
-                                    <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                                      <h5 className="text-sm font-semibold text-red-200">Stop Rewards</h5>
-                                      <p className="mt-2 text-xs text-red-100">
-                                        This does work: it sets rewardRatePerSecond to 0, so no future rewards accrue.
-                                        Users can still unstake and claim rewards already accrued by the contract.
-                                      </p>
-                                      <button
-                                        type="button"
-                                        onClick={() => void stopStakingPoolRewards(pool)}
-                                        disabled={rewardRateRaw === 0n || stakingPoolActionLoading !== null}
-                                        className="mt-3 w-full rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-600 disabled:opacity-50"
-                                      >
-                                        {stakingPoolActionLoading === `stop:${pool.pool}` ? 'Stopping...' : 'Stop rewards'}
-                                      </button>
-                                    </div>
+                                    )}
                                   </div>
                                 </details>
                               )}
@@ -1770,7 +1983,7 @@ export default function Admin() {
                           <div>
                             <h3 className="text-lg font-bold text-white">Create Staking Pool</h3>
                             <p className="mt-1 text-sm text-gray-400">
-                              Pool ID is generated automatically from existing pools.
+                              Pool ID is optional. If empty, the panel uses Date.now() when creating.
                             </p>
                           </div>
                           <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-3 py-1 text-xs font-semibold text-brand-cyan">
@@ -1845,7 +2058,7 @@ export default function Admin() {
                             <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
                               <div className="mb-1 text-xs text-gray-400">Auto-generated pool ID</div>
                               <div className="font-mono text-sm text-white">
-                                {stakingPoolForm.poolId || getNextStakingPoolId(stakingPools)}
+                                {stakingPoolForm.poolId || 'Date.now() on create'}
                               </div>
                             </div>
 
@@ -1853,6 +2066,7 @@ export default function Admin() {
                               <div className="rounded-lg border border-brand-cyan/20 bg-brand-cyan/10 p-3 text-xs text-brand-cyan">
                                 <div className="font-semibold text-white">Derived addresses</div>
                                 <div className="mt-2 break-all font-mono">Pool: {createPoolAddresses.pool}</div>
+                                <div className="mt-1 break-all font-mono">Pool admin: {createPoolAddresses.poolAdmin}</div>
                                 <div className="mt-1 break-all font-mono">Stake vault: {createPoolAddresses.stakeVault}</div>
                                 <div className="mt-1 break-all font-mono">Reward vault: {createPoolAddresses.rewardVault}</div>
                               </div>
@@ -2025,8 +2239,10 @@ export default function Admin() {
               {activeTab === 'settings' && (
                 <>
                   {!canChangeSettings && (
-                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-6 text-center">
-                      <div className="text-4xl mb-3">⚠️</div>
+                    <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-5 text-center sm:p-6">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-yellow-400/30 bg-yellow-400/10 text-sm font-bold text-yellow-200">
+                        !
+                      </div>
                       <p className="text-yellow-400 font-semibold mb-2">Settings Not Available</p>
                       <p className="text-gray-400 mb-2">Only the admin wallet can change settings.</p>
                       <p className="text-xs text-gray-500">You are the fee receiver and can claim fees instead.</p>
@@ -2045,9 +2261,9 @@ export default function Admin() {
                       <button
                         onClick={fetchCurrentFeeReceiver}
                         disabled={loadingConfig}
-                        className="px-4 py-2 text-xs font-semibold bg-white/5 hover:bg-white/10 rounded-lg transition-all disabled:opacity-50 whitespace-nowrap"
+                        className="w-full rounded-lg bg-white/5 px-4 py-2 text-xs font-semibold transition-all hover:bg-white/10 disabled:opacity-50 sm:w-auto sm:whitespace-nowrap"
                       >
-                        {loadingConfig ? '⏳ Loading…' : '🔄 Load Current'}
+                        {loadingConfig ? 'Loading...' : 'Load Current'}
                       </button>
                     </div>
                     {currentFeeReceiver && (
@@ -2077,32 +2293,32 @@ export default function Admin() {
                         disabled={updating || !newFeeReceiver}
                         className="px-5 py-2.5 text-sm font-semibold bg-gradient-brand text-white rounded-lg hover:brightness-110 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                       >
-                        {updating ? '⏳ Updating…' : '✅ Update'}
+                        {updating ? 'Updating...' : 'Update'}
                       </button>
                     </div>
                     
                     <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
                       <p className="text-xs text-blue-300 font-semibold mb-2">
-                        ✨ Unified Fee Receiver (One address for ALL fees)
+                        Unified Fee Receiver (One address for ALL fees)
                       </p>
                       <p className="text-xs text-blue-200">
                         This single address receives:
                       </p>
                       <ul className="text-xs text-blue-200 mt-1 ml-4 space-y-0.5">
-                        <li>• Pool creation fees (1 SOL per pool)</li>
-                        <li>• Protocol swap fees (0.05% of each trade)</li>
-                        <li>• Fund fees (from swaps)</li>
-                        <li>• KEDOLOG discount fees (25% reduced fees)</li>
+                        <li>- Pool creation fees (1 SOL per pool)</li>
+                        <li>- Protocol swap fees (0.05% of each trade)</li>
+                        <li>- Fund fees (from swaps)</li>
+                        <li>- KEDOLOG discount fees (25% reduced fees)</li>
                       </ul>
                       <p className="text-xs text-blue-300 mt-2">
-                        ℹ️ Update once, applies to all fee types!
+                        Update once, applies to all fee types.
                       </p>
                     </div>
                   </div>
 
                   {/* Change Admin */}
                   <div className="bg-dark-800/50 backdrop-blur-sm border border-red-500/20 rounded-xl p-4 sm:p-6">
-                    <h3 className="text-base font-bold mb-1 text-red-400">⚠️ Change Admin</h3>
+                    <h3 className="text-base font-bold mb-1 text-red-400">Change Admin</h3>
                     <p className="text-xs text-gray-400 mb-4">Transfer admin rights to a new wallet address</p>
                     
                     <div className="flex flex-col sm:flex-row gap-3 mb-3">
@@ -2118,13 +2334,13 @@ export default function Admin() {
                         disabled={updatingAdmin || !newAdmin}
                         className="px-5 py-2.5 text-sm font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                       >
-                        {updatingAdmin ? '⏳ Updating…' : '🔄 Change Admin'}
+                        {updatingAdmin ? 'Updating...' : 'Change Admin'}
                       </button>
                     </div>
                     
                     <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-3">
                       <p className="text-xs text-red-300 font-semibold mb-1">
-                        ⚠️ DANGER: This action is irreversible!
+                        DANGER: This action is irreversible.
                       </p>
                       <p className="text-xs text-red-300">
                         Once you transfer admin rights, you will immediately lose all admin access. Make sure you have access to the new admin wallet before proceeding.
@@ -2138,20 +2354,20 @@ export default function Admin() {
                           onClick={refreshConfig}
                           className="text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
                         >
-                          🔄 Refresh
+                          Refresh
                         </button>
                       </div>
                       <div className="font-mono text-xs text-white break-all">
                         {currentAdmin || 'Loading from blockchain...'}
                       </div>
                       {currentAdmin && isOnChainAdmin && (
-                        <div className="mt-2 text-xs text-green-400">✅ You are the current admin</div>
+                        <div className="mt-2 text-xs text-green-400">You are the current admin</div>
                       )}
                       {currentAdmin && !isOnChainAdmin && (
-                        <div className="mt-2 text-xs text-red-400">❌ You are NOT the admin</div>
+                        <div className="mt-2 text-xs text-red-400">You are NOT the admin</div>
                       )}
                       {!currentAdmin && (
-                        <div className="mt-2 text-xs text-yellow-400">⏳ Fetching admin from blockchain...</div>
+                        <div className="mt-2 text-xs text-yellow-400">Fetching admin from blockchain...</div>
                       )}
                     </div>
                   </div>

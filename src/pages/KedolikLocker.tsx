@@ -857,6 +857,26 @@ export default function KedolikLocker() {
               </div>
             )}
 
+            {!connected && (
+              <section className="mt-6 rounded-2xl border border-brand-cyan/20 bg-brand-cyan/10 p-5 sm:p-6">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-white">Connect wallet</div>
+                    <p className="mt-1 max-w-2xl text-sm text-gray-300">
+                      Connect your wallet to create locks, claim unlocked tokens, and see wallet-specific lock actions.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="w-full rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-5 py-3 text-sm font-semibold text-brand-cyan transition-colors hover:bg-brand-cyan/20 sm:w-auto"
+                    onClick={() => setWalletModalVisible(true)}
+                  >
+                    Connect Wallet
+                  </button>
+                </div>
+              </section>
+            )}
+
             <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
               <div className="card p-6 sm:p-8">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
