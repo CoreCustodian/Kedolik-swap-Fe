@@ -40,6 +40,8 @@ const RECLAIM_UNCLAIMED_REWARDS_DISCRIMINATOR = Buffer.from('81e839e301f1a889', 
 const CLOSE_POSITION_DISCRIMINATOR = Buffer.from('7b86510031446262', 'hex');
 const STAKING_POOL_STORAGE_KEY = 'kedolik:stake-lock-v1:pools';
 export const KEDOLIK_STAKING_POOLS_UPDATED_EVENT = 'kedolik:staking-pools-updated';
+export const KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE =
+  'No Staking Pool Instance has been deployed yet. Once the admin team deploys the staking pool instance, an official announcement will be shared across our social media channels.';
 const ACC_REWARD_SCALE = 1_000_000_000_000n;
 
 export interface KedolikStakingObjectStatus {
@@ -275,6 +277,19 @@ const toPublicKey = (value: string) => {
   } catch {
     throw new Error(`Invalid Solana address: ${value}`);
   }
+};
+
+export const getKedolikStakingErrorMessage = (
+  error: unknown,
+  fallback = 'Unable to load Kedolik Staking.'
+) => {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+
+  if (/429|rate limits? exceeded/i.test(message)) {
+    return 'Devnet RPC rate limit reached while loading staking data. Please wait a moment and refresh.';
+  }
+
+  return message || fallback;
 };
 
 const assertWallet = (wallet?: AnchorWallet | null): AnchorWallet => {
@@ -674,11 +689,51 @@ const fetchPoolAdminAccountState = async (
     };
   }
 
+  const decoded = decodeStakingPoolAdminState(Buffer.from(accountInfo.data), pool);
+
   return {
     address,
-    exists: true,
-    decoded: decodeStakingPoolAdminState(Buffer.from(accountInfo.data), pool),
+    exists: Boolean(decoded),
+    decoded,
   };
+};
+
+const fetchPoolAdminAccountStates = async (
+  connection: Connection,
+  pools: KedolikStoredStakingPool[]
+) => {
+  const states = new Map<string, PoolAdminAccountState>();
+  const batchSize = 100;
+
+  for (let index = 0; index < pools.length; index += batchSize) {
+    const batch = pools.slice(index, index + batchSize);
+    const addresses = batch.map((poolConfig) => getStoredOrDerivedPoolAdmin(poolConfig));
+
+    let accountInfos: Awaited<ReturnType<Connection['getMultipleAccountsInfo']>>;
+
+    try {
+      accountInfos = await connection.getMultipleAccountsInfo(addresses, 'confirmed');
+    } catch (error) {
+      throw new Error(getKedolikStakingErrorMessage(error));
+    }
+
+    batch.forEach((poolConfig, batchIndex) => {
+      const pool = toPublicKey(poolConfig.pool);
+      const address = addresses[batchIndex];
+      const accountInfo = accountInfos[batchIndex];
+      const decoded = accountInfo?.owner.equals(KEDOLIK_STAKE_LOCK_PROGRAM_ID)
+        ? decodeStakingPoolAdminState(Buffer.from(accountInfo.data), pool)
+        : null;
+
+      states.set(poolConfig.pool, {
+        address,
+        exists: Boolean(decoded),
+        decoded,
+      });
+    });
+  }
+
+  return states;
 };
 
 const getPoolAdminAccountOrThrow = async (
@@ -698,6 +753,15 @@ const getPoolAdminAccountOrThrow = async (
 const fetchOnChainPools = async (connection: Connection) => {
   const accounts = await connection.getProgramAccounts(KEDOLIK_STAKE_LOCK_PROGRAM_ID, {
     commitment: 'confirmed',
+    filters: [
+      {
+        memcmp: {
+          offset: 0,
+          encoding: 'base64',
+          bytes: STAKING_POOL_DISCRIMINATOR.toString('base64'),
+        },
+      },
+    ],
   });
 
   return accounts
@@ -738,6 +802,24 @@ const getConfiguredPools = async (connection: Connection) => {
   });
 
   return [...byPool.values()];
+};
+
+const getUpgradedConfiguredPools = async (connection: Connection) => {
+  const pools = await getConfiguredPools(connection);
+
+  if (pools.length === 0) {
+    return {
+      pools: [] as KedolikStoredStakingPool[],
+      poolAdminStates: new Map<string, PoolAdminAccountState>(),
+    };
+  }
+
+  const poolAdminStates = await fetchPoolAdminAccountStates(connection, pools);
+
+  return {
+    pools: pools.filter((pool) => poolAdminStates.get(pool.pool)?.exists),
+    poolAdminStates,
+  };
 };
 
 const getRawTokenAccountBalance = async (connection: Connection, tokenAccount: PublicKey) => {
@@ -937,7 +1019,8 @@ const fetchUserPosition = async (
 
 const estimateClaimableRewards = (
   poolState: DecodedStakingPoolState | null,
-  position: DecodedUserPosition | null
+  position: DecodedUserPosition | null,
+  rewardEndTs?: number | null
 ) => {
   if (!position) {
     return null;
@@ -947,8 +1030,15 @@ const estimateClaimableRewards = (
     return position.rewardsOwed;
   }
 
+  const now = Math.floor(Date.now() / 1000);
+
+  if (rewardEndTs && rewardEndTs > 0 && now >= rewardEndTs) {
+    return position.rewardsOwed;
+  }
+
   let rewardPerTokenStored = poolState.rewardPerTokenStored;
-  const elapsedSeconds = BigInt(Math.max(0, Math.floor(Date.now() / 1000) - poolState.lastUpdateTs));
+  const accrualEndTs = rewardEndTs && rewardEndTs > 0 ? Math.min(now, rewardEndTs) : now;
+  const elapsedSeconds = BigInt(Math.max(0, accrualEndTs - poolState.lastUpdateTs));
 
   if (poolState.totalStaked > 0n && poolState.rewardRatePerSecond > 0n && elapsedSeconds > 0n) {
     rewardPerTokenStored +=
@@ -973,7 +1063,8 @@ const getTokenDecimals = async (connection: Connection, mint: PublicKey) => {
 const mapPoolToSummary = async (
   connection: Connection,
   poolConfig: KedolikStoredStakingPool,
-  walletPublicKey?: PublicKey | null
+  walletPublicKey?: PublicKey | null,
+  preloadedPoolAdminAccountState?: PoolAdminAccountState
 ): Promise<KedolikStakingQuarrySummary> => {
   const pool = toPublicKey(poolConfig.pool);
   const stakeMint = toPublicKey(poolConfig.stakeMint);
@@ -1003,21 +1094,26 @@ const mapPoolToSummary = async (
     getWalletTokenBalance(connection, walletPublicKey, rewardMint, rewardTokenProgram),
     fetchUserPosition(connection, pool, walletPublicKey),
     connection.getAccountInfo(pool, 'confirmed'),
-    fetchPoolAdminAccountState(connection, pool, poolConfig),
+    preloadedPoolAdminAccountState ?? fetchPoolAdminAccountState(connection, pool, poolConfig),
   ]);
   const livePool = poolAccountInfo ? decodeStakingPoolState(Buffer.from(poolAccountInfo.data)) : null;
   const positionAddress = position.address?.toString() ?? null;
   const rewardRatePerSecond = livePool?.rewardRatePerSecond.toString() ?? poolConfig.rewardRatePerSecond ?? null;
   const totalStakedRaw = livePool?.totalStaked.toString() ?? totalStaked;
+  const poolTiming = getPoolTiming(poolConfig, poolAdminAccountState.decoded);
+  const effectiveRewardRatePerSecond = poolTiming.isExpired ? '0' : rewardRatePerSecond;
   const rewardRateYearly =
-    rewardRatePerSecond && rewardRatePerSecond !== '0'
-      ? (BigInt(rewardRatePerSecond) * 365n * 24n * 60n * 60n).toString()
+    effectiveRewardRatePerSecond && effectiveRewardRatePerSecond !== '0'
+      ? (BigInt(effectiveRewardRatePerSecond) * 365n * 24n * 60n * 60n).toString()
       : null;
-  const estimatedClaimableRewards = estimateClaimableRewards(livePool, position.decoded);
+  const estimatedClaimableRewards = estimateClaimableRewards(
+    livePool,
+    position.decoded,
+    poolTiming.stakingEndsAt
+  );
   const userStake = position.decoded?.amount.toString() ?? '0';
   const claimableRewards = estimatedClaimableRewards?.toString() ?? '0';
   const hasPosition = Boolean(position.decoded);
-  const poolTiming = getPoolTiming(poolConfig, poolAdminAccountState.decoded);
   const fundingState = getPoolFundingState(poolConfig, rewardVaultBalance);
   const reservedRewards = poolAdminAccountState.decoded?.reservedRewards ?? null;
   const reclaimableRewards = getReclaimableRewards(rewardVaultBalance, reservedRewards);
@@ -1070,7 +1166,7 @@ const mapPoolToSummary = async (
     totalStaked: totalStakedRaw,
     stakers: null,
     rewardRate: rewardRateYearly,
-    rewardsPerSecondEstimate: rewardRatePerSecond,
+    rewardsPerSecondEstimate: effectiveRewardRatePerSecond,
     rewardDurationSeconds: poolTiming.rewardDurationSeconds,
     stakingStartedAt: poolTiming.stakingStartedAt,
     stakingEndsAt: poolTiming.stakingEndsAt,
@@ -1179,7 +1275,8 @@ const getAdminPoolStatus = (
 
 const mapPoolToAdminPool = async (
   connection: Connection,
-  poolConfig: KedolikStoredStakingPool
+  poolConfig: KedolikStoredStakingPool,
+  preloadedPoolAdminAccountState?: PoolAdminAccountState
 ): Promise<KedolikStakingAdminPool> => {
   const pool = toPublicKey(poolConfig.pool);
   const stakeMint = toPublicKey(poolConfig.stakeMint);
@@ -1200,18 +1297,19 @@ const mapPoolToAdminPool = async (
     getRawTokenAccountBalance(connection, stakeVault),
     getRawTokenAccountBalance(connection, rewardVault),
     connection.getAccountInfo(pool, 'confirmed'),
-    fetchPoolAdminAccountState(connection, pool, poolConfig),
+    preloadedPoolAdminAccountState ?? fetchPoolAdminAccountState(connection, pool, poolConfig),
   ]);
   const livePool = poolAccountInfo ? decodeStakingPoolState(Buffer.from(poolAccountInfo.data)) : null;
   const rewardRatePerSecond =
     livePool?.rewardRatePerSecond.toString() ?? poolConfig.rewardRatePerSecond ?? '0';
   const totalStaked = livePool?.totalStaked.toString() ?? stakeVaultBalance;
   const poolTiming = getPoolTiming(poolConfig, poolAdminAccountState.decoded);
+  const effectiveRewardRatePerSecond = poolTiming.isExpired ? '0' : rewardRatePerSecond;
   const fundingState = getPoolFundingState(poolConfig, rewardVaultBalance);
   const reservedRewards = poolAdminAccountState.decoded?.reservedRewards ?? null;
   const reclaimableRewards = getReclaimableRewards(rewardVaultBalance, reservedRewards);
   const rewardStatus = getAdminPoolStatus(
-    rewardRatePerSecond,
+    effectiveRewardRatePerSecond,
     rewardVaultBalance,
     Boolean(livePool),
     poolAdminAccountState.exists,
@@ -1249,7 +1347,7 @@ const mapPoolToAdminPool = async (
     stakeTokenDecimals,
     rewardTokenDecimals,
     totalStaked,
-    rewardRatePerSecond,
+    rewardRatePerSecond: effectiveRewardRatePerSecond,
     rewardVaultBalance,
     stakeVaultBalance,
     exists: Boolean(livePool),
@@ -1267,8 +1365,10 @@ const mapPoolToAdminPool = async (
 export const fetchKedolikStakingAdminPools = async (
   connection: Connection
 ): Promise<KedolikStakingAdminPool[]> => {
-  const pools = await getConfiguredPools(connection);
-  const adminPools = await Promise.all(pools.map((pool) => mapPoolToAdminPool(connection, pool)));
+  const { pools, poolAdminStates } = await getUpgradedConfiguredPools(connection);
+  const adminPools = await Promise.all(
+    pools.map((pool) => mapPoolToAdminPool(connection, pool, poolAdminStates.get(pool.pool)))
+  );
 
   return adminPools.sort((left, right) => {
     const leftId = BigInt(left.poolId || '0');
@@ -1278,12 +1378,10 @@ export const fetchKedolikStakingAdminPools = async (
 };
 
 const getFirstPoolOrThrow = async (connection: Connection) => {
-  const pools = await getConfiguredPools(connection);
+  const { pools } = await getUpgradedConfiguredPools(connection);
 
   if (pools.length === 0) {
-    throw new Error(
-      'No staking pool instance has been created yet. Create one from the staking admin controls or run setup-devnet-lean-staking.js.'
-    );
+    throw new Error(KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE);
   }
 
   return pools[0];
@@ -1294,11 +1392,11 @@ const getPoolOrThrow = async (connection: Connection, poolAddress?: string) => {
     return getFirstPoolOrThrow(connection);
   }
 
-  const pools = await getConfiguredPools(connection);
+  const { pools } = await getUpgradedConfiguredPools(connection);
   const pool = pools.find((candidate) => candidate.pool === poolAddress);
 
   if (!pool) {
-    throw new Error('Selected staking pool was not found on the current RPC endpoint.');
+    throw new Error('Selected staking pool was not found in the upgraded staking pool list.');
   }
 
   return pool;
@@ -1902,15 +2000,17 @@ export const createKedolikStakingService = (
   cluster: KEDOLIK_STAKE_LOCK_V1.cluster,
   kedolikStakingProgramId: KEDOLIK_STAKE_LOCK_V1.programId,
   fetchLiveQuarries: async (walletPublicKey) => {
-    const pools = await getConfiguredPools(connection);
+    const { pools, poolAdminStates } = await getUpgradedConfiguredPools(connection);
 
     if (pools.length === 0) {
       return [];
     }
 
-    const summaries = await Promise.all(pools.map((pool) => mapPoolToSummary(connection, pool, walletPublicKey)));
+    const summaries = await Promise.all(
+      pools.map((pool) => mapPoolToSummary(connection, pool, walletPublicKey, poolAdminStates.get(pool.pool)))
+    );
 
-    return summaries.filter((pool) => !pool.isLegacy);
+    return summaries.filter((pool) => pool.poolAdminExists);
   },
   stake: async (amountRaw, poolAddress) => {
     const signerWallet = assertWallet(wallet);

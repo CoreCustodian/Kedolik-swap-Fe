@@ -10,6 +10,7 @@ import {
   fetchKedolikStakingAdminPools,
   fetchKedolikStakeLockAdminConfig,
   fetchKedolikWalletTokenBalance,
+  getKedolikStakingErrorMessage,
   fundKedolikStakingRewards,
   initializeKedolikStakingPool,
   KedolikStakeLockAdminConfig,
@@ -222,6 +223,64 @@ const ExpiredTag = ({ label = 'Expired' }: { label?: string }) => (
   </span>
 );
 
+const AdminMetricCard = ({
+  label,
+  value,
+  tone = 'neutral',
+}: {
+  label: string;
+  value: string | number;
+  tone?: 'neutral' | 'green' | 'red' | 'orange' | 'gray';
+}) => {
+  const toneClasses = {
+    neutral: 'border-white/10 bg-dark-800/50 text-white',
+    green: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200',
+    red: 'border-red-500/20 bg-red-500/10 text-red-200',
+    orange: 'border-orange-500/20 bg-orange-500/10 text-orange-200',
+    gray: 'border-white/10 bg-white/[0.03] text-gray-200',
+  }[tone];
+
+  return (
+    <div className={`rounded-xl border p-3 sm:p-4 ${toneClasses}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500 sm:text-xs">
+        {label}
+      </div>
+      <div className="mt-2 text-xl font-bold sm:text-2xl">{value}</div>
+    </div>
+  );
+};
+
+const PoolMetric = ({
+  label,
+  value,
+  valueClassName = 'text-white',
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) => (
+  <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+    <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">{label}</div>
+    <div className={`mt-1 min-w-0 break-words text-sm font-semibold ${valueClassName}`}>{value}</div>
+  </div>
+);
+
+const getFundingPercent = (requiredRaw: string | null, fundedRaw: string | null) => {
+  try {
+    const required = BigInt(requiredRaw ?? '0');
+    const funded = BigInt(fundedRaw ?? '0');
+
+    if (required <= 0n) {
+      return 0;
+    }
+
+    const percent = Number((funded * 100n) / required);
+    return Math.max(0, Math.min(100, percent));
+  } catch {
+    return 0;
+  }
+};
+
 export default function Admin() {
   const { connection } = useConnection();
   const anchorWallet = useAnchorWallet();
@@ -293,7 +352,7 @@ export default function Admin() {
     totalPools: stakingPools.length,
     activePools: stakingPools.filter((pool) => {
       const timing = getStakingTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
-      return !timing.isExpired && (pool.status === 'active' || pool.status === 'low_rewards');
+      return !timing.isExpired && pool.status !== 'missing' && pool.status !== 'legacy';
     }).length,
     expiredPools: stakingPools.filter((pool) =>
       getStakingTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds).isExpired
@@ -359,7 +418,7 @@ export default function Admin() {
       setStakingPools(pools);
     } catch (error) {
       console.error('Error fetching staking pools:', error);
-      showToast(`Failed to load staking pools: ${(error as Error)?.message || String(error)}`, 'error');
+      showToast(`Failed to load staking pools: ${getKedolikStakingErrorMessage(error)}`, 'error');
     } finally {
       setLoadingStakingPools(false);
     }
@@ -1185,10 +1244,10 @@ export default function Admin() {
           <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-brand-pink/5 rounded-full blur-3xl"></div>
         </div>
 
-        <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
+        <div className="relative max-w-6xl mx-auto px-3 py-5 sm:px-6 sm:py-10 lg:py-12">
           {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl sm:text-4xl font-bold mb-2">
+          <div className="mb-6 sm:mb-8">
+            <h1 className="text-2xl sm:text-4xl font-bold mb-2">
               <span className="gradient-text">Admin Panel</span>
             </h1>
             <p className="text-gray-400 text-sm sm:text-base">Manage protocol fees and configuration</p>
@@ -1245,7 +1304,7 @@ export default function Admin() {
           {connected && canAccessAdmin && (
             <>
               {/* Role Badge */}
-              <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-4 mb-6">
+              <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-3 mb-4 sm:p-4 sm:mb-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-bold text-gray-400 mb-1">Your Role</h3>
@@ -1281,12 +1340,12 @@ export default function Admin() {
               </div>
 
               {/* Tabs */}
-              <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-2 mb-6">
+              <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-2 mb-4 sm:mb-6">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   {canClaimFees && (
                     <button
                       onClick={() => setActiveTab('fees')}
-                      className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                      className={`flex-1 px-3 py-3 rounded-lg font-semibold text-sm transition-all sm:px-4 ${
                         activeTab === 'fees'
                           ? 'bg-gradient-brand text-white shadow-lg'
                           : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -1298,7 +1357,7 @@ export default function Admin() {
                   {canChangeSettings && (
                     <button
                       onClick={() => setActiveTab('settings')}
-                      className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                      className={`flex-1 px-3 py-3 rounded-lg font-semibold text-sm transition-all sm:px-4 ${
                         activeTab === 'settings'
                           ? 'bg-gradient-brand text-white shadow-lg'
                           : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -1310,7 +1369,7 @@ export default function Admin() {
                   {canViewStakingInstance && (
                     <button
                       onClick={() => setActiveTab('staking')}
-                      className={`flex-1 px-4 py-3 rounded-lg font-semibold text-sm transition-all ${
+                      className={`flex-1 px-3 py-3 rounded-lg font-semibold text-sm transition-all sm:px-4 ${
                         activeTab === 'staking'
                           ? 'bg-gradient-brand text-white shadow-lg'
                           : 'text-gray-400 hover:text-white hover:bg-white/5'
@@ -1456,8 +1515,10 @@ export default function Admin() {
                   )}
 
                       {poolFees.length === 0 && !loading && (
-                        <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-8 text-center text-gray-400">
-                          <div className="text-4xl mb-3">📭</div>
+                        <div className="bg-dark-800/50 backdrop-blur-sm border border-white/10 rounded-xl p-6 text-center text-gray-400 sm:p-8">
+                          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm font-bold text-gray-300">
+                            0
+                          </div>
                           <p>No pool fees loaded yet.</p>
                           <p className="text-sm mt-1">Click "Refresh" to fetch data</p>
                         </div>
@@ -1472,18 +1533,13 @@ export default function Admin() {
                 <div className="space-y-6">
                   <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                     {[
-                      { label: 'Total Pools', value: stakingDashboardSummary.totalPools },
-                      { label: 'Active Pools', value: stakingDashboardSummary.activePools },
-                      { label: 'Expired Pools', value: stakingDashboardSummary.expiredPools },
-                      { label: 'Unfunded Pools', value: stakingDashboardSummary.unfundedPools },
-                      { label: 'Rewards Stopped', value: stakingDashboardSummary.rewardsStoppedPools },
+                      { label: 'Total Pools', value: stakingDashboardSummary.totalPools, tone: 'neutral' as const },
+                      { label: 'Active Pools', value: stakingDashboardSummary.activePools, tone: 'green' as const },
+                      { label: 'Expired Pools', value: stakingDashboardSummary.expiredPools, tone: 'red' as const },
+                      { label: 'Unfunded Pools', value: stakingDashboardSummary.unfundedPools, tone: 'orange' as const },
+                      { label: 'Rewards Stopped', value: stakingDashboardSummary.rewardsStoppedPools, tone: 'gray' as const },
                     ].map((card) => (
-                      <div key={card.label} className="rounded-xl border border-white/10 bg-dark-800/50 p-4">
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
-                          {card.label}
-                        </div>
-                        <div className="mt-2 text-2xl font-bold text-white">{card.value}</div>
-                      </div>
+                      <AdminMetricCard key={card.label} label={card.label} value={card.value} tone={card.tone} />
                     ))}
                   </div>
 
@@ -1502,7 +1558,7 @@ export default function Admin() {
                           void refreshStakingPools();
                         }}
                         disabled={loadingStakingAdminConfig || loadingStakingPools}
-                        className="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/10 disabled:opacity-50"
+                        className="w-full rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-white/10 disabled:opacity-50 sm:w-auto"
                       >
                         {loadingStakingPools ? 'Refreshing...' : 'Refresh staking'}
                       </button>
@@ -1538,14 +1594,21 @@ export default function Admin() {
                     )}
                   </div>
 
-                  <div className="rounded-xl border border-white/10 bg-dark-800/50 p-4 sm:p-6">
-                    <div className="mb-4">
-                      <h3 className="text-lg font-bold text-white">Technical Section</h3>
-                      <p className="mt-1 text-sm text-gray-400">
-                        Contract details used by the admin panel for pool creation, funding, and reward updates.
-                      </p>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <details className="rounded-xl border border-white/10 bg-dark-800/50 p-4 sm:p-6">
+                    <summary className="cursor-pointer list-none">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h3 className="text-lg font-bold text-white">Technical Section</h3>
+                          <p className="mt-1 text-sm text-gray-400">
+                            Program IDs, PDA seeds, and reward formula details.
+                          </p>
+                        </div>
+                        <span className="w-fit rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-gray-300">
+                          Expand
+                        </span>
+                      </div>
+                    </summary>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                       <div className="rounded-lg border border-white/10 bg-dark-900 p-3">
                         <div className="mb-1 text-xs text-gray-400">Token Program</div>
                         <div className="break-all font-mono text-xs text-white">
@@ -1584,7 +1647,7 @@ export default function Admin() {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </details>
 
                   {fundingRecoveryPool && (
                     <div className="rounded-xl border border-orange-500/30 bg-orange-500/10 p-4 sm:p-5">
@@ -1668,7 +1731,7 @@ export default function Admin() {
                       )}
 
                       <div className="space-y-4">
-                        {stakingPools.map((pool) => {
+                        {stakingPools.map((pool, poolIndex) => {
                           const actionForm = getPoolActionForm(pool.pool);
                           const rewardVaultBalanceRaw = BigInt(pool.rewardVaultBalance ?? '0');
                           const rewardRateRaw = BigInt(pool.rewardRatePerSecond || '0');
@@ -1700,13 +1763,16 @@ export default function Admin() {
                             !poolTiming.isExpired ||
                             reclaimableRewardsRaw <= 0n ||
                             stakingPoolActionLoading !== null;
+                          const fundingPercent = pool.isFullyFunded
+                            ? 100
+                            : getFundingPercent(pool.requiredRewardAmount, pool.fundedRewardAmount);
 
                           return (
-                            <div key={pool.pool} className="rounded-xl border border-white/10 bg-dark-900/80 p-4">
+                            <div key={pool.pool} className="rounded-xl border border-white/10 bg-dark-900/80 p-3 sm:p-4">
                               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="font-bold text-white">Stake Lock Pool #{pool.poolId}</h4>
+                                    <h4 className="font-bold text-white">Stake Lock Pool {poolIndex + 1}</h4>
                                     {poolStatus === 'expired' ? (
                                       <ExpiredTag />
                                     ) : (
@@ -1716,6 +1782,7 @@ export default function Admin() {
                                     )}
                                   </div>
                                   <p className="mt-1 text-xs text-gray-400">{poolStatusMessage}</p>
+                                  <p className="mt-1 break-all font-mono text-[11px] text-gray-500">Pool ID: {pool.poolId}</p>
                                 </div>
                                 <div className="text-xs text-gray-400 lg:text-right">
                                   <div>Staking ends: {formatDateTime(pool.stakingEndsAt)}</div>
@@ -1723,7 +1790,52 @@ export default function Admin() {
                                 </div>
                               </div>
 
-                              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                              <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                <PoolMetric
+                                  label="Total Staked"
+                                  value={formatRawTokenAmount(pool.totalStaked, pool.stakeTokenDecimals)}
+                                />
+                                <PoolMetric
+                                  label="Reward Vault"
+                                  value={formatRawTokenAmount(pool.rewardVaultBalance, pool.rewardTokenDecimals)}
+                                />
+                                <PoolMetric
+                                  label="Rate / Second"
+                                  value={formatRawTokenAmount(pool.rewardRatePerSecond, pool.rewardTokenDecimals)}
+                                  valueClassName={poolTiming.isExpired ? 'text-red-200' : 'text-white'}
+                                />
+                                <PoolMetric
+                                  label={poolTiming.isExpired ? 'Ended' : 'Time Left'}
+                                  value={poolTiming.isExpired ? formatDateTime(pool.stakingEndsAt) : formatDuration(poolTiming.secondsRemaining)}
+                                  valueClassName={poolTiming.isExpired ? 'text-red-200' : 'text-white'}
+                                />
+                              </div>
+
+                              <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                                <div className="flex items-center justify-between gap-3 text-xs">
+                                  <span className="font-semibold text-gray-300">Funding</span>
+                                  <span className={pool.isFullyFunded ? 'font-semibold text-emerald-200' : 'font-semibold text-orange-200'}>
+                                    {fundingPercent}%
+                                  </span>
+                                </div>
+                                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                                  <div
+                                    className={`h-full rounded-full ${pool.isFullyFunded ? 'bg-emerald-400' : 'bg-orange-400'}`}
+                                    style={{ width: `${fundingPercent}%` }}
+                                  />
+                                </div>
+                                <div className="mt-2 grid gap-2 text-xs text-gray-400 sm:grid-cols-3">
+                                  <span>Required: {formatRawTokenAmount(pool.requiredRewardAmount, pool.rewardTokenDecimals)}</span>
+                                  <span>Funded: {formatRawTokenAmount(pool.fundedRewardAmount, pool.rewardTokenDecimals)}</span>
+                                  <span>Reclaimable: {formatRawTokenAmount(pool.reclaimableRewards, pool.rewardTokenDecimals)}</span>
+                                </div>
+                              </div>
+
+                              <details className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3">
+                                <summary className="cursor-pointer list-none text-sm font-semibold text-gray-200">
+                                  Pool details and addresses
+                                </summary>
+                              <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                                 <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
                                   <div className="text-xs text-gray-400">Pool Address</div>
                                   <div className="mt-1 break-all font-mono text-xs text-white">{pool.pool}</div>
@@ -1815,6 +1927,7 @@ export default function Admin() {
                                   <div className="mt-1 break-all font-mono text-xs text-white">Reward: {pool.rewardVault}</div>
                                 </div>
                               </div>
+                              </details>
 
                               {(rewardVaultBalanceRaw === 0n || rewardRateRaw === 0n) && (
                                 <div className="mt-3 rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3 text-xs text-yellow-200">

@@ -2,6 +2,7 @@ import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapte
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createKedolikStakingService,
+  getKedolikStakingErrorMessage,
   KEDOLIK_STAKING_POOLS_UPDATED_EVENT,
   KedolikStakingQuarrySummary,
 } from '../services/kedolikStaking';
@@ -27,7 +28,7 @@ export const useKedolikStaking = () => {
       setQuarries(nextQuarries);
     } catch (refreshError) {
       setQuarries([]);
-      setError(refreshError instanceof Error ? refreshError.message : 'Unable to load Kedolik Staking.');
+      setError(getKedolikStakingErrorMessage(refreshError));
     } finally {
       setIsLoading(false);
     }

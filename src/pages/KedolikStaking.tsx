@@ -1,44 +1,21 @@
-import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
-import { getMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
 import { useEffect, useMemo, useState } from 'react';
 import toast from 'react-hot-toast';
-import {
-  KEDOLIK_DEVNET_CONFIG,
-  getKedolikExplorerAccountUrl,
-} from '../config/kedolikDevnet';
-import { KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS } from '../config/kedolikStakeLockV1';
-import { KEDOLIK_DEVNET_README_NOTES } from '../features/kedolikDevnetNotes';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { useKedolikProgramStatus } from '../hooks/useKedolikProgramStatus';
 import { useKedolikStaking } from '../hooks/useKedolikStaking';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import type { TokenInfo } from '../config/tokens';
+import { KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE } from '../services/kedolikStaking';
 import {
-  fetchKedolikStakeLockAdminConfig,
-  fundKedolikStakingRewards,
-  initializeKedolikStakingPool,
-  KedolikStakeLockAdminConfig,
-  setKedolikStakingRewardRate,
-  transferKedolikStakingAdmin,
-} from '../services/kedolikStaking';
-import {
-  KedolikInfoRow,
   KedolikPageFrame,
   KedolikProgramStatusBadge,
   formatKedolikAddress,
   formatKedolikUnixTime,
   formatKedolikTokenAmount,
 } from '../components/kedolik/KedolikShared';
-
-const DEFAULT_ADMIN_FORM = {
-  stakeMint: '',
-  rewardMint: '',
-  poolId: '',
-  rewardAmount: '',
-  rewardDurationSeconds: '2592000',
-};
 
 const formatMetricAmount = (
   rawValue: string | null,
@@ -48,32 +25,6 @@ const formatMetricAmount = (
 
 const formatInputAmount = (rawValue: string | null, decimals: number | null) =>
   rawValue === null ? '' : formatKedolikTokenAmount(rawValue, decimals);
-
-const formatRawTokenInput = (rawValue: string | null | undefined, decimals: number | null | undefined) => {
-  if (!rawValue) {
-    return '';
-  }
-
-  if (decimals === null || decimals === undefined) {
-    return rawValue;
-  }
-
-  try {
-    const raw = BigInt(rawValue);
-    const scale = 10n ** BigInt(decimals);
-    const whole = raw / scale;
-    const fraction = raw % scale;
-
-    if (fraction === 0n) {
-      return whole.toString();
-    }
-
-    const fractionText = fraction.toString().padStart(decimals, '0').replace(/0+$/, '');
-    return `${whole.toString()}.${fractionText}`;
-  } catch {
-    return '';
-  }
-};
 
 const formatPercentHundredths = (value: bigint) => {
   const compactUnits = [
@@ -196,11 +147,8 @@ const getLivePoolTiming = (
   };
 };
 
-const formatPoolCardLabel = (title: string) => {
-  const poolId = title.match(/#(.+)$/)?.[1];
-
-  return poolId ? `Pool #${poolId.slice(-6)}` : 'Stake Lock V1';
-};
+const formatPoolCardLabel = (index: number, totalPools: number) =>
+  totalPools > 1 ? `Pool ${index + 1} of ${totalPools}` : 'Pool 1';
 
 const parseAmountToRaw = (value: string, decimals: number | null) => {
   if (decimals === null) {
@@ -291,34 +239,8 @@ const TokenAvatar = ({
   );
 };
 
-const AdminInput = ({
-  label,
-  value,
-  onChange,
-  placeholder,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  placeholder: string;
-}) => (
-  <label className="block rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
-    <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-      {label}
-    </span>
-    <input
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      placeholder={placeholder}
-      className="mt-3 w-full bg-transparent text-sm font-semibold text-white outline-none placeholder:text-gray-500"
-    />
-  </label>
-);
-
 export default function KedolikStaking() {
-  const { connection } = useConnection();
-  const anchorWallet = useAnchorWallet();
-  const { connected, publicKey } = useWallet();
+  const { connected } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshProgramStatus } = useKedolikProgramStatus();
@@ -327,15 +249,6 @@ export default function KedolikStaking() {
   const [amount, setAmount] = useState('');
   const [amountMode, setAmountMode] = useState<'stake' | 'unstake'>('stake');
   const [actionLoading, setActionLoading] = useState<'stake' | 'unstake' | 'claim' | null>(null);
-  const [adminConfig, setAdminConfig] = useState<KedolikStakeLockAdminConfig | null>(null);
-  const [isLoadingAdminConfig, setIsLoadingAdminConfig] = useState(false);
-  const [adminForm, setAdminForm] = useState(DEFAULT_ADMIN_FORM);
-  const [adminRewardDecimals, setAdminRewardDecimals] = useState<number | null>(null);
-  const [adminActionLoading, setAdminActionLoading] = useState<
-    'createPool' | 'setRewardRate' | 'transferAdmin' | 'reclaimRewards' | null
-  >(null);
-  const [newAdminAuthority, setNewAdminAuthority] = useState('');
-  const [rewardRateRaw, setRewardRateRaw] = useState('');
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
 
@@ -364,10 +277,6 @@ export default function KedolikStaking() {
     : 'No pool selected';
   const hasMultiplePools = quarries.length > 1;
   const stakeLockProgramStatus = programs.kedolikStakeLock;
-  const connectedWalletAddress = publicKey?.toString() ?? null;
-  const isStakeAdmin = Boolean(
-    connectedWalletAddress && adminConfig?.authority === connectedWalletAddress
-  );
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -387,70 +296,6 @@ export default function KedolikStaking() {
       setSelectedPoolId(quarries[0].id);
     }
   }, [quarries, selectedPoolId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadAdminConfig = async () => {
-      setIsLoadingAdminConfig(true);
-
-      try {
-        const nextAdminConfig = await fetchKedolikStakeLockAdminConfig(connection);
-
-        if (!cancelled) {
-          setAdminConfig(nextAdminConfig);
-        }
-      } catch (adminError) {
-        if (!cancelled) {
-          setAdminConfig(null);
-          toast.error(
-            adminError instanceof Error ? adminError.message : 'Unable to load staking admin config.'
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingAdminConfig(false);
-        }
-      }
-    };
-
-    void loadAdminConfig();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [connection]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadRewardDecimals = async () => {
-      const rewardMint = adminForm.rewardMint.trim();
-
-      if (!rewardMint) {
-        setAdminRewardDecimals(null);
-        return;
-      }
-
-      try {
-        const mintInfo = await getMint(connection, new PublicKey(rewardMint), 'confirmed');
-
-        if (!cancelled) {
-          setAdminRewardDecimals(mintInfo.decimals);
-        }
-      } catch {
-        if (!cancelled) {
-          setAdminRewardDecimals(null);
-        }
-      }
-    };
-
-    void loadRewardDecimals();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [adminForm.rewardMint, connection]);
 
   const rewardRate = useMemo(() => {
     if (!activePool?.rewardRate) {
@@ -567,10 +412,6 @@ export default function KedolikStaking() {
   const rewardRatePerSecondRaw = activePool?.rewardsPerSecondEstimate
     ? BigInt(activePool.rewardsPerSecondEstimate)
     : 0n;
-  const reclaimableRewardsRaw = activePool?.reclaimableRewards ? BigInt(activePool.reclaimableRewards) : 0n;
-  const isPoolCreator = Boolean(
-    connectedWalletAddress && activePool?.poolCreator === connectedWalletAddress
-  );
   const hasValidAmount = parsedAmountRaw !== null;
   const hasPositiveAmount = parsedAmountRaw !== null && parsedAmountRaw > 0n;
   const hasStakedTokens = Boolean(userStakeRaw && userStakeRaw > 0n);
@@ -616,22 +457,6 @@ export default function KedolikStaking() {
     (amountMode === 'stake'
       ? exceedsWalletBalance || Boolean(stakingDisabledReason)
       : !activePool.hasMiner || !hasStakedTokens || exceedsStakeBalance);
-  const reclaimActionDisabled =
-    !activePool ||
-    !isPoolCreator ||
-    !activePoolTiming.isExpired ||
-    reclaimableRewardsRaw <= 0n ||
-    adminActionLoading !== null;
-  const rewardAmountRaw = parseAmountToRaw(adminForm.rewardAmount, adminRewardDecimals);
-  const rewardDurationSeconds = Number(adminForm.rewardDurationSeconds);
-  const computedAdminRewardRate =
-    rewardAmountRaw !== null && Number.isFinite(rewardDurationSeconds) && rewardDurationSeconds > 0
-      ? rewardAmountRaw / BigInt(Math.floor(rewardDurationSeconds))
-      : null;
-  const adminRewardDurationPreview =
-    Number.isFinite(rewardDurationSeconds) && rewardDurationSeconds > 0
-      ? formatStakingDuration(Math.floor(rewardDurationSeconds))
-      : 'Enter duration seconds';
   const heroStats = [
     { label: 'Wallet Balance', value: stakeWalletBalance },
     { label: 'Staked', value: userStake },
@@ -821,209 +646,10 @@ export default function KedolikStaking() {
     }
   };
 
-  const handleCreatePool = async () => {
-    if (connectWalletIfNeeded()) {
-      return;
-    }
-
-    if (!anchorWallet) {
-      toast.error('Connect a wallet before creating a staking pool.');
-      return;
-    }
-
-    if (!isStakeAdmin) {
-      toast.error('Only the current staking admin can create a pool.');
-      return;
-    }
-
-    if (rewardAmountRaw === null || rewardAmountRaw <= 0n) {
-      toast.error('Enter a valid reward amount.');
-      return;
-    }
-
-    if (!Number.isFinite(rewardDurationSeconds) || rewardDurationSeconds <= 0) {
-      toast.error('Enter a valid reward duration.');
-      return;
-    }
-
-    setAdminActionLoading('createPool');
-
-    try {
-      const poolId = adminForm.poolId.trim() || Date.now().toString();
-      const result = await initializeKedolikStakingPool(connection, anchorWallet, {
-        stakeMint: adminForm.stakeMint.trim(),
-        rewardMint: adminForm.rewardMint.trim(),
-        poolId,
-        rewardAmountRaw: rewardAmountRaw.toString(),
-        rewardDurationSeconds: Math.floor(rewardDurationSeconds),
-      });
-
-      try {
-        await fundKedolikStakingRewards(
-          connection,
-          anchorWallet,
-          result.pool.pool,
-          rewardAmountRaw.toString()
-        );
-        toast.success(`Staking pool created and funded: ${formatKedolikAddress(result.pool.pool)}`);
-      } catch (fundError) {
-        toast.error(`Pool created, but funding failed: ${getActionErrorMessage(fundError)}`);
-      }
-
-      setAdminForm((current) => ({
-        ...current,
-        rewardAmount: '',
-      }));
-      await refresh();
-      await refreshProgramStatus();
-    } catch (adminError) {
-      toast.error(getActionErrorMessage(adminError));
-    } finally {
-      setAdminActionLoading(null);
-    }
-  };
-
-  const handleTransferAdmin = async () => {
-    if (connectWalletIfNeeded()) {
-      return;
-    }
-
-    if (!anchorWallet) {
-      toast.error('Connect a wallet before transferring admin authority.');
-      return;
-    }
-
-    if (!isStakeAdmin) {
-      toast.error('Only the current staking admin can transfer authority.');
-      return;
-    }
-
-    setAdminActionLoading('transferAdmin');
-
-    try {
-      await transferKedolikStakingAdmin(connection, anchorWallet, newAdminAuthority.trim());
-      toast.success('Staking admin transfer submitted.');
-      setNewAdminAuthority('');
-      const nextAdminConfig = await fetchKedolikStakeLockAdminConfig(connection);
-      setAdminConfig(nextAdminConfig);
-      await refreshProgramStatus();
-    } catch (adminError) {
-      toast.error(getActionErrorMessage(adminError));
-    } finally {
-      setAdminActionLoading(null);
-    }
-  };
-
-  const handleSetRewardRate = async () => {
-    if (connectWalletIfNeeded()) {
-      return;
-    }
-
-    if (!anchorWallet) {
-      toast.error('Connect a wallet before updating the reward rate.');
-      return;
-    }
-
-    if (!isStakeAdmin) {
-      toast.error('Only the current staking admin can update the reward rate.');
-      return;
-    }
-
-    if (!activePool) {
-      toast.error('Create a staking pool before updating its reward rate.');
-      return;
-    }
-
-    if (!/^\d+$/.test(rewardRateRaw.trim())) {
-      toast.error('Reward rate must be raw token units per second.');
-      return;
-    }
-
-    setAdminActionLoading('setRewardRate');
-
-    try {
-      await setKedolikStakingRewardRate(connection, anchorWallet, activePool.id, rewardRateRaw.trim());
-      toast.success('Reward rate update submitted.');
-      setRewardRateRaw('');
-      await refresh();
-      await refreshProgramStatus();
-    } catch (adminError) {
-      toast.error(getActionErrorMessage(adminError));
-    } finally {
-      setAdminActionLoading(null);
-    }
-  };
-
-  const handleReclaimRewards = async () => {
-    if (connectWalletIfNeeded()) {
-      return;
-    }
-
-    if (!activePool) {
-      toast.error('Select a staking pool before reclaiming rewards.');
-      return;
-    }
-
-    if (!isPoolCreator) {
-      toast.error('Only the original pool creator can reclaim leftover rewards.');
-      return;
-    }
-
-    if (!activePoolTiming.isExpired) {
-      toast.error('Leftover rewards can only be reclaimed after staking expiry.');
-      return;
-    }
-
-    if (reclaimableRewardsRaw <= 0n) {
-      toast.error('There are no unreserved leftover rewards to reclaim.');
-      return;
-    }
-
-    setAdminActionLoading('reclaimRewards');
-
-    try {
-      await stakingService.reclaimUnclaimedRewards(activePool.id);
-      toast.success('Leftover rewards reclaim submitted.');
-      await refresh();
-      await refreshProgramStatus();
-    } catch (adminError) {
-      toast.error(getActionErrorMessage(adminError));
-    } finally {
-      setAdminActionLoading(null);
-    }
-  };
-
-  const handleReplayActivePool = () => {
-    if (!activePool) {
-      toast.error('Select an expired staking pool first.');
-      return;
-    }
-
-    if (!isStakeAdmin) {
-      toast.error('Only the current staking admin can start a new staking period.');
-      return;
-    }
-
-    if (!activePoolTiming.isExpired) {
-      toast.error('Replay is available only after the staking period expires.');
-      return;
-    }
-
-    setAdminForm((current) => ({
-      ...current,
-      stakeMint: activePool.stakeTokenMint,
-      rewardMint: activePool.rewardTokenMint,
-      poolId: '',
-      rewardAmount: formatRawTokenInput(activePool.requiredRewardAmount, activePool.rewardTokenDecimals),
-      rewardDurationSeconds: activePool.rewardDurationSeconds?.toString() ?? current.rewardDurationSeconds,
-    }));
-    toast.success('Expired pool copied into Create Staking Instance. Review reward amount, then create the next period.');
-  };
-
   return (
     <KedolikPageFrame>
       <div className="mx-auto max-w-6xl">
-        <section className="card p-6 sm:p-8">
+        <section className="card p-4 sm:p-6 lg:p-8">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0 max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -1041,14 +667,14 @@ export default function KedolikStaking() {
                 )}
               </div>
 
-              <h1 className="text-3xl font-bold font-heading sm:text-4xl">{activePoolName}</h1>
+              <h1 className="text-2xl font-bold font-heading sm:text-4xl">{activePoolName}</h1>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300 sm:text-base">
                 Kedolik Staking is now live. Stake your tokens, unstake anytime, and seamlessly
                 claim rewards through the selected Stake V1 pool.
               </p>
             </div>
 
-            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-3 lg:w-[520px] lg:shrink-0">
+            <div className="grid w-full grid-cols-1 gap-3 min-[420px]:grid-cols-2 lg:w-[520px] lg:shrink-0 lg:grid-cols-3">
               {heroStats.map((stat) => (
                 <FieldCard
                   key={stat.label}
@@ -1077,36 +703,34 @@ export default function KedolikStaking() {
               </div>
             )}
 
-            <section className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <section className="mt-4 grid gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
               {isLoading ? (
                 <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
                   Loading live pool data...
                 </div>
               ) : !activePool ? (
                 <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
-                  No staking pool instance has been created yet. The connected staking admin can
-                  create one below, or the admin can run `setup-devnet-lean-staking.js` once per
-                  staking instance.
+                  {KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE}
                 </div>
               ) : (
                 <>
-                  <div className="card p-4 sm:p-5">
+                  <div className="card min-w-0 p-4 sm:p-5">
                     <div className="mb-5">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <h2 className="text-lg font-bold font-heading text-white">Staking Pools</h2>
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-gray-300">
-                          {quarries.length} live
+                        <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-gray-300">
+                          {quarries.length} {quarries.length === 1 ? 'pool' : 'pools'}
                         </span>
                       </div>
-                      <div className={`grid max-h-[320px] gap-2 overflow-y-auto pr-1 ${hasMultiplePools ? 'md:grid-cols-2' : ''}`}>
-                        {quarries.map((pool) => {
+                      <div className={`grid max-h-[360px] gap-2 overflow-y-auto pr-1 ${hasMultiplePools ? 'lg:grid-cols-2' : ''}`}>
+                        {quarries.map((pool, poolIndex) => {
                           const selected = activePool?.id === pool.id;
                           const stakeToken = getTokenInfo(pool.stakeTokenMint);
                           const rewardToken = getTokenInfo(pool.rewardTokenMint);
                           const stakeSymbol = stakeToken?.symbol ?? 'Unknown';
                           const rewardSymbol = rewardToken?.symbol ?? 'Unknown';
                           const poolName = `${stakeSymbol} -> ${rewardSymbol}`;
-                          const poolLabel = formatPoolCardLabel(pool.title);
+                          const poolLabel = formatPoolCardLabel(poolIndex, quarries.length);
                           const poolTiming = getLivePoolTiming(
                             pool.stakingEndsAt,
                             pool.stakingSecondsRemaining,
@@ -1141,7 +765,6 @@ export default function KedolikStaking() {
                               onClick={() => {
                                 setSelectedPoolId(pool.id);
                                 setAmount('');
-                                setRewardRateRaw('');
                               }}
                               className={`rounded-lg border p-3 text-left transition-colors ${
                                 selected
@@ -1149,7 +772,7 @@ export default function KedolikStaking() {
                                   : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
                               }`}
                             >
-                              <div className="flex items-center justify-between gap-3">
+                              <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
                                 <div className="flex min-w-0 items-center gap-2">
                                   <div className="flex shrink-0 -space-x-2">
                                     <TokenAvatar token={rewardToken} fallback="RW" className="ring-2 ring-dark-900" />
@@ -1168,11 +791,11 @@ export default function KedolikStaking() {
                                   </span>
                                 )}
                               </div>
-                              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-gray-400 sm:grid-cols-4">
-                                <span className="min-w-0">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
-                                <span className="min-w-0">Reward/s: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
-                                <span className="min-w-0">APY: {apy}</span>
-                                <span className="min-w-0">Ends: {formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}</span>
+                              <div className="mt-2 grid grid-cols-1 gap-2 text-[11px] text-gray-400 min-[420px]:grid-cols-2 xl:grid-cols-4">
+                                <span className="min-w-0 truncate">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
+                                <span className="min-w-0 truncate">Reward/s: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
+                                <span className="min-w-0 truncate">APY: {apy}</span>
+                                <span className="min-w-0 truncate">Ends: {formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}</span>
                               </div>
                             </button>
                           );
@@ -1202,11 +825,11 @@ export default function KedolikStaking() {
                       ))}
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-4">
+                    <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 sm:p-4">
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
                         Pool Stats
                       </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                         {poolStats.map((stat) => (
                           <FieldCard
                             key={stat.label}
@@ -1222,7 +845,7 @@ export default function KedolikStaking() {
                       <summary className="cursor-pointer list-none text-sm font-semibold text-gray-200">
                         Token addresses
                       </summary>
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         <FieldCard label="Stake Mint CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
                         <FieldCard label="Reward Mint CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
                         <FieldCard label="Pool Admin PDA" value={formatKedolikAddress(activePool.poolAdminAddress)} />
@@ -1230,7 +853,7 @@ export default function KedolikStaking() {
                     </details>
                   </div>
 
-                  <aside className="card p-4 sm:p-5 xl:sticky xl:top-24 xl:self-start">
+                  <aside className="card min-w-0 p-4 sm:p-5 xl:sticky xl:top-24 xl:self-start">
                     <div>
                       <h2 className="text-xl font-bold font-heading text-white">
                         {amountMode === 'stake' ? 'Stake Tokens' : 'Unstake Tokens'}
@@ -1318,7 +941,7 @@ export default function KedolikStaking() {
                           : primaryActionLabel}
                       </button>
                       <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                        <div className="flex items-center justify-between gap-3">
+                        <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
                           <div>
                             <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
                               Claimable
@@ -1331,7 +954,7 @@ export default function KedolikStaking() {
                             disabled={
                               !connected || !activePool.hasMiner || !hasClaimableRewards || actionLoading !== null
                             }
-                            className="shrink-0 rounded-md border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+                            className="w-full shrink-0 rounded-md border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60 min-[420px]:w-auto"
                           >
                             {actionLoading === 'claim' ? 'Claiming...' : 'Claim'}
                           </button>
@@ -1364,7 +987,7 @@ export default function KedolikStaking() {
               )}
             </section>
 
-            {connected && (isStakeAdmin || isPoolCreator) && (
+            {/* Admin-only staking controls moved to the Admin page.
               <>
             <section className="card mt-6 p-6 sm:p-8">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1679,8 +1302,7 @@ export default function KedolikStaking() {
                 </a>
               </div>
             </details>
-              </>
-            )}
+            */}
           </>
         )}
       </div>
