@@ -8,6 +8,7 @@ import { useKedolikProgramStatus } from '../hooks/useKedolikProgramStatus';
 import { useKedolikStaking } from '../hooks/useKedolikStaking';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import type { TokenInfo } from '../config/tokens';
+import { KEDOLIK_STAKE_LOCK_V1 } from '../config/kedolikStakeLockV1';
 import { KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE } from '../services/kedolikStaking';
 import {
   KedolikPageFrame,
@@ -240,7 +241,7 @@ const TokenAvatar = ({
 };
 
 export default function KedolikStaking() {
-  const { connected } = useWallet();
+  const { connected, publicKey } = useWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshProgramStatus } = useKedolikProgramStatus();
@@ -277,6 +278,12 @@ export default function KedolikStaking() {
     : 'No pool selected';
   const hasMultiplePools = quarries.length > 1;
   const stakeLockProgramStatus = programs.kedolikStakeLock;
+  const connectedWalletAddress = publicKey?.toString() ?? null;
+  const isStakingAdminWallet = Boolean(
+    connectedWalletAddress &&
+      (connectedWalletAddress === KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin ||
+        quarries.some((pool) => pool.poolCreator === connectedWalletAddress))
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -791,7 +798,11 @@ export default function KedolikStaking() {
                                   </span>
                                 )}
                               </div>
-                              <div className="mt-2 grid grid-cols-1 gap-2 text-[11px] text-gray-400 min-[420px]:grid-cols-2 xl:grid-cols-4">
+                              <div
+                                className={`mt-2 grid-cols-1 gap-2 text-[11px] text-gray-400 min-[420px]:grid-cols-2 xl:grid-cols-4 ${
+                                  isStakingAdminWallet ? 'grid' : 'hidden md:grid'
+                                }`}
+                              >
                                 <span className="min-w-0 truncate">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
                                 <span className="min-w-0 truncate">Reward/s: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
                                 <span className="min-w-0 truncate">APY: {apy}</span>
@@ -825,7 +836,11 @@ export default function KedolikStaking() {
                       ))}
                     </div>
 
-                    <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 sm:p-4">
+                    <div
+                      className={`mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 sm:p-4 ${
+                        isStakingAdminWallet ? '' : 'hidden md:block'
+                      }`}
+                    >
                       <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
                         Pool Stats
                       </div>
@@ -841,16 +856,16 @@ export default function KedolikStaking() {
                       </div>
                     </div>
 
-                    <details className="mt-4 rounded-lg border border-white/10 bg-dark-900/60 p-4">
-                      <summary className="cursor-pointer list-none text-sm font-semibold text-gray-200">
-                        Token addresses
-                      </summary>
+                    <div className="mt-4 rounded-lg border border-white/10 bg-dark-900/60 p-4">
+                      <div className="text-sm font-semibold text-gray-200">Token addresses</div>
                       <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         <FieldCard label="Stake Mint CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
                         <FieldCard label="Reward Mint CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
-                        <FieldCard label="Pool Admin PDA" value={formatKedolikAddress(activePool.poolAdminAddress)} />
+                        <div className={isStakingAdminWallet ? '' : 'hidden md:block'}>
+                          <FieldCard label="Pool Admin PDA" value={formatKedolikAddress(activePool.poolAdminAddress)} />
+                        </div>
                       </div>
-                    </details>
+                    </div>
                   </div>
 
                   <aside className="card min-w-0 p-4 sm:p-5 xl:sticky xl:top-24 xl:self-start">
