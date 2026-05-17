@@ -85,7 +85,7 @@ const getLockHeadline = (escrow: LockerEscrowSummary) => {
   }
 
   if (isOneTimeLock(escrow)) {
-    return `Tokens stay locked until ${formatKedolikUnixTime(escrow.cliffTime)}.`;
+    return `Token unlock date ${formatKedolikUnixTime(escrow.cliffTime)}.`;
   }
 
   return `This lock releases over time every ${escrow.frequency} seconds after ${formatKedolikUnixTime(
@@ -1070,7 +1070,7 @@ export default function KedolikLocker() {
                 <div className="text-sm text-gray-300">Loading live lock data...</div>
               ) : !selectedEscrow ? (
                 <div className="text-sm text-gray-300">
-                  No lock could be loaded from the current RPC endpoint.
+                  No lock records are currently associated with the connected wallet address at this time.
                 </div>
               ) : (
                 <>
@@ -1351,7 +1351,7 @@ export default function KedolikLocker() {
                   ))
                 ) : (
                   <div className="rounded-2xl border border-white/10 bg-dark-900/60 p-5 text-sm text-gray-300">
-                    No locks found for this filter on the current RPC endpoint.
+                    No lock records are currently available to display on the leaderboard at this time.
                   </div>
                 )}
               </div>

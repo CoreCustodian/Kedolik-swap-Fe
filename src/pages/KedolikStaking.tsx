@@ -151,6 +151,14 @@ const getLivePoolTiming = (
 const formatPoolCardLabel = (index: number, totalPools: number) =>
   totalPools > 1 ? `Pool ${index + 1} of ${totalPools}` : 'Pool 1';
 
+type PoolFilter = 'all' | 'live' | 'expired';
+
+const STAKING_POOL_FILTERS: Array<{ id: PoolFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'live', label: 'Live' },
+  { id: 'expired', label: 'Expired' },
+];
+
 const parseAmountToRaw = (value: string, decimals: number | null) => {
   if (decimals === null) {
     return null;
@@ -252,6 +260,8 @@ export default function KedolikStaking() {
   const [actionLoading, setActionLoading] = useState<'stake' | 'unstake' | 'claim' | null>(null);
   const [selectedPoolId, setSelectedPoolId] = useState<string | null>(null);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
+  const [poolFilter, setPoolFilter] = useState<PoolFilter>('live');
+  const [isStakeModalOpen, setIsStakeModalOpen] = useState(false);
 
   const activePool = useMemo(
     () => quarries.find((pool) => pool.id === selectedPoolId) ?? quarries[0] ?? null,
@@ -276,7 +286,6 @@ export default function KedolikStaking() {
   const activePoolDisplayName = activePool
     ? `${activeStakeSymbol} -> ${activeRewardSymbol}`
     : 'No pool selected';
-  const hasMultiplePools = quarries.length > 1;
   const stakeLockProgramStatus = programs.kedolikStakeLock;
   const connectedWalletAddress = publicKey?.toString() ?? null;
   const isStakingAdminWallet = Boolean(
@@ -284,6 +293,24 @@ export default function KedolikStaking() {
       (connectedWalletAddress === KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin ||
         quarries.some((pool) => pool.poolCreator === connectedWalletAddress))
   );
+  const livePoolCount = quarries.filter((pool) => {
+    const timing = getLivePoolTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
+    return !timing.isExpired;
+  }).length;
+  const expiredPoolCount = quarries.length - livePoolCount;
+  const filteredPools = quarries.filter((pool) => {
+    const timing = getLivePoolTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
+
+    if (poolFilter === 'live') {
+      return !timing.isExpired;
+    }
+
+    if (poolFilter === 'expired') {
+      return timing.isExpired;
+    }
+
+    return true;
+  });
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -300,9 +327,14 @@ export default function KedolikStaking() {
     }
 
     if (!selectedPoolId || !quarries.some((pool) => pool.id === selectedPoolId)) {
-      setSelectedPoolId(quarries[0].id);
+      const defaultPool =
+        quarries.find((pool) => {
+          const timing = getLivePoolTiming(pool.stakingEndsAt, pool.stakingSecondsRemaining, pool.isExpired, nowSeconds);
+          return !timing.isExpired;
+        }) ?? quarries[0];
+      setSelectedPoolId(defaultPool.id);
     }
-  }, [quarries, selectedPoolId]);
+  }, [quarries, selectedPoolId, nowSeconds]);
 
   const rewardRate = useMemo(() => {
     if (!activePool?.rewardRate) {
@@ -408,6 +440,22 @@ export default function KedolikStaking() {
     setAmount('');
   };
 
+  const openStakeModal = (poolId: string, mode: 'stake' | 'unstake' = 'stake') => {
+    setSelectedPoolId(poolId);
+    setAmountMode(mode);
+    setAmount('');
+    setIsStakeModalOpen(true);
+  };
+
+  const closeStakeModal = () => {
+    if (actionLoading !== null) {
+      return;
+    }
+
+    setIsStakeModalOpen(false);
+    setAmount('');
+  };
+
   const parsedAmountRaw =
     activePool !== null ? parseAmountToRaw(amount, activePool.stakeTokenDecimals) : null;
   const walletBalanceRaw = activePool?.userWalletBalance ? BigInt(activePool.userWalletBalance) : null;
@@ -464,16 +512,10 @@ export default function KedolikStaking() {
     (amountMode === 'stake'
       ? exceedsWalletBalance || Boolean(stakingDisabledReason)
       : !activePool.hasMiner || !hasStakedTokens || exceedsStakeBalance);
-  const heroStats = [
-    { label: 'Wallet Balance', value: stakeWalletBalance },
-    { label: 'Staked', value: userStake },
-    { label: 'Rewards', value: claimableRewards },
-    { label: 'APY', value: poolApy },
-    {
-      label: 'Ends',
-      value: stakingTimeRemaining,
-      valueClassName: activePoolTiming.isExpired ? 'text-red-200' : '',
-    },
+  const heroStats: Array<{ label: string; value: string; valueClassName?: string }> = [
+    { label: 'Live Pools', value: livePoolCount.toLocaleString('en-US') },
+    { label: 'Expired', value: expiredPoolCount.toLocaleString('en-US') },
+    { label: 'Total Pools', value: quarries.length.toLocaleString('en-US') },
   ];
   const positionStats = [
     { label: 'Wallet Balance', value: stakeWalletBalance },
@@ -575,6 +617,7 @@ export default function KedolikStaking() {
       await stakingService.stake(parsedAmountRaw.toString(), activePool.id);
       toast.success('Stake transaction submitted.');
       setAmount('');
+      setIsStakeModalOpen(false);
       await refresh();
       await refreshProgramStatus();
     } catch (actionError) {
@@ -620,6 +663,7 @@ export default function KedolikStaking() {
       await stakingService.unstake(parsedAmountRaw.toString(), activePool.id);
       toast.success('Unstake transaction submitted.');
       setAmount('');
+      setIsStakeModalOpen(false);
       await refresh();
       await refreshProgramStatus();
     } catch (actionError) {
@@ -710,34 +754,67 @@ export default function KedolikStaking() {
               </div>
             )}
 
-            <section className="mt-4 grid gap-4 sm:mt-6 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <section className="mt-4 sm:mt-6">
               {isLoading ? (
-                <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
+                <div className="card p-6 text-sm text-gray-300">
                   Loading live pool data...
                 </div>
               ) : !activePool ? (
-                <div className="card p-6 text-sm text-gray-300 xl:col-span-2">
+                <div className="card p-6 text-sm text-gray-300">
                   {KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE}
                 </div>
               ) : (
-                <>
-                  <div className="card min-w-0 p-4 sm:p-5">
-                    <div className="mb-5">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <h2 className="text-lg font-bold font-heading text-white">Staking Pools</h2>
-                        <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-gray-300">
-                          {quarries.length} {quarries.length === 1 ? 'pool' : 'pools'}
-                        </span>
+                <div className="space-y-4">
+                  <div className="card p-4 sm:p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                      <div>
+                        <h2 className="text-xl font-bold font-heading text-white">Staking Pools</h2>
+                        <p className="mt-1 text-sm text-gray-400">
+                          Choose a pool, review the basics, then stake or manage your position.
+                        </p>
                       </div>
-                      <div className={`grid max-h-[360px] gap-2 overflow-y-auto pr-1 ${hasMultiplePools ? 'lg:grid-cols-2' : ''}`}>
-                        {quarries.map((pool, poolIndex) => {
-                          const selected = activePool?.id === pool.id;
+
+                      <div className="grid grid-cols-3 gap-1 rounded-lg border border-white/10 bg-dark-800/80 p-1 text-xs font-semibold">
+                        {STAKING_POOL_FILTERS.map((filter) => {
+                          const count =
+                            filter.id === 'all'
+                              ? quarries.length
+                              : filter.id === 'live'
+                                ? livePoolCount
+                                : expiredPoolCount;
+
+                          return (
+                            <button
+                              key={filter.id}
+                              type="button"
+                              onClick={() => setPoolFilter(filter.id)}
+                              className={`rounded-md px-3 py-2 transition-all ${
+                                poolFilter === filter.id
+                                  ? 'bg-brand-cyan/20 text-brand-cyan'
+                                  : 'text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              {filter.label}
+                              <span className="ml-1 text-[10px] opacity-70">{count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {filteredPools.length === 0 ? (
+                      <div className="mt-5 rounded-lg border border-white/10 bg-white/[0.03] p-5 text-sm text-gray-300">
+                        No {poolFilter === 'live' ? 'live' : poolFilter} staking pools are available right now.
+                      </div>
+                    ) : (
+                      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                        {filteredPools.map((pool, poolIndex) => {
                           const stakeToken = getTokenInfo(pool.stakeTokenMint);
                           const rewardToken = getTokenInfo(pool.rewardTokenMint);
                           const stakeSymbol = stakeToken?.symbol ?? 'Unknown';
                           const rewardSymbol = rewardToken?.symbol ?? 'Unknown';
                           const poolName = `${stakeSymbol} -> ${rewardSymbol}`;
-                          const poolLabel = formatPoolCardLabel(poolIndex, quarries.length);
+                          const poolLabel = formatPoolCardLabel(poolIndex, filteredPools.length);
                           const poolTiming = getLivePoolTiming(
                             pool.stakingEndsAt,
                             pool.stakingSecondsRemaining,
@@ -764,22 +841,32 @@ export default function KedolikStaking() {
                             pool.stakeTokenDecimals,
                             pool.rewardTokenDecimals
                           );
+                          const poolUserStakeRaw = pool.userStake ? BigInt(pool.userStake) : 0n;
+                          const poolClaimableRaw = pool.claimableRewards ? BigInt(pool.claimableRewards) : 0n;
+                          const hasPoolStake = poolUserStakeRaw > 0n;
+                          const hasPoolClaimable = poolClaimableRaw > 0n;
+                          const canManageExpiredPool = poolTiming.isExpired && (hasPoolStake || hasPoolClaimable);
+                          const duration = pool.rewardDurationSeconds ?? 0;
+                          const secondsRemaining = poolTiming.secondsRemaining ?? 0;
+                          const progressPercent = poolTiming.isExpired
+                            ? 100
+                            : duration > 0
+                              ? Math.min(100, Math.max(0, ((duration - secondsRemaining) / duration) * 100))
+                              : 0;
+                          const primaryPoolAction = poolTiming.isExpired
+                            ? canManageExpiredPool
+                              ? 'Manage'
+                              : 'Expired'
+                            : hasPoolStake
+                              ? 'Manage'
+                              : 'Stake';
 
                           return (
-                            <button
+                            <article
                               key={pool.id}
-                              type="button"
-                              onClick={() => {
-                                setSelectedPoolId(pool.id);
-                                setAmount('');
-                              }}
-                              className={`rounded-lg border p-3 text-left transition-colors ${
-                                selected
-                                  ? 'border-brand-cyan/50 bg-brand-cyan/10'
-                                  : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]'
-                              }`}
+                              className="rounded-xl border border-white/10 bg-white/[0.035] p-4 transition-colors hover:border-white/20 hover:bg-white/[0.055]"
                             >
-                              <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+                              <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-start min-[420px]:justify-between">
                                 <div className="flex min-w-0 items-center gap-2">
                                   <div className="flex shrink-0 -space-x-2">
                                     <TokenAvatar token={rewardToken} fallback="RW" className="ring-2 ring-dark-900" />
@@ -798,209 +885,291 @@ export default function KedolikStaking() {
                                   </span>
                                 )}
                               </div>
-                              <div
-                                className={`mt-2 grid-cols-1 gap-2 text-[11px] text-gray-400 min-[420px]:grid-cols-2 xl:grid-cols-4 ${
-                                  isStakingAdminWallet ? 'grid' : 'hidden md:grid'
-                                }`}
-                              >
-                                <span className="min-w-0 truncate">Total: {formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}</span>
-                                <span className="min-w-0 truncate">Reward/s: {formatKedolikTokenAmount(pool.rewardsPerSecondEstimate ?? '0', pool.rewardTokenDecimals)}/s</span>
-                                <span className="min-w-0 truncate">APY: {apy}</span>
-                                <span className="min-w-0 truncate">Ends: {formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}</span>
+
+                              <div className="mt-4 grid gap-3 min-[460px]:grid-cols-3">
+                                <FieldCard label="APY" value={apy} />
+                                <FieldCard
+                                  label={poolTiming.isExpired ? 'Ended' : 'Ends'}
+                                  value={formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}
+                                  valueClassName={poolTiming.isExpired ? 'text-red-200' : ''}
+                                />
+                                <FieldCard
+                                  label="Your Stake"
+                                  value={
+                                    connected
+                                      ? formatMetricAmount(pool.userStake, pool.stakeTokenDecimals, '0')
+                                      : 'Connect wallet'
+                                  }
+                                />
                               </div>
-                            </button>
+
+                              <div className="mt-4">
+                                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">
+                                  <span>Period</span>
+                                  <span>{formatStakingDuration(pool.rewardDurationSeconds ?? null)}</span>
+                                </div>
+                                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                                  <div
+                                    className={`h-full rounded-full ${
+                                      poolTiming.isExpired ? 'bg-red-400/80' : 'bg-brand-cyan'
+                                    }`}
+                                    style={{ width: `${progressPercent}%` }}
+                                  />
+                                </div>
+                              </div>
+
+                              <details className="mt-4 rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                                <summary className="cursor-pointer list-none text-sm font-semibold text-gray-200">
+                                  Pool details
+                                </summary>
+                                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                                  <FieldCard
+                                    label="Total Staked"
+                                    value={formatMetricAmount(pool.totalStaked, pool.stakeTokenDecimals, '0')}
+                                  />
+                                  <FieldCard
+                                    label="Reward / Second"
+                                    value={`${formatKedolikTokenAmount(
+                                      pool.rewardsPerSecondEstimate ?? '0',
+                                      pool.rewardTokenDecimals
+                                    )}/s`}
+                                  />
+                                  <FieldCard label="Token Unlock Date" value={formatStakingEndsAt(pool.stakingEndsAt)} />
+                                  <FieldCard
+                                    label="Claimable"
+                                    value={
+                                      connected
+                                        ? formatMetricAmount(pool.claimableRewards, pool.rewardTokenDecimals, '0')
+                                        : 'Connect wallet'
+                                    }
+                                  />
+                                  <FieldCard label="Stake Mint CA" value={formatKedolikAddress(pool.stakeTokenMint)} />
+                                  <FieldCard label="Reward Mint CA" value={formatKedolikAddress(pool.rewardTokenMint)} />
+                                  {isStakingAdminWallet && (
+                                    <>
+                                      <FieldCard label="Pool Creator" value={pool.poolCreator ? formatKedolikAddress(pool.poolCreator) : 'Unknown'} />
+                                      <FieldCard label="Pool Admin PDA" value={formatKedolikAddress(pool.poolAdminAddress)} />
+                                      <FieldCard
+                                        label="Reserved Rewards"
+                                        value={formatMetricAmount(pool.reservedRewards, pool.rewardTokenDecimals, '0')}
+                                      />
+                                      <FieldCard
+                                        label="Reclaimable"
+                                        value={formatMetricAmount(pool.reclaimableRewards, pool.rewardTokenDecimals, '0')}
+                                      />
+                                    </>
+                                  )}
+                                </div>
+                              </details>
+
+                              <div className="mt-4 flex flex-col gap-2 min-[420px]:flex-row">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    poolTiming.isExpired && !canManageExpiredPool
+                                      ? undefined
+                                      : openStakeModal(pool.id, hasPoolStake || poolTiming.isExpired ? 'unstake' : 'stake')
+                                  }
+                                  disabled={poolTiming.isExpired && !canManageExpiredPool}
+                                  className="btn-primary min-[420px]:flex-1 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
+                                >
+                                  {primaryPoolAction}
+                                </button>
+                                {hasPoolClaimable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openStakeModal(pool.id, 'unstake')}
+                                    className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-100 transition-colors hover:bg-emerald-400/20 min-[420px]:flex-1"
+                                  >
+                                    Claim Rewards
+                                  </button>
+                                )}
+                              </div>
+                            </article>
                           );
                         })}
                       </div>
-                    </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <h2 className="text-xl font-bold font-heading text-white">Your Position</h2>
-                        <p className="mt-1 text-xs text-gray-400">
-                          Selected pool: {activePoolDisplayName}
-                        </p>
+            {isStakeModalOpen && activePool && (
+              <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 py-4 backdrop-blur-sm sm:items-center">
+                <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-white/10 bg-dark-900 p-4 shadow-2xl sm:p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-cyan">
+                        {activePoolDisplayName}
                       </div>
-                      {activePoolTiming.isExpired ? (
-                        <ExpiredTag />
-                      ) : (
-                        <span className={`w-fit rounded-full border px-4 py-1 text-xs font-semibold ${activePoolStatusClass}`}>
-                          {positionStatusLabel}
-                        </span>
-                      )}
+                      <h2 className="mt-1 text-xl font-bold font-heading text-white">
+                        {amountMode === 'stake' ? 'Stake Tokens' : 'Manage Position'}
+                      </h2>
                     </div>
+                    <button
+                      type="button"
+                      onClick={closeStakeModal}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-lg font-semibold text-white transition-colors hover:bg-white/10"
+                      aria-label="Close staking modal"
+                    >
+                      x
+                    </button>
+                  </div>
 
-                    <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      {positionStats.map((stat) => (
-                        <FieldCard key={stat.label} label={stat.label} value={stat.value} />
-                      ))}
-                    </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    {positionStats.map((stat) => (
+                      <FieldCard key={stat.label} label={stat.label} value={stat.value} />
+                    ))}
+                  </div>
 
-                    <div
-                      className={`mt-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 sm:p-4 ${
-                        isStakingAdminWallet ? '' : 'hidden md:block'
+                  <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    {activePoolTiming.isExpired ? (
+                      <ExpiredTag />
+                    ) : (
+                      <span className={`w-fit rounded-full border px-4 py-1 text-xs font-semibold ${activePoolStatusClass}`}>
+                        {positionStatusLabel}
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-400">
+                      Ends: {activePoolTiming.isExpired ? stakingEndsAt : stakingTimeRemaining}
+                    </span>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-1 rounded-lg border border-white/10 bg-dark-800/80 p-1 text-xs font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => handleAmountModeChange('stake')}
+                      className={`rounded-md px-4 py-2 transition-all ${
+                        amountMode === 'stake'
+                          ? 'bg-brand-cyan/20 text-brand-cyan'
+                          : 'text-gray-400 hover:text-white'
                       }`}
                     >
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                        Pool Stats
-                      </div>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                        {poolStats.map((stat) => (
-                          <FieldCard
-                            key={stat.label}
-                            label={stat.label}
-                            value={stat.value}
-                            valueClassName={stat.valueClassName}
-                          />
-                        ))}
-                      </div>
-                    </div>
+                      Stake
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAmountModeChange('unstake')}
+                      className={`rounded-md px-4 py-2 transition-all ${
+                        amountMode === 'unstake'
+                          ? 'bg-brand-cyan/20 text-brand-cyan'
+                          : 'text-gray-400 hover:text-white'
+                      }`}
+                    >
+                      Unstake
+                    </button>
+                  </div>
 
-                    <div className="mt-4 rounded-lg border border-white/10 bg-dark-900/60 p-4">
-                      <div className="text-sm font-semibold text-gray-200">Token addresses</div>
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                        <FieldCard label="Stake Mint CA" value={formatKedolikAddress(activePool.stakeTokenMint)} />
-                        <FieldCard label="Reward Mint CA" value={formatKedolikAddress(activePool.rewardTokenMint)} />
-                        <div className={isStakingAdminWallet ? '' : 'hidden md:block'}>
-                          <FieldCard label="Pool Admin PDA" value={formatKedolikAddress(activePool.poolAdminAddress)} />
+                  <label className="mt-4 block rounded-lg border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                        Amount
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleMax}
+                        className="rounded-md border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+                      >
+                        Max
+                      </button>
+                    </div>
+                    <input
+                      id="kedolik-staking-amount"
+                      value={amount}
+                      onChange={(event) => setAmount(event.target.value)}
+                      placeholder="0.00"
+                      className="mt-3 min-h-[52px] w-full bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-gray-500"
+                    />
+                  </label>
+
+                  {amountMode === 'stake' && stakingDisabledReason && (
+                    <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
+                      activePoolTiming.isExpired
+                        ? 'border-red-400/30 bg-red-400/10 text-red-100'
+                        : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100'
+                    }`}>
+                      {stakingDisabledReason}
+                    </div>
+                  )}
+
+                  <div className="mt-4 space-y-3">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void (amountMode === 'stake' ? handleStake() : handleUnstake())
+                      }
+                      disabled={amountActionDisabled}
+                      className="btn-primary w-full text-sm disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
+                    >
+                      {actionLoading === amountMode
+                        ? amountMode === 'stake'
+                          ? 'Staking...'
+                          : 'Unstaking...'
+                        : primaryActionLabel}
+                    </button>
+
+                    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                      <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
+                        <div>
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+                            Claimable
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-white">{claimableRewards}</div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleClaimRewards()}
+                          disabled={
+                            !connected || !activePool.hasMiner || !hasClaimableRewards || actionLoading !== null
+                          }
+                          className="w-full shrink-0 rounded-md border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60 min-[420px]:w-auto"
+                        >
+                          {actionLoading === 'claim' ? 'Claiming...' : 'Claim'}
+                        </button>
                       </div>
                     </div>
                   </div>
 
-                  <aside className="card min-w-0 p-4 sm:p-5 xl:sticky xl:top-24 xl:self-start">
-                    <div>
-                      <h2 className="text-xl font-bold font-heading text-white">
-                        {amountMode === 'stake' ? 'Stake Tokens' : 'Unstake Tokens'}
-                      </h2>
-                      <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
-                          Available
-                        </div>
-                        <div className="mt-1 text-sm font-semibold text-white">
-                          {amountMode === 'stake' ? stakeWalletBalance : userStake}
-                        </div>
-                      </div>
+                  {!connected && (
+                    <button
+                      type="button"
+                      className="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
+                      onClick={() => setWalletModalVisible(true)}
+                    >
+                      Connect Wallet
+                    </button>
+                  )}
+
+                  {(exceedsSelectedBalance ||
+                    (connected && amountMode === 'unstake' && !activePool.hasMiner)) && (
+                    <div className="mt-4 rounded-lg border border-white/10 bg-dark-800/70 px-4 py-3 text-sm text-gray-200">
+                      {exceedsSelectedBalance
+                        ? amountMode === 'stake'
+                          ? 'Amount exceeds your wallet balance.'
+                          : 'Amount exceeds your current stake.'
+                        : 'You have no staked tokens to unstake.'}
                     </div>
+                  )}
 
-                    <div className="mt-4 grid grid-cols-2 gap-1 rounded-lg border border-white/10 bg-dark-800/80 p-1 text-xs font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => handleAmountModeChange('stake')}
-                        className={`rounded-md px-4 py-2 transition-all ${
-                          amountMode === 'stake'
-                            ? 'bg-brand-cyan/20 text-brand-cyan'
-                            : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        Stake
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAmountModeChange('unstake')}
-                        className={`rounded-md px-4 py-2 transition-all ${
-                          amountMode === 'unstake'
-                            ? 'bg-brand-cyan/20 text-brand-cyan'
-                            : 'text-gray-400 hover:text-white'
-                        }`}
-                      >
-                        Unstake
-                      </button>
+                  <details className="mt-4 rounded-lg border border-white/10 bg-dark-900/60 p-3">
+                    <summary className="cursor-pointer list-none text-sm font-semibold text-gray-200">
+                      Advanced pool numbers
+                    </summary>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      {poolStats.map((stat) => (
+                        <FieldCard
+                          key={stat.label}
+                          label={stat.label}
+                          value={stat.value}
+                          valueClassName={stat.valueClassName}
+                        />
+                      ))}
                     </div>
-
-                    <label className="mt-4 block rounded-lg border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                          Amount
-                        </span>
-                        <button
-                          type="button"
-                          onClick={handleMax}
-                          className="rounded-md border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
-                        >
-                          Max
-                        </button>
-                      </div>
-                      <input
-                        id="kedolik-staking-amount"
-                        value={amount}
-                        onChange={(event) => setAmount(event.target.value)}
-                        placeholder="0.00"
-                        className="mt-3 min-h-[52px] w-full bg-transparent text-2xl font-semibold text-white outline-none placeholder:text-gray-500"
-                      />
-                    </label>
-
-                    {amountMode === 'stake' && stakingDisabledReason && (
-                      <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${
-                        activePoolTiming.isExpired
-                          ? 'border-red-400/30 bg-red-400/10 text-red-100'
-                          : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100'
-                      }`}>
-                        {stakingDisabledReason}
-                      </div>
-                    )}
-
-                    <div className="mt-4 space-y-3">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void (amountMode === 'stake' ? handleStake() : handleUnstake())
-                        }
-                        disabled={amountActionDisabled}
-                        className="btn-primary w-full text-sm disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:scale-100"
-                      >
-                        {actionLoading === amountMode
-                          ? amountMode === 'stake'
-                            ? 'Staking...'
-                            : 'Unstaking...'
-                          : primaryActionLabel}
-                      </button>
-                      <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
-                        <div className="flex flex-col gap-3 min-[420px]:flex-row min-[420px]:items-center min-[420px]:justify-between">
-                          <div>
-                            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
-                              Claimable
-                            </div>
-                            <div className="mt-1 text-sm font-semibold text-white">{claimableRewards}</div>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => void handleClaimRewards()}
-                            disabled={
-                              !connected || !activePool.hasMiner || !hasClaimableRewards || actionLoading !== null
-                            }
-                            className="w-full shrink-0 rounded-md border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60 min-[420px]:w-auto"
-                          >
-                            {actionLoading === 'claim' ? 'Claiming...' : 'Claim'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {!connected && (
-                      <button
-                        type="button"
-                        className="mt-3 w-full rounded-lg border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition-colors hover:border-brand-cyan/40 hover:bg-white/10"
-                        onClick={() => setWalletModalVisible(true)}
-                      >
-                        Connect Wallet
-                      </button>
-                    )}
-
-                    {(exceedsSelectedBalance ||
-                      (connected && amountMode === 'unstake' && !activePool.hasMiner)) && (
-                      <div className="mt-4 rounded-lg border border-white/10 bg-dark-800/70 px-4 py-3 text-sm text-gray-200">
-                        {exceedsSelectedBalance
-                          ? amountMode === 'stake'
-                            ? 'Amount exceeds your wallet balance.'
-                            : 'Amount exceeds your current stake.'
-                          : 'You have no staked tokens to unstake.'}
-                      </div>
-                    )}
-                  </aside>
-                </>
-              )}
-            </section>
+                  </details>
+                </div>
+              </div>
+            )}
 
             {/* Admin-only staking controls moved to the Admin page.
               <>
