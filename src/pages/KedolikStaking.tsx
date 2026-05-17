@@ -886,8 +886,12 @@ export default function KedolikStaking() {
                                 )}
                               </div>
 
-                              <div className="mt-4 grid gap-3 min-[460px]:grid-cols-3">
+                              <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
                                 <FieldCard label="APY" value={apy} />
+                                <FieldCard
+                                  label="Period"
+                                  value={formatStakingDuration(pool.rewardDurationSeconds ?? null)}
+                                />
                                 <FieldCard
                                   label={poolTiming.isExpired ? 'Ended' : 'Ends'}
                                   value={formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}
@@ -904,8 +908,8 @@ export default function KedolikStaking() {
                               </div>
 
                               <div className="mt-4">
-                                <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">
-                                  <span>Period</span>
+                                <div className="flex items-center justify-between gap-3 text-xs font-semibold text-gray-300">
+                                  <span className="uppercase tracking-[0.12em] text-gray-500">Period Progress</span>
                                   <span>{formatStakingDuration(pool.rewardDurationSeconds ?? null)}</span>
                                 </div>
                                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">

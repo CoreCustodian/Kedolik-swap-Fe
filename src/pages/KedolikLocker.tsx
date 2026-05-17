@@ -21,7 +21,7 @@ import {
   formatKedolikUnixTime,
 } from '../components/kedolik/KedolikShared';
 
-type LockerAction = 'create' | 'lookup' | 'claim' | 'cancel' | 'close' | 'updateRecipient' | null;
+type LockerAction = 'create' | 'lookup' | 'claim' | 'cancel' | 'close' | null;
 type LockListSort = 'newest' | 'unlockLatest' | 'unlockSoon' | 'amountHigh' | 'amountLow';
 type SimpleLockForm = {
   recipient: string;
@@ -29,6 +29,13 @@ type SimpleLockForm = {
   amount: string;
   unlockAt: string;
 };
+
+type CreatedLockNotice = {
+  escrowAddress: string;
+  tokenMint: string;
+  amount: string;
+  unlockAt: number;
+} | null;
 
 const LEADERBOARD_PAGE_SIZE = 10;
 
@@ -255,7 +262,7 @@ const LockListItem = ({
       </div>
 
       <div>
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Recipient</div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Lock Owner</div>
         <div className="mt-1 font-mono text-xs font-medium text-white" title={escrow.recipient}>
           {formatLockHolder(escrow.recipient)}
         </div>
@@ -352,19 +359,16 @@ export default function KedolikLocker() {
     claim,
     cancel,
     close,
-    updateRecipient,
     getActionErrorMessage,
   } = useKedolikLocker({ enabled: programs.kedolikLocker.live });
 
   const [selectedEscrowAddress, setSelectedEscrowAddress] = useState<string | null>(null);
   const [selectedEscrow, setSelectedEscrow] = useState<LockerEscrowSummary | null>(null);
   const [actionLoading, setActionLoading] = useState<LockerAction>(null);
-  const [newRecipient, setNewRecipient] = useState('');
-  const [newRecipientEmail, setNewRecipientEmail] = useState('');
   const [simpleLockForm, setSimpleLockForm] = useState(DEFAULT_SIMPLE_LOCK_FORM);
   const [simpleLockMintDecimals, setSimpleLockMintDecimals] = useState<number | null>(null);
   const [hasManualSelection, setHasManualSelection] = useState(false);
-  const [showUpdateRecipientForm, setShowUpdateRecipientForm] = useState(false);
+  const [createdLockNotice, setCreatedLockNotice] = useState<CreatedLockNotice>(null);
   const [recentEscrows, setRecentEscrows] = useState<LockerEscrowSummary[]>([]);
   const [isLoadingRecentEscrows, setIsLoadingRecentEscrows] = useState(false);
   const [recentEscrowsError, setRecentEscrowsError] = useState<string | null>(null);
@@ -432,7 +436,6 @@ export default function KedolikLocker() {
     setSelectedEscrowAddress(null);
     setSelectedEscrow(null);
     setHasManualSelection(false);
-    setShowUpdateRecipientForm(false);
   }, [connectedWalletAddress]);
 
   useEffect(() => {
@@ -485,12 +488,6 @@ export default function KedolikLocker() {
       cancelled = true;
     };
   }, [getActionErrorMessage, lockerProgramStatus.live, lookupEscrow, selectedEscrowAddress]);
-
-  useEffect(() => {
-    setShowUpdateRecipientForm(false);
-    setNewRecipient('');
-    setNewRecipientEmail('');
-  }, [selectedEscrow?.address]);
 
   const refreshRecentEscrows = async () => {
     if (!lockerProgramStatus.live) {
@@ -602,19 +599,9 @@ export default function KedolikLocker() {
       toBigInt(selectedEscrow.claimableAmount) === 0n
   );
 
-  const canUpdateRecipient = Boolean(
-    connected &&
-      selectedEscrow &&
-      !selectedEscrow.isCancelled &&
-      ((selectedEscrow.walletMatchesCreator &&
-        modeAllows(selectedEscrow.updateRecipientMode, 'creator')) ||
-        (selectedEscrow.walletMatchesRecipient &&
-          modeAllows(selectedEscrow.updateRecipientMode, 'recipient')))
-  );
-
   const simpleLockAmountRaw = parseTokenAmountToRaw(simpleLockForm.amount, simpleLockMintDecimals);
   const canCreateSimpleLock = Boolean(
-    simpleLockForm.recipient.trim() &&
+    connectedWalletAddress &&
       simpleLockForm.tokenMint.trim() &&
       simpleLockForm.unlockAt &&
       simpleLockAmountRaw !== null &&
@@ -648,15 +635,13 @@ export default function KedolikLocker() {
       return;
     }
 
-    if (!simpleLockForm.recipient.trim() || !simpleLockForm.tokenMint.trim()) {
-      toast.error('Recipient wallet and token CA are required to create a lock.');
+    if (!connectedWalletAddress) {
+      toast.error('Connect your wallet before creating a lock.');
       return;
     }
 
-    if (connectedWalletAddress && simpleLockForm.recipient.trim() !== connectedWalletAddress) {
-      toast.error(
-        'Stake Lock V1 unlocks back to the creator wallet. A different recipient wallet requires a contract change.'
-      );
+    if (!simpleLockForm.tokenMint.trim()) {
+      toast.error('Token CA is required to create a lock.');
       return;
     }
 
@@ -680,7 +665,7 @@ export default function KedolikLocker() {
 
     try {
       const result = await create({
-        recipient: simpleLockForm.recipient.trim(),
+        recipient: connectedWalletAddress,
         tokenMint: simpleLockForm.tokenMint.trim(),
         vestingStartTime: unlockTime,
         cliffTime: unlockTime,
@@ -693,6 +678,12 @@ export default function KedolikLocker() {
       });
 
       toast.success('Lock created.');
+      setCreatedLockNotice({
+        escrowAddress: result.escrowAddress,
+        tokenMint: simpleLockForm.tokenMint.trim(),
+        amount: simpleLockForm.amount,
+        unlockAt: unlockTime,
+      });
       setSimpleLockForm({
         recipient: connectedWalletAddress ?? '',
         tokenMint: simpleLockForm.tokenMint.trim(),
@@ -756,40 +747,6 @@ export default function KedolikLocker() {
       toast.success('Claim transaction submitted.');
       await Promise.all([refreshEscrows(), refreshPrograms(), refreshRecentEscrows()]);
       handleSelectEscrow(escrow.address, true);
-    } catch (error) {
-      toast.error(getActionErrorMessage(error));
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleUpdateRecipient = async () => {
-    if (!selectedEscrow) {
-      toast.error('No lock is loaded.');
-      return;
-    }
-
-    if (connectWalletIfNeeded()) {
-      return;
-    }
-
-    if (!newRecipient.trim()) {
-      toast.error('Enter a new recipient wallet address.');
-      return;
-    }
-
-    setActionLoading('updateRecipient');
-
-    try {
-      await updateRecipient(
-        selectedEscrow.address,
-        newRecipient.trim(),
-        newRecipientEmail.trim() || undefined
-      );
-      toast.success('Recipient updated.');
-      await Promise.all([refreshEscrows(), refreshRecentEscrows()]);
-      handleSelectEscrow(selectedEscrow.address, true);
-      setShowUpdateRecipientForm(false);
     } catch (error) {
       toast.error(getActionErrorMessage(error));
     } finally {
@@ -883,8 +840,8 @@ export default function KedolikLocker() {
                   <div>
                     <h2 className="text-2xl font-bold font-heading text-white">Create Lock</h2>
                     <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                      Specify the recipient wallet address, the token CA, the amount of tokens to
-                      lock, and the desired lock expiration date and time.
+                      Specify the token CA, the amount of tokens to lock, and the desired unlock
+                      date and time. The connected wallet will be the lock owner automatically.
                     </p>
                   </div>
                   <span className="w-fit rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold text-brand-cyan">
@@ -893,20 +850,6 @@ export default function KedolikLocker() {
                 </div>
 
                 <div className="mt-6 grid gap-4 md:grid-cols-2">
-                  <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                      Recipient Wallet
-                    </div>
-                    <input
-                      value={simpleLockForm.recipient}
-                      onChange={(event) =>
-                        setSimpleLockForm((current) => ({ ...current, recipient: event.target.value }))
-                      }
-                      placeholder="Wallet address"
-                      className="mt-3 w-full bg-transparent font-mono text-sm text-white outline-none placeholder:text-gray-500"
-                    />
-                  </label>
-
                   <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
                     <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
                       Token CA
@@ -945,7 +888,7 @@ export default function KedolikLocker() {
                       Unlock Date
                     </div>
                     <div className="mt-2 text-xs text-gray-400">
-                      Select the token release date for the recipient.
+                      Select the token release date for the connected wallet.
                     </div>
                     <input
                       type="datetime-local"
@@ -998,11 +941,11 @@ export default function KedolikLocker() {
                 <div className="mt-5">
                   <PreviewRow label="Amount" value={simpleLockForm.amount || '0.00'} />
                   <PreviewRow
-                    label="Recipient"
+                    label="Lock Owner"
                     value={
-                      simpleLockForm.recipient.trim()
-                        ? formatLockHolder(simpleLockForm.recipient.trim())
-                        : 'Not set'
+                      connectedWalletAddress
+                        ? formatLockHolder(connectedWalletAddress)
+                        : 'Connect wallet'
                     }
                   />
                   <PreviewRow
@@ -1022,12 +965,51 @@ export default function KedolikLocker() {
                   </div>
                   <div className="mt-2 text-sm leading-relaxed text-gray-200">
                     Kedolik Locker creates a single on-chain lock based on the specified
-                    configuration. Once the unlock time is reached, the lock owner can claim the
-                    released tokens.
+                    configuration. Once the unlock time is reached, the connected wallet can claim
+                    the released tokens.
                   </div>
                 </div>
               </aside>
             </section>
+
+            {createdLockNotice && (
+              <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 px-3 py-4 backdrop-blur-sm sm:items-center">
+                <div className="w-full max-w-md rounded-2xl border border-emerald-400/25 bg-dark-900 p-5 shadow-2xl">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-300">
+                        Lock Created
+                      </div>
+                      <h2 className="mt-1 text-xl font-bold font-heading text-white">
+                        The lock has been created.
+                      </h2>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCreatedLockNotice(null)}
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-lg font-semibold text-white transition-colors hover:bg-white/10"
+                      aria-label="Close lock created popup"
+                    >
+                      x
+                    </button>
+                  </div>
+
+                  <div className="mt-4 grid gap-3">
+                    <FieldCard label="Amount" value={createdLockNotice.amount || '0.00'} />
+                    <FieldCard label="Token CA" value={formatKedolikAddress(createdLockNotice.tokenMint)} />
+                    <FieldCard label="Unlock Date" value={formatKedolikUnixTime(createdLockNotice.unlockAt)} />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setCreatedLockNotice(null)}
+                    className="btn-primary mt-5 w-full text-sm"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
 
             {connected && (
               <section className="card mt-6 p-6 sm:p-8">
@@ -1154,7 +1136,7 @@ export default function KedolikLocker() {
                       </div>
                       <div className="mt-3">
                         <PreviewRow label="From" value={formatLockHolder(selectedEscrow.creator)} />
-                        <PreviewRow label="Recipient" value={formatLockHolder(selectedEscrow.recipient)} />
+                        <PreviewRow label="Lock Owner" value={formatLockHolder(selectedEscrow.recipient)} />
                         <PreviewRow label="Token CA" value={formatKedolikAddress(selectedEscrow.tokenMint)} />
                       </div>
                     </div>
@@ -1213,48 +1195,13 @@ export default function KedolikLocker() {
                       </button>
                     )}
 
-                    {canUpdateRecipient && (
-                      <button
-                        type="button"
-                        className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10"
-                        onClick={() => setShowUpdateRecipientForm((current) => !current)}
-                      >
-                        Update Recipient Wallet
-                      </button>
-                    )}
                   </div>
 
-                  {!canClaim && !canCancel && !canClose && !canUpdateRecipient && (
+                  {!canClaim && !canCancel && !canClose && (
                     <div className="mt-5 rounded-2xl border border-white/10 bg-dark-900/60 px-4 py-4 text-sm text-gray-300">
                       {showingSampleEscrowForViewer
                         ? 'This sample lock belongs to another wallet, so no actions are available here.'
                         : 'No actions are available for this lock right now.'}
-                    </div>
-                  )}
-
-                  {showUpdateRecipientForm && canUpdateRecipient && (
-                    <div className="mt-5 rounded-3xl border border-white/10 bg-dark-900/60 p-5">
-                      <div className="text-sm font-semibold text-white">Update Recipient Wallet</div>
-                      <input
-                        value={newRecipient}
-                        onChange={(event) => setNewRecipient(event.target.value)}
-                        placeholder="New recipient wallet"
-                        className="mt-4 w-full rounded-2xl border border-white/10 bg-dark-800/80 px-4 py-3 text-sm text-white outline-none transition-all duration-300 placeholder:text-gray-500 focus:border-brand-cyan/50"
-                      />
-                      <input
-                        value={newRecipientEmail}
-                        onChange={(event) => setNewRecipientEmail(event.target.value)}
-                        placeholder="Recipient email (optional)"
-                        className="mt-3 w-full rounded-2xl border border-white/10 bg-dark-800/80 px-4 py-3 text-sm text-white outline-none transition-all duration-300 placeholder:text-gray-500 focus:border-brand-cyan/50"
-                      />
-                      <button
-                        type="button"
-                        className="mt-4 w-full rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-semibold text-white transition-all duration-300 hover:border-brand-cyan/40 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={actionLoading !== null}
-                        onClick={() => void handleUpdateRecipient()}
-                      >
-                        {actionLoading === 'updateRecipient' ? 'Updating...' : 'Save Recipient'}
-                      </button>
                     </div>
                   )}
                 </>
@@ -1269,8 +1216,8 @@ export default function KedolikLocker() {
                   </h2>
                   <p className="mt-2 text-sm text-gray-300">
                     All locks created on Kedolik Locker. Technical lock IDs are hidden from the
-                    standard locker view, allowing users to focus solely on the recipient, token
-                    amount, unlock date, and claimable status.
+                    standard locker view, allowing users to focus on the lock owner, token amount,
+                    unlock date, and claimable status.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-3">
