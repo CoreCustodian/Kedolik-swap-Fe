@@ -1032,10 +1032,6 @@ const estimateClaimableRewards = (
 
   const now = Math.floor(Date.now() / 1000);
 
-  if (rewardEndTs && rewardEndTs > 0 && now >= rewardEndTs) {
-    return position.rewardsOwed;
-  }
-
   let rewardPerTokenStored = poolState.rewardPerTokenStored;
   const accrualEndTs = rewardEndTs && rewardEndTs > 0 ? Math.min(now, rewardEndTs) : now;
   const elapsedSeconds = BigInt(Math.max(0, accrualEndTs - poolState.lastUpdateTs));
