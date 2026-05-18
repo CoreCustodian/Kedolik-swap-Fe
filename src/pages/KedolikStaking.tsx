@@ -83,7 +83,7 @@ const SECONDS_PER_DAY = 24 * 60 * 60;
 
 const formatStakingDuration = (seconds: number | null) => {
   if (seconds === null) {
-    return 'Not set';
+    return 'Live';
   }
 
   if (seconds >= SECONDS_PER_DAY) {
@@ -105,7 +105,7 @@ const formatStakingDuration = (seconds: number | null) => {
 };
 
 const formatStakingEndsAt = (timestamp: number | null) =>
-  timestamp ? formatKedolikUnixTime(timestamp) : 'Not set';
+  timestamp ? formatKedolikUnixTime(timestamp) : 'Unavailable';
 
 const formatStakingTimeRemaining = (secondsRemaining: number | null, isExpired: boolean) => {
   if (isExpired) {
@@ -113,7 +113,7 @@ const formatStakingTimeRemaining = (secondsRemaining: number | null, isExpired: 
   }
 
   if (secondsRemaining === null) {
-    return 'Not set';
+    return 'Live';
   }
 
   if (secondsRemaining >= SECONDS_PER_DAY) {
@@ -127,6 +127,49 @@ const formatStakingTimeRemaining = (secondsRemaining: number | null, isExpired: 
   }
 
   return 'Less than 1 hour';
+};
+
+const getStakingDurationSeconds = (
+  rewardDurationSeconds: number | null | undefined,
+  stakingStartedAt: number | null | undefined,
+  stakingEndsAt: number | null | undefined
+) => {
+  const directDuration = Number(rewardDurationSeconds ?? 0);
+
+  if (Number.isFinite(directDuration) && directDuration > 0) {
+    return Math.floor(directDuration);
+  }
+
+  if (stakingStartedAt && stakingEndsAt && stakingEndsAt > stakingStartedAt) {
+    return Math.floor(stakingEndsAt - stakingStartedAt);
+  }
+
+  return null;
+};
+
+const formatStakingPeriodValue = (
+  durationSeconds: number | null,
+  secondsRemaining: number | null,
+  isExpired: boolean,
+  stakingEndsAt: number | null | undefined
+) => {
+  if (durationSeconds !== null) {
+    return formatStakingDuration(durationSeconds);
+  }
+
+  if (isExpired) {
+    return 'Expired';
+  }
+
+  if (secondsRemaining !== null) {
+    return formatStakingTimeRemaining(secondsRemaining, false);
+  }
+
+  if (stakingEndsAt) {
+    return `Ends ${formatKedolikUnixTime(stakingEndsAt)}`;
+  }
+
+  return 'Live';
 };
 
 const getLivePoolTiming = (
@@ -415,7 +458,17 @@ export default function KedolikStaking() {
     Boolean(activePool?.isExpired),
     nowSeconds
   );
-  const stakingDuration = formatStakingDuration(activePool?.rewardDurationSeconds ?? null);
+  const activePoolDurationSeconds = getStakingDurationSeconds(
+    activePool?.rewardDurationSeconds,
+    activePool?.stakingStartedAt,
+    activePool?.stakingEndsAt
+  );
+  const stakingDuration = formatStakingPeriodValue(
+    activePoolDurationSeconds,
+    activePoolTiming.secondsRemaining,
+    activePoolTiming.isExpired,
+    activePool?.stakingEndsAt
+  );
   const stakingEndsAt = formatStakingEndsAt(activePool?.stakingEndsAt ?? null);
   const stakingTimeRemaining = formatStakingTimeRemaining(
     activePoolTiming.secondsRemaining,
@@ -846,8 +899,23 @@ export default function KedolikStaking() {
                           const hasPoolStake = poolUserStakeRaw > 0n;
                           const hasPoolClaimable = poolClaimableRaw > 0n;
                           const canManageExpiredPool = poolTiming.isExpired && (hasPoolStake || hasPoolClaimable);
-                          const duration = pool.rewardDurationSeconds ?? 0;
+                          const durationSeconds = getStakingDurationSeconds(
+                            pool.rewardDurationSeconds,
+                            pool.stakingStartedAt,
+                            pool.stakingEndsAt
+                          );
+                          const duration = durationSeconds ?? 0;
                           const secondsRemaining = poolTiming.secondsRemaining ?? 0;
+                          const poolEndsValue = formatStakingTimeRemaining(
+                            poolTiming.secondsRemaining,
+                            poolTiming.isExpired
+                          );
+                          const periodValue = formatStakingPeriodValue(
+                            durationSeconds,
+                            poolTiming.secondsRemaining,
+                            poolTiming.isExpired,
+                            pool.stakingEndsAt
+                          );
                           const progressPercent = poolTiming.isExpired
                             ? 100
                             : duration > 0
@@ -890,11 +958,11 @@ export default function KedolikStaking() {
                                 <FieldCard label="APY" value={apy} />
                                 <FieldCard
                                   label="Period"
-                                  value={formatStakingDuration(pool.rewardDurationSeconds ?? null)}
+                                  value={periodValue}
                                 />
                                 <FieldCard
                                   label={poolTiming.isExpired ? 'Ended' : 'Ends'}
-                                  value={formatStakingTimeRemaining(poolTiming.secondsRemaining, poolTiming.isExpired)}
+                                  value={poolEndsValue}
                                   valueClassName={poolTiming.isExpired ? 'text-red-200' : ''}
                                 />
                                 <FieldCard
@@ -910,7 +978,7 @@ export default function KedolikStaking() {
                               <div className="mt-4">
                                 <div className="flex items-center justify-between gap-3 text-xs font-semibold text-gray-300">
                                   <span className="uppercase tracking-[0.12em] text-gray-500">Period Progress</span>
-                                  <span>{formatStakingDuration(pool.rewardDurationSeconds ?? null)}</span>
+                                  <span>{periodValue}</span>
                                 </div>
                                 <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
                                   <div
