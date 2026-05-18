@@ -80,6 +80,7 @@ const formatStakingApy = (
 };
 
 const SECONDS_PER_DAY = 24 * 60 * 60;
+const STAKING_PERIOD_STEP_SECONDS = 30 * SECONDS_PER_DAY;
 
 const formatStakingDuration = (seconds: number | null) => {
   if (seconds === null) {
@@ -132,7 +133,8 @@ const formatStakingTimeRemaining = (secondsRemaining: number | null, isExpired: 
 const getStakingDurationSeconds = (
   rewardDurationSeconds: number | null | undefined,
   stakingStartedAt: number | null | undefined,
-  stakingEndsAt: number | null | undefined
+  stakingEndsAt: number | null | undefined,
+  secondsRemaining?: number | null
 ) => {
   const directDuration = Number(rewardDurationSeconds ?? 0);
 
@@ -144,7 +146,30 @@ const getStakingDurationSeconds = (
     return Math.floor(stakingEndsAt - stakingStartedAt);
   }
 
+  if (secondsRemaining && secondsRemaining > 0) {
+    return Math.ceil(secondsRemaining / STAKING_PERIOD_STEP_SECONDS) * STAKING_PERIOD_STEP_SECONDS;
+  }
+
   return null;
+};
+
+const getStakingProgressPercent = (
+  durationSeconds: number | null,
+  secondsRemaining: number | null,
+  isExpired: boolean
+) => {
+  if (isExpired) {
+    return 100;
+  }
+
+  if (!durationSeconds || durationSeconds <= 0 || secondsRemaining === null) {
+    return 0;
+  }
+
+  const rawProgress = ((durationSeconds - secondsRemaining) / durationSeconds) * 100;
+  const boundedProgress = Math.min(100, Math.max(0, rawProgress));
+
+  return Math.max(4, boundedProgress);
 };
 
 const formatStakingPeriodValue = (
@@ -461,7 +486,8 @@ export default function KedolikStaking() {
   const activePoolDurationSeconds = getStakingDurationSeconds(
     activePool?.rewardDurationSeconds,
     activePool?.stakingStartedAt,
-    activePool?.stakingEndsAt
+    activePool?.stakingEndsAt,
+    activePoolTiming.secondsRemaining
   );
   const stakingDuration = formatStakingPeriodValue(
     activePoolDurationSeconds,
@@ -902,10 +928,9 @@ export default function KedolikStaking() {
                           const durationSeconds = getStakingDurationSeconds(
                             pool.rewardDurationSeconds,
                             pool.stakingStartedAt,
-                            pool.stakingEndsAt
+                            pool.stakingEndsAt,
+                            poolTiming.secondsRemaining
                           );
-                          const duration = durationSeconds ?? 0;
-                          const secondsRemaining = poolTiming.secondsRemaining ?? 0;
                           const poolEndsValue = formatStakingTimeRemaining(
                             poolTiming.secondsRemaining,
                             poolTiming.isExpired
@@ -916,11 +941,11 @@ export default function KedolikStaking() {
                             poolTiming.isExpired,
                             pool.stakingEndsAt
                           );
-                          const progressPercent = poolTiming.isExpired
-                            ? 100
-                            : duration > 0
-                              ? Math.min(100, Math.max(0, ((duration - secondsRemaining) / duration) * 100))
-                              : 0;
+                          const progressPercent = getStakingProgressPercent(
+                            durationSeconds,
+                            poolTiming.secondsRemaining,
+                            poolTiming.isExpired
+                          );
                           const primaryPoolAction = poolTiming.isExpired
                             ? canManageExpiredPool
                               ? 'Manage'
