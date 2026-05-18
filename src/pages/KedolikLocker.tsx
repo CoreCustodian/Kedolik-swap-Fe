@@ -160,6 +160,9 @@ const TokenIdentity = ({ token, fallback }: { token?: TokenInfo; fallback: strin
   );
 };
 
+const getTokenDisplayName = (token?: TokenInfo) =>
+  token?.symbol?.trim() || token?.name?.trim() || 'Unknown';
+
 const getLockProgressPercent = (escrow: LockerEscrowSummary) => {
   const total = toBigInt(escrow.scheduledTotalAmount);
 
@@ -243,11 +246,14 @@ const LockListItem = ({
 
       <div className="min-w-0">
         <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Locked</div>
-        <div className="mt-1 text-base font-semibold text-white">
-          {formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-base font-semibold text-white">
+          <span>{formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}</span>
+          <span className="max-w-full truncate rounded-full border border-brand-cyan/25 bg-brand-cyan/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand-cyan">
+            {getTokenDisplayName(token)}
+          </span>
         </div>
         <div className="mt-2">
-          <TokenIdentity token={token} fallback="Token" />
+          <TokenIdentity token={token} fallback="Unknown" />
         </div>
         <div className="mt-2 text-xs text-gray-400">
           {getLockProgressPercent(escrow).toFixed(0)}% unlocked

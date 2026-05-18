@@ -166,10 +166,10 @@ const getStakingProgressPercent = (
     return 0;
   }
 
-  const rawProgress = ((durationSeconds - secondsRemaining) / durationSeconds) * 100;
+  const rawProgress = (secondsRemaining / durationSeconds) * 100;
   const boundedProgress = Math.min(100, Math.max(0, rawProgress));
 
-  return Math.max(4, boundedProgress);
+  return Math.max(8, boundedProgress);
 };
 
 const formatStakingPeriodValue = (
@@ -1002,15 +1002,21 @@ export default function KedolikStaking() {
 
                               <div className="mt-4">
                                 <div className="flex items-center justify-between gap-3 text-xs font-semibold text-gray-300">
-                                  <span className="uppercase tracking-[0.12em] text-gray-500">Period Progress</span>
+                                  <span className="uppercase tracking-[0.12em] text-gray-500">Period Remaining</span>
                                   <span>{periodValue}</span>
                                 </div>
-                                <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10">
+                                <div className="mt-2 h-2.5 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10">
                                   <div
-                                    className={`h-full rounded-full ${
-                                      poolTiming.isExpired ? 'bg-red-400/80' : 'bg-brand-cyan'
-                                    }`}
-                                    style={{ width: `${progressPercent}%` }}
+                                    className="h-full rounded-full transition-[width] duration-500"
+                                    style={{
+                                      width: `${progressPercent}%`,
+                                      background: poolTiming.isExpired
+                                        ? 'linear-gradient(90deg, #fb7185 0%, #f97316 100%)'
+                                        : 'linear-gradient(90deg, #f020ff 0%, #9b7cff 55%, #4cc9ff 100%)',
+                                      boxShadow: poolTiming.isExpired
+                                        ? '0 0 14px rgba(251, 113, 133, 0.45)'
+                                        : '0 0 14px rgba(76, 201, 255, 0.45)',
+                                    }}
                                   />
                                 </div>
                               </div>
