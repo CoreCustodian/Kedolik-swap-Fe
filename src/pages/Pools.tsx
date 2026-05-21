@@ -225,9 +225,7 @@ const Pools = () => {
                 {isLoadingStats ? 'Loading...' : formatUsdCompact(totalTVL)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                Pool vaults {formatUsdCompact(poolStats?.poolLiquidityUsd ?? 0)} + token locks{' '}
-                {formatUsdCompact(poolStats?.lockedTokenUsd ?? 0)} + locked LP{' '}
-                {formatUsdCompact(poolStats?.lockedLiquidityUsd ?? 0)}
+                 Based on the Total Value Locked
               </p>
             </div>
             <div className="card p-4 sm:p-6">
@@ -236,8 +234,7 @@ const Pools = () => {
                 {isLoadingStats ? 'Loading...' : formatUsdCompact(totalVolume)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                On-chain swaps: direct {formatUsdCompact(poolStats?.directVolume24hUsd ?? 0)} +
-                aggregator {formatUsdCompact(poolStats?.aggregatorVolume24hUsd ?? 0)}
+                Based on the 24 Hour Volume
               </p>
           </div>
             <div className="card p-4 sm:p-6">
