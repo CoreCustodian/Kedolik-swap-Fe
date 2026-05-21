@@ -1,14 +1,18 @@
 import { PublicKey } from '@solana/web3.js';
+import { KEDOLOG_MINT } from './addresses';
 
 export const KEDOLIK_STAKE_LOCK_V1 = {
-  cluster: 'devnet',
+  cluster: 'mainnet-beta',
   programId: '6M6TzGRSRqYxYmAihrXgF6MrmrCJno4RK9mEDdtkanCW',
   programData: '9YB6N5m85wC2rGLaAmzXEEUbJ1stL7daTBrjzvePfefr',
   upgradeAuthority: '68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot',
   adminConfigPda: '6zJinApyxvq5FK84oQjvuwj4i1xnoLNbD28WEmmyDQPR',
   currentStakingAdmin: '68ntKmiyhSdRT448Hj1VPW19a7EERJHCcGyjbmodVqot',
-  expectedIdlPath: 'staking-locking/deployments/kedolik_stake_lock.devnet.idl.json',
-  expectedFrontendExportPath: 'staking-locking/deployments/frontend-stake-lock-v1-devnet.ts',
+  mainTokenMint: KEDOLOG_MINT.toString(),
+  tokenProgramId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
+  preferredRpcEndpoint: 'https://solana-mainnet.g.alchemy.com/v2/Dhic93HjH_skAKIwCUAVC',
+  expectedIdlPath: 'staking-locking/deployments/kedolik_stake_lock.mainnet.idl.json',
+  expectedFrontendExportPath: 'staking-locking/deployments/frontend-stake-lock-v1-mainnet.ts',
 } as const;
 
 export const KEDOLIK_STAKE_LOCK_PROGRAM_ID = new PublicKey(KEDOLIK_STAKE_LOCK_V1.programId);
@@ -19,7 +23,7 @@ export const KEDOLIK_STAKE_LOCK_CURRENT_ADMIN = new PublicKey(
 );
 
 export const KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS = {
-  observedDevnetProgramDeploySol: 2.70603068,
+  observedProgramDeploySol: 2.70603068,
   createStakingPoolRentOnlySol: 0.00649368,
   userStakePositionRentSol: 0.00162168,
   tokenLockRentSol: 0.00179568,
@@ -28,4 +32,6 @@ export const KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS = {
 } as const;
 
 export const getKedolikStakeLockExplorerUrl = (address: string) =>
-  `https://explorer.solana.com/address/${address}?cluster=${KEDOLIK_STAKE_LOCK_V1.cluster}`;
+  KEDOLIK_STAKE_LOCK_V1.cluster === 'mainnet-beta'
+    ? `https://explorer.solana.com/address/${address}`
+    : `https://explorer.solana.com/address/${address}?cluster=${KEDOLIK_STAKE_LOCK_V1.cluster}`;

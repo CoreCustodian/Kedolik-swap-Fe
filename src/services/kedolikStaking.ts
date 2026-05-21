@@ -38,7 +38,7 @@ const CLAIM_REWARDS_DISCRIMINATOR = Buffer.from('0490844774179750', 'hex');
 const UNSTAKE_DISCRIMINATOR = Buffer.from('5a5f6b2acd7c32e1', 'hex');
 const RECLAIM_UNCLAIMED_REWARDS_DISCRIMINATOR = Buffer.from('81e839e301f1a889', 'hex');
 const CLOSE_POSITION_DISCRIMINATOR = Buffer.from('7b86510031446262', 'hex');
-const STAKING_POOL_STORAGE_KEY = 'kedolik:stake-lock-v1:pools';
+const STAKING_POOL_STORAGE_KEY = 'kedolik:stake-lock-v1:mainnet-beta:pools';
 export const KEDOLIK_STAKING_POOLS_UPDATED_EVENT = 'kedolik:staking-pools-updated';
 export const KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE =
   'No Staking Pool Instance has been deployed yet. Once the admin team deploys the staking pool instance, an official announcement will be shared across our social media channels.';
@@ -106,7 +106,7 @@ export interface KedolikStakingQuarrySummary {
 }
 
 export interface KedolikStakingService {
-  cluster: 'devnet';
+  cluster: 'mainnet-beta';
   kedolikStakingProgramId: string;
   fetchLiveQuarries: (walletPublicKey?: PublicKey | null) => Promise<KedolikStakingQuarrySummary[]>;
   stake: (amountRaw: string, poolAddress?: string) => Promise<string>;
@@ -286,7 +286,7 @@ export const getKedolikStakingErrorMessage = (
   const message = error instanceof Error ? error.message : String(error ?? '');
 
   if (/429|rate limits? exceeded/i.test(message)) {
-    return 'Devnet RPC rate limit reached while loading staking data. Please wait a moment and refresh.';
+    return 'Mainnet RPC rate limit reached while loading staking data. Please wait a moment and refresh.';
   }
 
   return message || fallback;
@@ -1632,12 +1632,20 @@ export const transferKedolikStakingAdmin = async (
 ) => {
   const signerWallet = assertWallet(wallet);
   const currentAdmin = await fetchKedolikStakeLockAdminConfig(connection);
+  const newAuthorityPublicKey = toPublicKey(newAuthority);
 
-  if (currentAdmin.exists && currentAdmin.authority !== signerWallet.publicKey.toString()) {
+  if (!currentAdmin.exists) {
+    throw new Error('Stake Lock admin config was not found on the current RPC endpoint.');
+  }
+
+  if (currentAdmin.authority !== signerWallet.publicKey.toString()) {
     throw new Error('Only the current staking admin can transfer admin authority.');
   }
 
-  const newAuthorityPublicKey = toPublicKey(newAuthority);
+  if (newAuthorityPublicKey.equals(signerWallet.publicKey)) {
+    throw new Error('New staking admin must be a different wallet address.');
+  }
+
   const transaction = new Transaction().add(
     buildTransferAdminAuthorityInstruction(signerWallet.publicKey, newAuthorityPublicKey)
   );
@@ -2164,7 +2172,7 @@ export const createKedolikStakingService = (
 
     return getUserStakePositionPda(new PublicKey(pool), authority).toString();
   },
-  getStatusMessage: () => 'Live on Devnet through Stake Lock V1',
+  getStatusMessage: () => 'Live on Mainnet through Stake Lock V1',
 });
 
 export const closeKedolikStakePosition = async (
@@ -2209,4 +2217,4 @@ export const estimatePendingRewards = (
     ACC_REWARD_SCALE;
 };
 
-export const getKedolikStakingPlaceholderMessage = () => 'Live on Devnet through Stake Lock V1';
+export const getKedolikStakingPlaceholderMessage = () => 'Live on Mainnet through Stake Lock V1';

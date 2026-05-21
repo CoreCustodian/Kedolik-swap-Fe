@@ -204,22 +204,16 @@ export const getExplorerAccountUrl = (address: string): string => {
  * RPC endpoint - SINGLE SOURCE OF TRUTH
  * ⚠️ IMPORTANT: This MUST be set in your .env file as VITE_RPC_ENDPOINT
  * 
- * Example for QuickNode:
- * VITE_RPC_ENDPOINT=https://your-endpoint.solana-mainnet.quiknode.pro/your-key/
+ * Example:
+ * VITE_RPC_ENDPOINT=https://your-mainnet-rpc-endpoint/
  * 
- * This is the ONLY place where RPC endpoint should be referenced.
- * All other parts of the codebase use the connection from WalletProvider context.
+ * All other parts of the codebase should prefer the connection from WalletProvider context.
  */
 export const getRpcEndpoint = (): string => {
-  const endpoint = import.meta.env.VITE_RPC_ENDPOINT;
-  if (!endpoint) {
-    throw new Error(
-      'VITE_RPC_ENDPOINT is not set in .env file. ' +
-      'Please create a .env file with your QuickNode RPC endpoint: ' +
-      'VITE_RPC_ENDPOINT=https://your-endpoint.solana-mainnet.quiknode.pro/your-key/'
-    );
-  }
-  return endpoint;
+  return (
+    import.meta.env.VITE_RPC_ENDPOINT ||
+    'https://solana-mainnet.g.alchemy.com/v2/Dhic93HjH_skAKIwCUAVC'
+  );
 };
 
 // For backward compatibility - lazy-loaded to avoid errors at module load time

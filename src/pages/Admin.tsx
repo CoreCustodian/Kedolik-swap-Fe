@@ -1214,8 +1214,26 @@ export default function Admin() {
       return;
     }
 
+    let newStakingAdminPublicKey: PublicKey;
+    try {
+      newStakingAdminPublicKey = new PublicKey(newStakingAdmin.trim());
+    } catch {
+      showToast('Enter a valid Solana wallet address for the new staking admin', 'error');
+      return;
+    }
+
+    if (newStakingAdminPublicKey.toString() === connectedWalletAddress) {
+      showToast('New staking admin must be a different wallet address', 'warning');
+      return;
+    }
+
+    if (stakingAdminConfig?.authority && newStakingAdminPublicKey.toString() === stakingAdminConfig.authority) {
+      showToast('That wallet is already the current staking admin', 'warning');
+      return;
+    }
+
     const confirmed = window.confirm(
-      'Transfer Stake Lock admin authority? After this confirms, only the new wallet can create pools and update rewards.'
+      `Transfer Stake Lock admin authority to ${newStakingAdminPublicKey.toString()}? After this confirms, only the new wallet can create pools and update rewards.`
     );
 
     if (!confirmed) {
@@ -1224,7 +1242,11 @@ export default function Admin() {
 
     try {
       setTransferringStakingAdmin(true);
-      const signature = await transferKedolikStakingAdmin(connection, anchorWallet, newStakingAdmin.trim());
+      const signature = await transferKedolikStakingAdmin(
+        connection,
+        anchorWallet,
+        newStakingAdminPublicKey.toString()
+      );
       showToast('Stake Lock admin authority transferred', 'success', signature);
       setNewStakingAdmin('');
       await fetchStakingAdminConfig();
@@ -2100,7 +2122,7 @@ export default function Admin() {
                             </p>
                           </div>
                           <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-3 py-1 text-xs font-semibold text-brand-cyan">
-                            Devnet
+                            Mainnet
                           </span>
                         </div>
 
@@ -2264,7 +2286,7 @@ export default function Admin() {
                           </p>
                         </div>
                         <div className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-3 py-1 text-xs font-semibold text-brand-cyan">
-                          Devnet
+                          Mainnet
                         </div>
                       </div>
 

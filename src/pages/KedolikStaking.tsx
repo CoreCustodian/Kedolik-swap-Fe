@@ -784,7 +784,7 @@ export default function KedolikStaking() {
             <div className="min-w-0 max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
-                  Devnet
+                  Mainnet
                 </span>
                 {!isLoadingPrograms && (
                   <KedolikProgramStatusBadge
@@ -821,7 +821,7 @@ export default function KedolikStaking() {
           <div className="card mt-6 p-8">
             <h2 className="text-2xl font-bold font-heading">Kedolik Staking Disabled</h2>
             <p className="mt-3 text-gray-300">
-              The `kedolikDevnetEnabled` feature flag is off, so staking is hidden from the main
+              The Kedolik mainnet feature flag is off, so staking is hidden from the main
               navigation even though the route still exists.
             </p>
           </div>
@@ -1540,7 +1540,7 @@ export default function KedolikStaking() {
               <div className="mt-5 grid gap-3 md:grid-cols-2">
                 <FieldCard
                   label="Fresh Program Deploy Estimate"
-                  value={`${KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS.observedDevnetProgramDeploySol} SOL`}
+                  value={`${KEDOLIK_STAKE_LOCK_DEPLOYMENT_COSTS.observedProgramDeploySol} SOL`}
                 />
                 <FieldCard
                   label="Create Staking Pool Rent"

@@ -3,6 +3,7 @@ import { ConnectionProvider, WalletProvider as SolanaWalletProvider, useConnecti
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { patchConnectionConfirmTransaction } from '../utils/transactionConfirmation';
+import { KEDOLIK_STAKE_LOCK_V1 } from '../config/kedolikStakeLockV1';
 
 // Default styles that can be overridden by your app
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -11,21 +12,20 @@ interface WalletProviderProps {
   children: ReactNode;
 }
 
-// Inner component that provides connection with RPC from .env
+// Inner component that provides connection with the configured mainnet RPC.
 const ConnectionProviderWithRPC: FC<{ children: ReactNode }> = ({ children }) => {
-  // Get RPC endpoint from environment variable - SINGLE SOURCE OF TRUTH
+  // Prefer an environment override, otherwise use the configured Kedolik mainnet RPC.
   const endpoint = useMemo(() => {
-    const rpcEndpoint = import.meta.env.VITE_RPC_ENDPOINT;
+    const rpcEndpoint = import.meta.env.VITE_RPC_ENDPOINT || KEDOLIK_STAKE_LOCK_V1.preferredRpcEndpoint;
     
     if (!rpcEndpoint) {
       console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in .env file!');
       console.error('💡 Please create a .env file with your RPC endpoint:');
-      console.error('   For Devnet: VITE_RPC_ENDPOINT=https://api.devnet.solana.com');
-      console.error('   For Mainnet: VITE_RPC_ENDPOINT=https://your-quicknode-endpoint.solana-mainnet.quiknode.pro/your-key/');
-      throw new Error('VITE_RPC_ENDPOINT environment variable is required. Please set it in your .env file.');
+      console.error('   For Mainnet: VITE_RPC_ENDPOINT=https://your-mainnet-rpc-endpoint/');
+      throw new Error('A mainnet RPC endpoint is required.');
     }
     
-    // Log that we're using the configured RPC (but don't log the full URL to avoid exposing it)
+    // Log the selected RPC without exposing the full URL.
     const maskedUrl = rpcEndpoint.replace(/\/\/[^/]+@/, '//***@').replace(/\/[^/]+\/[^/]+\//, '/***/***/');
     console.log('🌐 Using RPC endpoint from .env:', maskedUrl);
     

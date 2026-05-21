@@ -28,10 +28,12 @@ type SimpleLockForm = {
   tokenMint: string;
   amount: string;
   unlockAt: string;
+  lockId: string;
 };
 
 type CreatedLockNotice = {
   escrowAddress: string;
+  lockId: string;
   tokenMint: string;
   amount: string;
   unlockAt: number;
@@ -44,6 +46,7 @@ const DEFAULT_SIMPLE_LOCK_FORM: SimpleLockForm = {
   tokenMint: KEDOLIK_DEVNET_LOCKER_LIVE.tokenMint,
   amount: '',
   unlockAt: '',
+  lockId: '',
 };
 
 const toUnixTimestamp = (value: string) => {
@@ -450,6 +453,7 @@ export default function KedolikLocker() {
       tokenMint: KEDOLIK_DEVNET_LOCKER_LIVE.tokenMint,
       amount: '',
       unlockAt: '',
+      lockId: '',
     });
   }, [connectedWalletAddress]);
 
@@ -673,6 +677,7 @@ export default function KedolikLocker() {
       const result = await create({
         recipient: connectedWalletAddress,
         tokenMint: simpleLockForm.tokenMint.trim(),
+        lockId: simpleLockForm.lockId.trim() || undefined,
         vestingStartTime: unlockTime,
         cliffTime: unlockTime,
         frequency: 1,
@@ -686,6 +691,7 @@ export default function KedolikLocker() {
       toast.success('Lock created.');
       setCreatedLockNotice({
         escrowAddress: result.escrowAddress,
+        lockId: result.baseAddress,
         tokenMint: simpleLockForm.tokenMint.trim(),
         amount: simpleLockForm.amount,
         unlockAt: unlockTime,
@@ -695,6 +701,7 @@ export default function KedolikLocker() {
         tokenMint: simpleLockForm.tokenMint.trim(),
         amount: '',
         unlockAt: '',
+        lockId: '',
       });
       await Promise.all([refreshEscrows(), refreshPrograms(), refreshRecentEscrows()]);
       handleSelectEscrow(result.escrowAddress);
@@ -768,7 +775,7 @@ export default function KedolikLocker() {
             <div className="min-w-0 max-w-2xl">
               <div className="mb-4 flex flex-wrap items-center gap-3">
                 <span className="rounded-full border border-brand-cyan/30 bg-brand-cyan/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-brand-cyan">
-                  Devnet
+                  Mainnet
                 </span>
                 {!isLoadingPrograms && (
                   <KedolikProgramStatusBadge
@@ -802,7 +809,7 @@ export default function KedolikLocker() {
           <div className="card mt-6 p-8">
             <h2 className="text-2xl font-bold font-heading">Kedolik Locker Disabled</h2>
             <p className="mt-3 text-gray-300">
-              The `kedolikDevnetEnabled` feature flag is off, so locker is hidden from the main
+              The Kedolik mainnet feature flag is off, so locker is hidden from the main
               navigation even though the route still exists.
             </p>
           </div>
@@ -907,6 +914,24 @@ export default function KedolikLocker() {
                       className="mt-3 min-h-[42px] w-full rounded-xl border border-white/10 bg-dark-800/85 px-3 text-sm text-white outline-none [color-scheme:dark]"
                     />
                   </label>
+
+                  <label className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-colors focus-within:border-brand-cyan/50">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
+                      Lock ID
+                    </div>
+                    <div className="mt-2 text-xs text-gray-400">
+                      Optional. Leave blank to generate one automatically.
+                    </div>
+                    <input
+                      value={simpleLockForm.lockId}
+                      onChange={(event) =>
+                        setSimpleLockForm((current) => ({ ...current, lockId: event.target.value }))
+                      }
+                      inputMode="numeric"
+                      placeholder="Generated automatically"
+                      className="mt-3 w-full bg-transparent font-mono text-sm text-white outline-none placeholder:text-gray-500"
+                    />
+                  </label>
                 </div>
 
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -963,6 +988,10 @@ export default function KedolikLocker() {
                     }
                   />
                   <PreviewRow label="Unlock" value={unlockPreviewLabel} />
+                  <PreviewRow
+                    label="Lock ID"
+                    value={simpleLockForm.lockId.trim() ? simpleLockForm.lockId.trim() : 'Auto generated'}
+                  />
                 </div>
 
                 <div className="mt-5 rounded-2xl border border-brand-cyan/20 bg-brand-cyan/10 px-4 py-4">
@@ -1002,6 +1031,7 @@ export default function KedolikLocker() {
 
                   <div className="mt-4 grid gap-3">
                     <FieldCard label="Amount" value={createdLockNotice.amount || '0.00'} />
+                    <FieldCard label="Lock ID" value={createdLockNotice.lockId} />
                     <FieldCard label="Token CA" value={formatKedolikAddress(createdLockNotice.tokenMint)} />
                     <FieldCard label="Unlock Date" value={formatKedolikUnixTime(createdLockNotice.unlockAt)} />
                   </div>
@@ -1084,7 +1114,7 @@ export default function KedolikLocker() {
                     <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-gray-300">
                       {showingSampleEscrowForViewer
                         ? 'Sample lock loaded. This lock belongs to another wallet.'
-                        : 'Live on Devnet'}
+                        : 'Live on Mainnet'}
                     </div>
                   </div>
 

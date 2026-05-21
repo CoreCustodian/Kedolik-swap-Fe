@@ -84,6 +84,7 @@ export interface LockerEscrowSummary {
 export interface CreateVestingEscrowInput {
   recipient: string;
   tokenMint: string;
+  lockId?: string;
   vestingStartTime: number;
   cliffTime: number;
   frequency: number;
@@ -127,6 +128,21 @@ const writeI64 = (value: bigint) => {
   const buffer = Buffer.alloc(8);
   buffer.writeBigInt64LE(value);
   return buffer;
+};
+
+const assertU64String = (value: string, label: string) => {
+  try {
+    const parsed = BigInt(value);
+    const maxU64 = (1n << 64n) - 1n;
+
+    if (parsed < 0n || parsed > maxU64) {
+      throw new Error();
+    }
+
+    return parsed;
+  } catch {
+    throw new Error(`${label} must be an unsigned 64-bit integer.`);
+  }
 };
 
 const readU64 = (data: Buffer, offset: number) =>
@@ -591,7 +607,9 @@ export const createLockerVestingEscrow = async (
     throw new Error('Unlock date must be in the future.');
   }
 
-  const lockId = BigInt(Date.now()) * 1000n + BigInt(Math.floor(Math.random() * 1000));
+  const lockId = input.lockId?.trim()
+    ? assertU64String(input.lockId.trim(), 'Lock ID')
+    : BigInt(Date.now());
   const tokenLock = getTokenLockPda(signerWallet.publicKey, tokenMint, lockId);
   const lockVault = getLockVaultPda(tokenLock);
   const ownerToken = input.senderToken

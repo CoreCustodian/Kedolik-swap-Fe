@@ -54,7 +54,7 @@ export const KEDOLIK_DEVNET_DEPLOYMENT = {
   network: KEDOLIK_STAKE_LOCK_V1.cluster,
   notes: [
     'Legacy staking, mint-wrapper, and locker programs have been replaced by the combined Stake Lock V1 program.',
-    'No staking pool instance exists yet on devnet; the staking admin must initialize one.',
+    'No staking pool instance exists yet on mainnet; the staking admin must initialize one.',
   ],
   programsLive: true,
 };
@@ -68,9 +68,9 @@ export const KEDOLIK_DEVNET_SOURCE_CHECK = {
 export const KEDOLIK_DEPLOYMENT_PENDING = false;
 
 export const KEDOLIK_DEVNET_LIVE_MESSAGES = {
-  staking: 'Kedolik Staking is live through the Stake Lock V1 devnet program.',
+  staking: 'Kedolik Staking is live through the Stake Lock V1 mainnet program.',
   locker: 'Kedolik Locker is now live.',
-  testObjects: 'No staking pool instance has been created yet on devnet.',
+  testObjects: 'No staking pool instance has been created yet on mainnet.',
 } as const;
 
 export const KEDOLIK_DEVNET_STAKING_LIVE = {
@@ -85,7 +85,7 @@ export const KEDOLIK_DEVNET_STAKING_LIVE = {
 export const KEDOLIK_DEVNET_LOCKER_LIVE = {
   escrow: '',
   escrowTokenAccount: '',
-  tokenMint: '',
+  tokenMint: KEDOLIK_STAKE_LOCK_V1.mainTokenMint,
   recipient: KEDOLIK_STAKE_LOCK_V1.currentStakingAdmin,
 } as const;
 

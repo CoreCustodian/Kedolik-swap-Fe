@@ -42,7 +42,7 @@ export const KedolikProgramStatusBadge = ({
     <span
       className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${className}`}
     >
-      {live && executable ? 'Live on Devnet' : 'Checking Devnet'}
+      {live && executable ? 'Live on Mainnet' : 'Checking Mainnet'}
     </span>
   );
 };

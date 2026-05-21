@@ -25,7 +25,7 @@ const defaultStatus = (key: KedolikProgramKey): KedolikProgramStatus => ({
   address: KEDOLIK_PROGRAM_ADDRESSES[key],
   live: false,
   executable: false,
-  statusMessage: 'Checking live devnet status...',
+  statusMessage: 'Checking live mainnet status...',
 });
 
 const getDefaultStatusMap = () =>
@@ -71,7 +71,7 @@ export const useKedolikProgramStatus = () => {
                 live: true,
                 executable: accountInfo.executable,
                 statusMessage: accountInfo.executable
-                  ? 'Live on devnet'
+                  ? 'Live on mainnet'
                   : 'Program account found but not executable',
               },
             ] as const;
