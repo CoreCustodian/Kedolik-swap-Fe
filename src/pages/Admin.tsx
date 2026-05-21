@@ -326,9 +326,9 @@ export default function Admin() {
   const [transferringStakingAdmin, setTransferringStakingAdmin] = useState(false);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
   
-  // Check if connected wallet is admin or fee receiver
+  // Check each admin role independently. The DEX admin and staking admin can be different wallets.
   const connectedWalletAddress = publicKey?.toString() ?? null;
-  const isOnChainAdmin = Boolean(
+  const isDexAdmin = Boolean(
     connectedWalletAddress && currentAdmin && connectedWalletAddress === currentAdmin
   );
   const isStakingAdmin = Boolean(
@@ -337,17 +337,25 @@ export default function Admin() {
   const isStakingPoolCreator = Boolean(
     connectedWalletAddress && stakingPools.some((pool) => pool.poolCreator === connectedWalletAddress)
   );
-  const isAdmin = isOnChainAdmin;
+  const isAdmin = isDexAdmin;
   const isFeeReceiver = publicKey && currentFeeReceiver ? publicKey.toString() === currentFeeReceiver : false;
-  const canAccessAdmin = isAdmin || isFeeReceiver || isStakingAdmin || isStakingPoolCreator;
+  const canAccessAdmin = isDexAdmin || isFeeReceiver || isStakingAdmin || isStakingPoolCreator;
   
   // In the new contract model:
-  // - Admin can ONLY change admin and fee receiver (cannot claim fees)
+  // - DEX admin can ONLY change DEX settings and fee receiver.
   // - Fee receiver can ONLY claim fees (cannot change settings)
+  // - Staking admin can ONLY manage Stake Lock staking pools.
   const canClaimFees = isFeeReceiver;
-  const canChangeSettings = isAdmin;
-  const canViewStakingInstance = isAdmin || isStakingAdmin || isStakingPoolCreator;
+  const canChangeSettings = isDexAdmin;
+  const canViewStakingInstance = isStakingAdmin || isStakingPoolCreator;
   const canCreateStakingInstance = isStakingAdmin;
+  const preferredAdminTab: 'fees' | 'settings' | 'staking' = canChangeSettings
+    ? 'settings'
+    : canClaimFees
+      ? 'fees'
+      : canViewStakingInstance
+        ? 'staking'
+        : 'fees';
   const stakingDashboardSummary = useMemo(() => ({
     totalPools: stakingPools.length,
     activePools: stakingPools.filter((pool) => {
@@ -457,12 +465,23 @@ export default function Admin() {
       return;
     }
 
-    if (activeTab === 'fees' && !canClaimFees) {
-      setActiveTab(canViewStakingInstance ? 'staking' : 'settings');
-    } else if (activeTab === 'settings' && !canChangeSettings) {
-      setActiveTab(canViewStakingInstance ? 'staking' : 'fees');
+    const activeTabAllowed =
+      (activeTab === 'fees' && canClaimFees) ||
+      (activeTab === 'settings' && canChangeSettings) ||
+      (activeTab === 'staking' && canViewStakingInstance);
+
+    if (!activeTabAllowed) {
+      setActiveTab(preferredAdminTab);
     }
-  }, [activeTab, canAccessAdmin, canChangeSettings, canClaimFees, canViewStakingInstance, connected]);
+  }, [
+    activeTab,
+    canAccessAdmin,
+    canChangeSettings,
+    canClaimFees,
+    canViewStakingInstance,
+    connected,
+    preferredAdminTab,
+  ]);
   
   // Fetch current fee receiver from AMM config
   const fetchCurrentFeeReceiver = async () => {
@@ -761,7 +780,7 @@ export default function Admin() {
   // Update fee receiver address
   const updateFeeReceiver = async () => {
     if (!isAdmin || !publicKey || !wallet.signTransaction) {
-      showToast('Only admin can update fee receiver', 'error');
+      showToast('Only the DEX admin can update the fee receiver', 'error');
       return;
     }
 
@@ -830,12 +849,12 @@ export default function Admin() {
   // Update admin owner
   const updateAdmin = async () => {
     if (!isAdmin || !publicKey || !wallet.signTransaction) {
-      showToast('Only current admin can change admin', 'error');
+      showToast('Only the current DEX admin can change DEX admin ownership', 'error');
       return;
     }
 
     if (!newAdmin) {
-      showToast('Please enter a new admin address', 'warning');
+      showToast('Please enter a new DEX admin address', 'warning');
       return;
     }
 
@@ -854,14 +873,14 @@ export default function Admin() {
         ammConfigs.push(AMM_CONFIG.toString());
       }
 
-      showToast(`Updating admin on ${ammConfigs.length} config(s)...`, 'info');
+      showToast(`Updating DEX admin on ${ammConfigs.length} config(s)...`, 'info');
 
       // Execute sequentially for reliability
       for (const cfgStr of ammConfigs) {
         const cfg = new PublicKey(cfgStr);
 
         // Update owner (param = 3)
-        showToast(`Updating admin on config ${cfg.toString().slice(0, 8)}…`, 'info');
+        showToast(`Updating DEX admin on config ${cfg.toString().slice(0, 8)}...`, 'info');
         const tx = await program.methods
           .updateAmmConfig(3, new BN(0))
           .accounts({ owner: publicKey, ammConfig: cfg })
@@ -871,7 +890,7 @@ export default function Admin() {
         // Wait for confirmation before proceeding (using polling for Alchemy RPC compatibility)
         const { smartConfirmTransaction } = await import('../utils/transactionConfirmation');
         await smartConfirmTransaction(connection, tx, 'confirmed');
-        showToast(`✅ Admin updated on config ${cfg.toString().slice(0, 8)}…`, 'success', tx);
+        showToast(`DEX admin updated on config ${cfg.toString().slice(0, 8)}...`, 'success', tx);
         
         // Add delay before next config (if any)
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -880,8 +899,8 @@ export default function Admin() {
       // Refresh admin status from blockchain
       await refreshConfig();
       
-      showToast('✅ Admin updated successfully! Please reconnect with the new admin wallet.', 'success');
-      showToast('⚠️ You will lose admin access after this transaction confirms.', 'warning');
+      showToast('DEX admin updated successfully. Please reconnect with the new DEX admin wallet.', 'success');
+      showToast('You will lose DEX admin access after this transaction confirms.', 'warning');
       
       // Clear input field
       setNewAdmin('');
@@ -1272,7 +1291,9 @@ export default function Admin() {
             <h1 className="text-2xl sm:text-4xl font-bold mb-2">
               <span className="gradient-text">Admin Panel</span>
             </h1>
-            <p className="text-gray-400 text-sm sm:text-base">Manage protocol fees and configuration</p>
+            <p className="text-gray-400 text-sm sm:text-base">
+              Manage DEX settings, fee collection, and Stake Lock staking administration.
+            </p>
           </div>
 
           {/* Admin Check */}
@@ -1294,11 +1315,11 @@ export default function Admin() {
               </div>
               <p className="mb-2 text-sm font-semibold text-red-200 sm:text-base">Access denied</p>
               <p className="mb-4 text-sm text-gray-400">
-                Only the protocol admin, staking admin, or fee receiver can access this panel
+                Only the DEX admin, staking admin, staking pool creator, or fee receiver can access this panel.
               </p>
               <div className="text-xs text-gray-500 space-y-1">
                 {currentAdmin ? (
-                  <p>Current Admin: <span className="font-mono">{currentAdmin.slice(0, 12)}...{currentAdmin.slice(-8)}</span></p>
+                  <p>Current DEX Admin: <span className="font-mono">{currentAdmin.slice(0, 12)}...{currentAdmin.slice(-8)}</span></p>
                 ) : (
                   <p>Loading admin from blockchain...</p>
                 )}
@@ -1331,9 +1352,9 @@ export default function Admin() {
                   <div>
                     <h3 className="text-sm font-bold text-gray-400 mb-1">Your Role</h3>
                     <div className="flex flex-wrap gap-2">
-                      {isAdmin && (
+                      {isDexAdmin && (
                         <span className="px-3 py-1 bg-brand-purple/20 text-brand-purple rounded-full text-xs font-semibold border border-brand-purple/30">
-                          Admin (Can change settings)
+                          DEX Admin (Can change DEX settings)
                         </span>
                       )}
                       {isStakingAdmin && (
@@ -1344,6 +1365,11 @@ export default function Admin() {
                       {isFeeReceiver && (
                         <span className="px-3 py-1 bg-brand-cyan/20 text-brand-cyan rounded-full text-xs font-semibold border border-brand-cyan/30">
                           Fee Receiver (Can claim fees)
+                        </span>
+                      )}
+                      {isStakingPoolCreator && !isStakingAdmin && (
+                        <span className="px-3 py-1 bg-emerald-400/20 text-emerald-200 rounded-full text-xs font-semibold border border-emerald-400/30">
+                          Pool Creator (Can reclaim eligible leftovers)
                         </span>
                       )}
                     </div>
@@ -1358,6 +1384,22 @@ export default function Admin() {
                   >
                     Refresh Status
                   </button>
+                </div>
+                <div className="mt-4 grid gap-3 text-xs sm:grid-cols-3">
+                  <div className="rounded-lg border border-white/10 bg-dark-900/80 p-3">
+                    <div className="mb-1 font-semibold uppercase tracking-[0.12em] text-gray-500">DEX Admin</div>
+                    <div className="break-all font-mono text-white">{currentAdmin ?? 'Loading...'}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-dark-900/80 p-3">
+                    <div className="mb-1 font-semibold uppercase tracking-[0.12em] text-gray-500">Staking Admin</div>
+                    <div className="break-all font-mono text-white">
+                      {loadingStakingAdminConfig ? 'Loading...' : stakingAdminConfig?.authority ?? 'Unavailable'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-dark-900/80 p-3">
+                    <div className="mb-1 font-semibold uppercase tracking-[0.12em] text-gray-500">Fee Receiver</div>
+                    <div className="break-all font-mono text-white">{currentFeeReceiver ?? 'Loading...'}</div>
+                  </div>
                 </div>
               </div>
 
@@ -2378,9 +2420,9 @@ export default function Admin() {
                       <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-yellow-400/30 bg-yellow-400/10 text-sm font-bold text-yellow-200">
                         !
                       </div>
-                      <p className="text-yellow-400 font-semibold mb-2">Settings Not Available</p>
-                      <p className="text-gray-400 mb-2">Only the admin wallet can change settings.</p>
-                      <p className="text-xs text-gray-500">You are the fee receiver and can claim fees instead.</p>
+                      <p className="text-yellow-400 font-semibold mb-2">DEX Settings Not Available</p>
+                      <p className="text-gray-400 mb-2">Only the DEX admin wallet can change DEX settings.</p>
+                      <p className="text-xs text-gray-500">Use the wallet stored as the DEX admin, or switch to an available tab for this wallet.</p>
                     </div>
                   )}
 
@@ -2451,17 +2493,17 @@ export default function Admin() {
                     </div>
                   </div>
 
-                  {/* Change Admin */}
+                  {/* Change DEX Admin */}
                   <div className="bg-dark-800/50 backdrop-blur-sm border border-red-500/20 rounded-xl p-4 sm:p-6">
-                    <h3 className="text-base font-bold mb-1 text-red-400">Change Admin</h3>
-                    <p className="text-xs text-gray-400 mb-4">Transfer admin rights to a new wallet address</p>
+                    <h3 className="text-base font-bold mb-1 text-red-400">Change DEX Admin</h3>
+                    <p className="text-xs text-gray-400 mb-4">Transfer DEX admin rights to a new wallet address</p>
                     
                     <div className="flex flex-col sm:flex-row gap-3 mb-3">
                       <input
                         type="text"
                         value={newAdmin}
                         onChange={(e) => setNewAdmin(e.target.value)}
-                        placeholder="Enter new admin public key"
+                        placeholder="Enter new DEX admin public key"
                         className="flex-1 bg-dark-900 border border-red-500/30 rounded-lg px-3 py-2.5 text-sm font-mono text-white placeholder-gray-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
                       />
                       <button
@@ -2469,7 +2511,7 @@ export default function Admin() {
                         disabled={updatingAdmin || !newAdmin}
                         className="px-5 py-2.5 text-sm font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                       >
-                        {updatingAdmin ? 'Updating...' : 'Change Admin'}
+                        {updatingAdmin ? 'Updating...' : 'Change DEX Admin'}
                       </button>
                     </div>
                     
@@ -2478,13 +2520,13 @@ export default function Admin() {
                         DANGER: This action is irreversible.
                       </p>
                       <p className="text-xs text-red-300">
-                        Once you transfer admin rights, you will immediately lose all admin access. Make sure you have access to the new admin wallet before proceeding.
+                        Once you transfer DEX admin rights, this wallet will immediately lose DEX settings access. Staking admin ownership is separate and must be transferred from the Staking tab.
                       </p>
                     </div>
                     
                     <div className="bg-white/5 rounded-lg p-3">
                       <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs text-gray-400">Current Admin (On-Chain)</div>
+                        <div className="text-xs text-gray-400">Current DEX Admin (On-Chain)</div>
                         <button
                           onClick={refreshConfig}
                           className="text-xs text-brand-cyan hover:text-brand-cyan/80 transition-colors"
@@ -2495,11 +2537,11 @@ export default function Admin() {
                       <div className="font-mono text-xs text-white break-all">
                         {currentAdmin || 'Loading from blockchain...'}
                       </div>
-                      {currentAdmin && isOnChainAdmin && (
-                        <div className="mt-2 text-xs text-green-400">You are the current admin</div>
+                      {currentAdmin && isDexAdmin && (
+                        <div className="mt-2 text-xs text-green-400">You are the current DEX admin</div>
                       )}
-                      {currentAdmin && !isOnChainAdmin && (
-                        <div className="mt-2 text-xs text-red-400">You are NOT the admin</div>
+                      {currentAdmin && !isDexAdmin && (
+                        <div className="mt-2 text-xs text-red-400">You are NOT the DEX admin</div>
                       )}
                       {!currentAdmin && (
                         <div className="mt-2 text-xs text-yellow-400">Fetching admin from blockchain...</div>
@@ -2512,7 +2554,7 @@ export default function Admin() {
                     <h3 className="text-base font-bold mb-4">System Information</h3>
                     <div className="space-y-3">
                       <div className="bg-white/5 rounded-lg p-3">
-                        <div className="text-xs text-gray-400 mb-1">Admin Address</div>
+                        <div className="text-xs text-gray-400 mb-1">DEX Admin Address</div>
                         <div className="font-mono text-xs text-white break-all">{currentAdmin}</div>
                       </div>
                       <div className="bg-white/5 rounded-lg p-3">
