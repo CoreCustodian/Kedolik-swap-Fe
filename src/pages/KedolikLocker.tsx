@@ -1,6 +1,7 @@
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { getMint } from '@solana/spl-token';
 import { PublicKey } from '@solana/web3.js';
 import toast from 'react-hot-toast';
@@ -109,7 +110,7 @@ const FieldCard = ({
   valueClassName = '',
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   valueClassName?: string;
 }) => (
   <div className="rounded-lg border border-white/10 bg-gradient-to-br from-white/[0.055] to-white/[0.025] p-3">
@@ -163,8 +164,55 @@ const TokenIdentity = ({ token, fallback }: { token?: TokenInfo; fallback: strin
   );
 };
 
-const getTokenDisplayName = (token?: TokenInfo) =>
-  token?.symbol?.trim() || token?.name?.trim() || 'Unknown';
+const getTokenDisplayName = (token?: TokenInfo, mintAddress?: string | null) =>
+  token?.symbol?.trim() ||
+  token?.name?.trim() ||
+  (mintAddress ? formatKedolikAddress(mintAddress) : 'Unknown');
+
+const TokenAmountDisplay = ({
+  rawAmount,
+  decimals,
+  token,
+  mintAddress,
+  size = 'sm',
+}: {
+  rawAmount: string;
+  decimals: number | null;
+  token?: TokenInfo;
+  mintAddress?: string | null;
+  size?: 'sm' | 'lg';
+}) => {
+  const symbol = getTokenDisplayName(token, mintAddress);
+  const iconClassName = size === 'lg' ? 'h-7 w-7 text-[10px]' : 'h-5 w-5 text-[8px]';
+
+  return (
+    <span className="inline-flex max-w-full flex-wrap items-center gap-2 align-middle">
+      <span>{formatKedolikTokenAmount(rawAmount, decimals)}</span>
+      {token?.logoURI ? (
+        <img
+          src={token.logoURI}
+          alt={symbol}
+          className={`${iconClassName} shrink-0 rounded-full object-cover`}
+          onError={(event) => {
+            const target = event.target as HTMLImageElement;
+            target.style.display = 'none';
+            if (target.nextElementSibling) {
+              (target.nextElementSibling as HTMLElement).style.display = 'inline-flex';
+            }
+          }}
+        />
+      ) : null}
+      <span
+        className={`${iconClassName} ${
+          token?.logoURI ? 'hidden' : 'inline-flex'
+        } shrink-0 items-center justify-center rounded-full bg-gradient-brand font-bold text-white`}
+      >
+        {symbol.slice(0, 2).toUpperCase()}
+      </span>
+      <span>{symbol}</span>
+    </span>
+  );
+};
 
 const getLockProgressPercent = (escrow: LockerEscrowSummary) => {
   const total = toBigInt(escrow.scheduledTotalAmount);
@@ -252,11 +300,11 @@ const LockListItem = ({
         <div className="mt-1 flex flex-wrap items-center gap-2 text-base font-semibold text-white">
           <span>{formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}</span>
           <span className="max-w-full truncate rounded-full border border-brand-cyan/25 bg-brand-cyan/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand-cyan">
-            {getTokenDisplayName(token)}
+            {getTokenDisplayName(token, escrow.tokenMint)}
           </span>
         </div>
         <div className="mt-2">
-          <TokenIdentity token={token} fallback="Unknown" />
+          <TokenIdentity token={token} fallback={formatKedolikAddress(escrow.tokenMint)} />
         </div>
         <div className="mt-2 text-xs text-gray-400">
           {getLockProgressPercent(escrow).toFixed(0)}% unlocked
@@ -311,10 +359,15 @@ const ClaimableLockCard = ({
           Claimable
         </div>
         <div className="mt-2 text-2xl font-bold text-white">
-          {formatKedolikTokenAmount(escrow.claimableAmount, escrow.tokenDecimals)}
+          <TokenAmountDisplay
+            rawAmount={escrow.claimableAmount}
+            decimals={escrow.tokenDecimals}
+            token={token}
+            mintAddress={escrow.tokenMint}
+          />
         </div>
         <div className="mt-3">
-          <TokenIdentity token={token} fallback="Token" />
+          <TokenIdentity token={token} fallback={formatKedolikAddress(escrow.tokenMint)} />
         </div>
       </div>
       <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
@@ -325,7 +378,10 @@ const ClaimableLockCard = ({
     <div className="mt-4 grid gap-2 text-sm">
       <PreviewRow
         label="Locked"
-        value={formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}
+        value={`${formatKedolikTokenAmount(
+          escrow.scheduledTotalAmount,
+          escrow.tokenDecimals
+        )} ${getTokenDisplayName(token, escrow.tokenMint)}`}
       />
       <PreviewRow label="From" value={formatLockHolder(escrow.creator)} />
       <PreviewRow label="Unlock" value={formatKedolikUnixTime(escrow.cliffTime)} />
@@ -877,7 +933,10 @@ export default function KedolikLocker() {
                     />
                     {simpleLockForm.tokenMint.trim() && (
                       <div className="mt-4 rounded-xl border border-white/10 bg-dark-900/60 p-3">
-                        <TokenIdentity token={createLockToken} fallback="Token" />
+                        <TokenIdentity
+                          token={createLockToken}
+                          fallback={formatKedolikAddress(simpleLockForm.tokenMint.trim())}
+                        />
                       </div>
                     )}
                   </label>
@@ -1104,7 +1163,10 @@ export default function KedolikLocker() {
                       </div>
                       <h2 className="mt-4 text-3xl font-bold font-heading text-white">Selected Lock</h2>
                       <div className="mt-4 max-w-sm rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                        <TokenIdentity token={selectedLockToken} fallback="Token" />
+                        <TokenIdentity
+                          token={selectedLockToken}
+                          fallback={formatKedolikAddress(selectedEscrow.tokenMint)}
+                        />
                       </div>
                       <p className="mt-3 max-w-2xl text-sm leading-relaxed text-gray-300">
                         {selectedLockHeadline}
@@ -1126,10 +1188,13 @@ export default function KedolikLocker() {
                             Total Locked
                           </div>
                           <div className="mt-2 text-3xl font-bold text-white">
-                            {formatKedolikTokenAmount(
-                              selectedEscrow.scheduledTotalAmount,
-                              selectedEscrow.tokenDecimals
-                            )}
+                            <TokenAmountDisplay
+                              rawAmount={selectedEscrow.scheduledTotalAmount}
+                              decimals={selectedEscrow.tokenDecimals}
+                              token={selectedLockToken}
+                              mintAddress={selectedEscrow.tokenMint}
+                              size="lg"
+                            />
                           </div>
                         </div>
                         <div className="text-sm text-gray-300">
@@ -1147,17 +1212,25 @@ export default function KedolikLocker() {
                       <div className="mt-5 grid gap-3 sm:grid-cols-3">
                         <FieldCard
                           label="Still Locked"
-                          value={formatKedolikTokenAmount(
-                            selectedEscrow.lockedAmount,
-                            selectedEscrow.tokenDecimals
-                          )}
+                          value={
+                            <TokenAmountDisplay
+                              rawAmount={selectedEscrow.lockedAmount}
+                              decimals={selectedEscrow.tokenDecimals}
+                              token={selectedLockToken}
+                              mintAddress={selectedEscrow.tokenMint}
+                            />
+                          }
                         />
                         <FieldCard
                           label="Claimable"
-                          value={formatKedolikTokenAmount(
-                            selectedEscrow.claimableAmount,
-                            selectedEscrow.tokenDecimals
-                          )}
+                          value={
+                            <TokenAmountDisplay
+                              rawAmount={selectedEscrow.claimableAmount}
+                              decimals={selectedEscrow.tokenDecimals}
+                              token={selectedLockToken}
+                              mintAddress={selectedEscrow.tokenMint}
+                            />
+                          }
                         />
                         <FieldCard
                           label="Unlock Date"
