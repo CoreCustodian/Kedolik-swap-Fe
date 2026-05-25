@@ -34,19 +34,11 @@ export const getLocalTokenLogo = (mint: PublicKey): string => {
 };
 
 /**
- * Local Token List (Fallback)
- * 
- * This is the fallback token list used when the remote GitHub config is unavailable.
- * 
- * IMPORTANT: The primary token list is now fetched from GitHub!
+ * Static token metadata retained for older utilities only.
+ *
+ * Frontend token selectors must use the GitHub token config through useRemoteTokens.
  * Update the remote token list at:
  * https://github.com/KedolikSwap/config/blob/main/tokens.json
- * 
- * To use the remote token list in components, use the useRemoteTokens hook:
- * ```tsx
- * import { useRemoteTokens } from '../hooks/useRemoteTokens';
- * const { tokens, isLoading, getTokenByMint } = useRemoteTokens();
- * ```
  */
 export const DEVNET_TOKENS: { [key: string]: TokenInfo } = {
   SOL: {

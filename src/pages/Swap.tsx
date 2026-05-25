@@ -39,7 +39,7 @@ const Swap = () => {
   const navigate = useNavigate();
   
   // Remote config hooks
-  const { tokens, isLoading: isLoadingTokens, getTokenByMint } = useRemoteTokens();
+  const { tokens, isLoading: isLoadingTokens, getScopedTokenByMint } = useRemoteTokens('swap');
   const { swapEnabled, maintenanceMode } = useFeatureFlags();
   
   // Create placeholder token for initial state
@@ -82,7 +82,7 @@ const Swap = () => {
     if (fromParam) {
       try {
         const fromMint = new PublicKey(fromParam);
-        const token = getTokenByMint(fromMint);
+        const token = getScopedTokenByMint(fromMint);
         if (token) {
           newFromToken = token;
         }
@@ -94,7 +94,7 @@ const Swap = () => {
     if (toParam) {
       try {
         const toMint = new PublicKey(toParam);
-        const token = getTokenByMint(toMint);
+        const token = getScopedTokenByMint(toMint);
         if (token) {
           newToToken = token;
         }
@@ -108,7 +108,7 @@ const Swap = () => {
     setTokensInitialized(true);
     
     isInitializedRef.current = true;
-  }, [tokens, searchParams, getTokenByMint]); // Re-run when tokens load
+  }, [tokens, searchParams, getScopedTokenByMint]); // Re-run when tokens load
   
   // Update URL when tokens change (but not during initialization)
   useEffect(() => {
@@ -1753,7 +1753,6 @@ const Swap = () => {
           setShowFromTokenModal(false);
         }}
         excludeToken={toToken}
-        connection={connection}
         tokens={tokens}
       />
       
@@ -1765,7 +1764,6 @@ const Swap = () => {
           setShowToTokenModal(false);
         }}
         excludeToken={fromToken}
-        connection={connection}
         tokens={tokens}
       />
     </>

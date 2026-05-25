@@ -6,7 +6,7 @@ This repository contains configuration files for Kedolik Swap that can be update
 
 ### `tokens.json`
 
-Contains the list of tokens displayed in the swap interface.
+Contains the list of tokens available to frontend token selectors and metadata displays.
 
 **Structure:**
 ```json
@@ -21,7 +21,13 @@ Contains the list of tokens displayed in the swap interface.
       "decimals": 9,
       "logoURI": "https://example.com/logo.png",
       "coingeckoId": "coingecko-id",
-      "enabled": true
+      "enabled": true,
+      "display": {
+        "swap": true,
+        "pools": true,
+        "staking": false,
+        "locker": false
+      }
     }
   ]
 }
@@ -35,6 +41,25 @@ Contains the list of tokens displayed in the swap interface.
 - `logoURI` (optional): URL to the token logo image
 - `coingeckoId` (optional): CoinGecko ID for price fetching
 - `enabled` (optional, default: true): Set to `false` to hide the token
+- `display` (optional): Controls which frontend token lists include this token
+  - `swap`: Show in the Swap token selector
+  - `pools`: Show in the Pools/liquidity token selector
+  - `staking`: Show in staking-specific token selectors/metadata lists
+  - `locker`: Show in locker-specific token selectors/metadata lists
+
+If `display` is omitted, the token remains visible in every list for backward compatibility. If `display` is present, only scopes set to `true` will include the token.
+
+You can also use a compact `lists` array instead of `display`:
+```json
+{
+  "mint": "TOKEN_MINT_ADDRESS",
+  "symbol": "STAKE",
+  "name": "Stake Token",
+  "decimals": 9,
+  "enabled": true,
+  "lists": ["staking"]
+}
+```
 
 **To add a new token:**
 1. Edit `tokens.json`
@@ -44,6 +69,26 @@ Contains the list of tokens displayed in the swap interface.
 
 **To disable a token:**
 Set `"enabled": false` for that token (don't delete it, in case you want to re-enable later).
+
+**To show a token only on Swap and Pools:**
+```json
+"display": {
+  "swap": true,
+  "pools": true,
+  "staking": false,
+  "locker": false
+}
+```
+
+**To show a token only on Staking:**
+```json
+"display": {
+  "swap": false,
+  "pools": false,
+  "staking": true,
+  "locker": false
+}
+```
 
 ---
 

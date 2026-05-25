@@ -21,7 +21,7 @@ const Pools = () => {
   const wallet = useAnchorWallet();
   
   // Remote config hooks
-  const { tokens, isLoading: isLoadingTokens, getTokenByMint } = useRemoteTokens();
+  const { tokens, isLoading: isLoadingTokens, getTokenByMint } = useRemoteTokens('pools');
   const { poolsEnabled, maintenanceMode } = useFeatureFlags();
   
   const [activeTab, setActiveTab] = useState<'all' | 'my'>('all');
@@ -1026,7 +1026,6 @@ const CreatePoolModal = ({
           setShowToken0Modal(false);
         }}
         excludeToken={token1}
-        connection={connection}
         tokens={tokens}
       />
       
@@ -1038,7 +1037,6 @@ const CreatePoolModal = ({
           setShowToken1Modal(false);
         }}
         excludeToken={token0}
-        connection={connection}
         tokens={tokens}
       />
     </div>

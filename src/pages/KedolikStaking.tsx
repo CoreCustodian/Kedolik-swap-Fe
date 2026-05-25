@@ -322,7 +322,7 @@ export default function KedolikStaking() {
   const { kedolikDevnetEnabled } = useFeatureFlags();
   const { programs, isLoading: isLoadingPrograms, refresh: refreshProgramStatus } = useKedolikProgramStatus();
   const { quarries, isLoading, error, refresh, stakingService } = useKedolikStaking();
-  const { getTokenByMint } = useRemoteTokens();
+  const { getTokenByMint } = useRemoteTokens('staking');
   const [amount, setAmount] = useState('');
   const [amountMode, setAmountMode] = useState<'stake' | 'unstake'>('stake');
   const [actionLoading, setActionLoading] = useState<'stake' | 'unstake' | 'claim' | null>(null);

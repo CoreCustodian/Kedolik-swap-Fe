@@ -1,69 +1,69 @@
 import { useState, useEffect, useCallback } from 'react';
 import { PublicKey } from '@solana/web3.js';
-import { 
-  fetchRemoteTokenList, 
+import {
+  fetchRemoteTokenList,
   convertRemoteToken,
-  clearRemoteConfigCache 
+  clearRemoteConfigCache,
+  isRemoteTokenEnabledForScope,
 } from '../config/remoteConfig';
-import { TokenInfo, DEVNET_TOKENS } from '../config/tokens';
+import type { TokenListScope } from '../config/remoteConfig';
+import type { TokenInfo } from '../config/tokens';
 
 /**
- * React hook for accessing the remote token list
- * 
- * Fetches tokens from GitHub and falls back to local tokens if unavailable.
- * 
- * Usage:
- * ```tsx
- * const { tokens, isLoading, getTokenByMint, refresh } = useRemoteTokens();
- * ```
+ * React hook for accessing the GitHub token list.
+ *
+ * `tokens` is filtered for the requested scope and should be used for selectable lists.
+ * `allTokens` and `getTokenByMint` keep all enabled token metadata available for display.
  */
-export function useRemoteTokens() {
-  const [tokens, setTokens] = useState<TokenInfo[]>(Object.values(DEVNET_TOKENS));
+export function useRemoteTokens(scope: TokenListScope = 'all') {
+  const [allTokens, setAllTokens] = useState<TokenInfo[]>([]);
+  const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [version, setVersion] = useState<string>('local');
+  const [version, setVersion] = useState<string>('github-loading');
 
   const loadTokens = useCallback(async (forceRefresh = false) => {
     try {
       setIsLoading(true);
       setError(null);
-      
+
       if (forceRefresh) {
         clearRemoteConfigCache();
       }
-      
+
       const remoteData = await fetchRemoteTokenList();
-      
+
       if (remoteData && remoteData.tokens.length > 0) {
-        // Convert remote tokens to local format
-        const convertedTokens: TokenInfo[] = remoteData.tokens
-          .filter(t => t.enabled !== false) // Filter out disabled tokens
+        const enabledRemoteTokens = remoteData.tokens.filter((token) => token.enabled !== false);
+        const convertedTokens = enabledRemoteTokens.map(convertRemoteToken);
+        const scopedTokens = enabledRemoteTokens
+          .filter((token) => isRemoteTokenEnabledForScope(token, scope))
           .map(convertRemoteToken);
-        
-        setTokens(convertedTokens);
+
+        setAllTokens(convertedTokens);
+        setTokens(scopedTokens);
         setVersion(remoteData.version);
-        console.log(`📋 Using remote token list v${remoteData.version}`);
+        console.log(`Using remote token list v${remoteData.version} (${scope})`);
       } else {
-        // Fallback to local tokens
-        console.log('📋 Using local fallback token list');
-        setTokens(Object.values(DEVNET_TOKENS));
-        setVersion('local-fallback');
+        console.warn('GitHub token list is unavailable or empty');
+        setAllTokens([]);
+        setTokens([]);
+        setVersion('github-unavailable');
       }
     } catch (err) {
       console.error('Error loading remote tokens:', err);
       setError(err instanceof Error ? err.message : 'Unknown error');
-      // Keep using local tokens on error
-      setTokens(Object.values(DEVNET_TOKENS));
-      setVersion('local-error');
+      setAllTokens([]);
+      setTokens([]);
+      setVersion('github-error');
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     loadTokens();
-    
-    // Refresh tokens every 10 minutes
+
     const interval = setInterval(() => {
       loadTokens();
     }, 10 * 60 * 1000);
@@ -74,23 +74,34 @@ export function useRemoteTokens() {
   const refresh = useCallback(() => loadTokens(true), [loadTokens]);
 
   const getTokenByMint = useCallback((mint: PublicKey): TokenInfo | undefined => {
-    return tokens.find(token => token.mint.equals(mint));
+    return allTokens.find((token) => token.mint.equals(mint));
+  }, [allTokens]);
+
+  const getScopedTokenByMint = useCallback((mint: PublicKey): TokenInfo | undefined => {
+    return tokens.find((token) => token.mint.equals(mint));
   }, [tokens]);
 
   const getTokenBySymbol = useCallback((symbol: string): TokenInfo | undefined => {
-    return tokens.find(token => token.symbol.toUpperCase() === symbol.toUpperCase());
+    return allTokens.find((token) => token.symbol.toUpperCase() === symbol.toUpperCase());
+  }, [allTokens]);
+
+  const getScopedTokenBySymbol = useCallback((symbol: string): TokenInfo | undefined => {
+    return tokens.find((token) => token.symbol.toUpperCase() === symbol.toUpperCase());
   }, [tokens]);
 
   return {
     tokens,
+    allTokens,
     isLoading,
     error,
     version,
+    scope,
     refresh,
     getTokenByMint,
+    getScopedTokenByMint,
     getTokenBySymbol,
+    getScopedTokenBySymbol,
   };
 }
 
 export default useRemoteTokens;
-

@@ -1,14 +1,11 @@
-import { useState, useEffect } from 'react';
-import { PublicKey } from '@solana/web3.js';
+import { useState } from 'react';
 import { TokenInfo } from '../config/tokens';
-import { TokenImportModal } from './TokenImportModal';
 
 interface TokenSelectModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelect: (token: TokenInfo) => void;
   excludeToken?: TokenInfo;
-  connection: any;
   tokens: TokenInfo[]; // Remote tokens passed as prop
 }
 
@@ -17,69 +14,12 @@ export const TokenSelectModal = ({
   onClose,
   onSelect,
   excludeToken,
-  connection,
   tokens, // Use tokens from props (remote config)
 }: TokenSelectModalProps) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [customTokens, setCustomTokens] = useState<TokenInfo[]>([]);
-
-  // Load custom tokens from localStorage on mount
-  useEffect(() => {
-    const stored = localStorage.getItem('customTokens');
-    if (stored) {
-      try {
-        const tokens = JSON.parse(stored).map((t: any) => ({
-          ...t,
-          mint: new PublicKey(t.mint),
-        }));
-        setCustomTokens(tokens);
-      } catch (error) {
-        console.error('Error loading custom tokens:', error);
-      }
-    }
-  }, []);
-
-  // Save custom tokens to localStorage
-  const saveCustomTokens = (tokens: TokenInfo[]) => {
-    localStorage.setItem(
-      'customTokens',
-      JSON.stringify(
-        tokens.map((t) => ({
-          ...t,
-          mint: t.mint.toString(),
-        }))
-      )
-    );
-  };
-
-  // Remove a custom token
-  const removeCustomToken = (mintToRemove: PublicKey) => {
-    const updatedCustomTokens = customTokens.filter(
-      (token) => !token.mint.equals(mintToRemove)
-    );
-    setCustomTokens(updatedCustomTokens);
-    saveCustomTokens(updatedCustomTokens);
-  };
-
-  // Handle token import
-  const handleTokenImport = (token: TokenInfo) => {
-    const updatedCustomTokens = [...customTokens, token];
-    setCustomTokens(updatedCustomTokens);
-    saveCustomTokens(updatedCustomTokens);
-    setShowImportModal(false);
-    // Auto-select the imported token
-    onSelect(token);
-    onClose();
-  };
-
-  // Get all available tokens (remote + custom)
-  const getAllTokens = (): TokenInfo[] => {
-    return [...tokens, ...customTokens];
-  };
 
   // Filter tokens based on search
-  const filteredTokens = getAllTokens().filter((token) => {
+  const filteredTokens = tokens.filter((token) => {
     if (excludeToken && token.mint.equals(excludeToken.mint)) {
       return false;
     }
@@ -102,8 +42,7 @@ export const TokenSelectModal = ({
   if (!isOpen) return null;
 
   return (
-    <>
-      <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
         <div className="bg-dark-900 rounded-2xl border border-white/20 shadow-2xl w-full max-w-md max-h-[85vh] sm:max-h-[90vh] flex flex-col overflow-hidden animate-scale-in">
           {/* Header */}
           <div className="flex items-center justify-between p-3 sm:p-4 md:p-6 border-b border-white/10">
@@ -157,29 +96,6 @@ export const TokenSelectModal = ({
             </div>
           </div>
 
-          {/* Import Token Button */}
-          <div className="px-3 sm:px-4 py-2 sm:py-3 border-b border-white/10">
-            <button
-              onClick={() => setShowImportModal(true)}
-              className="w-full flex items-center justify-center gap-2 px-3 sm:px-4 py-2 sm:py-2.5 bg-brand-cyan/10 hover:bg-brand-cyan/20 border border-brand-cyan/30 rounded-lg text-brand-cyan text-sm sm:text-base font-medium transition-all"
-            >
-              <svg
-                className="w-4 h-4 sm:w-5 sm:h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-              <span>Import Custom Token</span>
-            </button>
-          </div>
-
           {/* Token List */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
             {filteredTokens.length === 0 ? (
@@ -199,13 +115,12 @@ export const TokenSelectModal = ({
                 </svg>
                 <p className="text-sm sm:text-base font-medium">No tokens found</p>
                 <p className="text-xs sm:text-sm mt-1">
-                  Try a different search or import a custom token
+                  Only tokens listed in the GitHub token config are available.
                 </p>
               </div>
             ) : (
               <div className="divide-y divide-white/5">
                 {filteredTokens.map((token) => {
-                  const isCustom = customTokens.some((t) => t.mint.equals(token.mint));
                   return (
                     <div
                       key={token.mint.toString()}
@@ -237,45 +152,12 @@ export const TokenSelectModal = ({
                             <span className="font-semibold text-white text-sm sm:text-base">
                               {token.symbol}
                             </span>
-                            {isCustom && (
-                              <span className="text-xs px-1.5 py-0.5 bg-brand-cyan/20 text-brand-cyan rounded">
-                                Custom
-                              </span>
-                            )}
                           </div>
                           <div className="text-xs text-gray-400 truncate">
                             {token.name}
                           </div>
                         </div>
                       </button>
-                      {isCustom && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (
-                              confirm(`Remove ${token.symbol} from your token list?`)
-                            ) {
-                              removeCustomToken(token.mint);
-                            }
-                          }}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-2 mr-2 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 flex-shrink-0"
-                          title="Remove token"
-                        >
-                          <svg
-                            className="w-4 h-4 sm:w-5 sm:h-5"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                            />
-                          </svg>
-                        </button>
-                      )}
                     </div>
                   );
                 })}
@@ -283,16 +165,6 @@ export const TokenSelectModal = ({
             )}
           </div>
         </div>
-      </div>
-
-      {/* Import Modal */}
-      <TokenImportModal
-        isOpen={showImportModal}
-        onClose={() => setShowImportModal(false)}
-        onImport={handleTokenImport}
-        connection={connection}
-        existingTokens={getAllTokens()}
-      />
-    </>
+    </div>
   );
 };

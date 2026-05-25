@@ -31,6 +31,9 @@ const CACHE_DURATION = 0;
 // TYPES
 // ============================================================================
 
+export type TokenDisplayScope = 'swap' | 'pools' | 'staking' | 'locker';
+export type TokenListScope = TokenDisplayScope | 'all';
+
 export interface RemoteTokenInfo {
   mint: string;
   symbol: string;
@@ -39,6 +42,12 @@ export interface RemoteTokenInfo {
   logoURI?: string;
   coingeckoId?: string;
   enabled?: boolean; // Optional: can disable specific tokens
+  display?: Partial<Record<TokenDisplayScope, boolean>>;
+  lists?: TokenListScope[];
+  showOnSwap?: boolean;
+  showOnPools?: boolean;
+  showOnStaking?: boolean;
+  showOnLocker?: boolean;
 }
 
 export interface TokenListResponse {
@@ -138,6 +147,41 @@ export async function fetchRemoteTokenList(): Promise<TokenListResponse | null> 
     console.error('❌ Failed to fetch remote token list:', error);
     return null;
   }
+}
+
+export function isRemoteTokenEnabledForScope(
+  token: RemoteTokenInfo,
+  scope: TokenListScope = 'all'
+): boolean {
+  if (token.enabled === false) {
+    return false;
+  }
+
+  if (scope === 'all') {
+    return true;
+  }
+
+  if (Array.isArray(token.lists)) {
+    return token.lists.includes('all') || token.lists.includes(scope);
+  }
+
+  if (token.display) {
+    return token.display[scope] === true;
+  }
+
+  const legacyFlags = {
+    swap: token.showOnSwap,
+    pools: token.showOnPools,
+    staking: token.showOnStaking,
+    locker: token.showOnLocker,
+  };
+
+  const hasLegacyScopeFlags = Object.values(legacyFlags).some((value) => value !== undefined);
+  if (hasLegacyScopeFlags) {
+    return legacyFlags[scope] === true;
+  }
+
+  return true;
 }
 
 /**
