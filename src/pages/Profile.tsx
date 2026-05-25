@@ -14,7 +14,12 @@ const Profile = () => {
   const { connection } = useConnection();
   const wallet = useAnchorWallet();
   const { setVisible: setWalletModalVisible } = useWalletModal();
-  const { tokens, getTokenByMint } = useRemoteTokens();
+  const {
+    tokens,
+    isLoading: isLoadingTokens,
+    error: tokenListError,
+    getTokenByMint,
+  } = useRemoteTokens();
   
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [solBalance, setSolBalance] = useState(0);
@@ -40,6 +45,11 @@ const Profile = () => {
         setIsLoading(false);
         return;
       }
+
+    if (isLoadingTokens) {
+      setIsLoading(true);
+      return;
+    }
       
     let isInitialLoad = true;
     
@@ -92,7 +102,7 @@ const Profile = () => {
     
     loadBalances();
     // No auto-refresh - balances update after transactions or when cache expires
-  }, [publicKey, connected, connection]);
+  }, [publicKey, connected, connection, tokens, isLoadingTokens, getTokenByMint]);
   
   // Fetch LP tokens (optimized with cached balance fetcher)
   useEffect(() => {
@@ -191,7 +201,7 @@ const Profile = () => {
     
     loadLpTokens();
     // No auto-refresh - LP positions update after add/remove liquidity transactions
-  }, [publicKey, connected, connection, wallet]);
+  }, [publicKey, connected, connection, wallet, tokens, getTokenByMint]);
   
   // Transaction history cache (persists across renders)
   const txHistoryCacheRef = useRef<{ data: typeof txHistory; timestamp: number; publicKey: string } | null>(null);
@@ -546,7 +556,18 @@ const Profile = () => {
               </div>
             ) : (
               <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar">
-                {balances.map((balance) => {
+                {balances.length === 0 ? (
+                  <div className="rounded-xl border border-white/10 bg-dark-900/40 px-4 py-10 text-center">
+                    <div className="text-sm font-semibold text-white">
+                      No GitHub-listed token balances found.
+                    </div>
+                    <div className="mt-2 text-xs leading-relaxed text-gray-400">
+                      {tokenListError
+                        ? 'The GitHub token list could not be loaded. Please check the token config endpoint.'
+                        : 'Only tokens enabled in the GitHub token list are shown here.'}
+                    </div>
+                  </div>
+                ) : balances.map((balance) => {
                   const hasBalance = balance.balance > 0;
                   const tokenMint = new PublicKey(balance.mint);
                   const tokenInfo = getTokenByMint(tokenMint);
