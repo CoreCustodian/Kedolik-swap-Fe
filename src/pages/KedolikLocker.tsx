@@ -86,6 +86,61 @@ const isOneTimeLock = (escrow: LockerEscrowSummary) => toBigInt(escrow.amountPer
 
 const formatLockHolder = (address: string) => formatKedolikAddress(address);
 
+const formatLockDuration = (seconds: number) => {
+  const normalizedSeconds = Math.max(0, Math.floor(seconds));
+  const totalDays = Math.floor(normalizedSeconds / 86400);
+  const years = Math.floor(totalDays / 365);
+  const weeks = Math.floor((totalDays % 365) / 7);
+  const days = totalDays % 7;
+  const hours = Math.floor((normalizedSeconds % 86400) / 3600);
+  const minutes = Math.floor((normalizedSeconds % 3600) / 60);
+  const parts: string[] = [];
+
+  if (years > 0) {
+    parts.push(`${years} ${years === 1 ? 'year' : 'years'}`);
+  }
+
+  if (weeks > 0) {
+    parts.push(`${weeks} ${weeks === 1 ? 'week' : 'weeks'}`);
+  }
+
+  if (days > 0) {
+    parts.push(`${days} ${days === 1 ? 'day' : 'days'}`);
+  }
+
+  if (hours > 0) {
+    parts.push(`${hours} ${hours === 1 ? 'hour' : 'hours'}`);
+  }
+
+  if (parts.length > 0) {
+    return parts.join(' ');
+  }
+
+  if (minutes >= 1) {
+    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  }
+
+  return normalizedSeconds > 0 ? 'Less than 1 minute' : 'Expired';
+};
+
+const getLockTimingDetails = (escrow: LockerEscrowSummary) => {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const secondsUntilUnlock = escrow.cliffTime - nowSeconds;
+  const isExpired = secondsUntilUnlock <= 0;
+  const hasStoredDuration = escrow.vestingStartTime > 0 && escrow.cliffTime > escrow.vestingStartTime;
+  const storedDurationSeconds = hasStoredDuration ? escrow.cliffTime - escrow.vestingStartTime : 0;
+
+  return {
+    isExpired,
+    durationLabel: hasStoredDuration
+      ? formatLockDuration(storedDurationSeconds)
+      : isExpired
+        ? 'Completed'
+        : formatLockDuration(secondsUntilUnlock),
+    timeLeftLabel: isExpired ? 'Expired' : `${formatLockDuration(secondsUntilUnlock)} left`,
+  };
+};
+
 const getLockHeadline = (escrow: LockerEscrowSummary) => {
   if (escrow.isCancelled) {
     return `This lock was cancelled on ${formatKedolikUnixTime(escrow.cancelledAt)}.`;
@@ -123,10 +178,59 @@ const FieldCard = ({
   </div>
 );
 
-const PreviewRow = ({ label, value }: { label: string; value: string }) => (
+const PreviewRow = ({ label, value }: { label: string; value: ReactNode }) => (
   <div className="flex items-start justify-between gap-4 border-b border-white/10 py-3 last:border-b-0">
     <span className="text-sm text-gray-400">{label}</span>
-    <span className="max-w-[62%] text-right text-sm font-semibold text-white break-words">{value}</span>
+    <div className="min-w-0 max-w-[62%] text-right text-sm font-semibold text-white break-words">{value}</div>
+  </div>
+);
+
+const FullAddressValue = ({
+  address,
+  align = 'right',
+}: {
+  address: string;
+  align?: 'left' | 'right';
+}) => (
+  <div className={`flex min-w-0 flex-col gap-1 ${align === 'right' ? 'items-end' : 'items-start'}`}>
+    <span
+      className={`min-w-0 break-all font-mono text-xs font-semibold text-white ${
+        align === 'right' ? 'text-right' : 'text-left'
+      }`}
+      title={address}
+    >
+      {address}
+    </span>
+    <button
+      type="button"
+      onClick={() => void navigator.clipboard.writeText(address)}
+      className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-brand-cyan transition-colors hover:border-brand-cyan/40 hover:bg-brand-cyan/10"
+    >
+      Copy
+    </button>
+  </div>
+);
+
+const LockMetric = ({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string;
+  value: ReactNode;
+  tone?: 'default' | 'active' | 'expired';
+}) => (
+  <div
+    className={`rounded-xl border px-3 py-2 ${
+      tone === 'active'
+        ? 'border-emerald-400/20 bg-emerald-400/10'
+        : tone === 'expired'
+          ? 'border-amber-400/20 bg-amber-400/10'
+          : 'border-white/10 bg-dark-900/50'
+    }`}
+  >
+    <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500">{label}</div>
+    <div className="mt-1 min-w-0 text-sm font-semibold text-white break-words">{value}</div>
   </div>
 );
 
@@ -288,54 +392,111 @@ const LockListItem = ({
   escrow: LockerEscrowSummary;
   index: number;
   token?: TokenInfo;
-}) => (
-  <div className="w-full select-none rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-4 text-left">
-    <div className="grid gap-4 md:grid-cols-[52px_1.1fr_0.9fr_0.9fr_0.85fr] md:items-center">
-      <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-dark-900/80 text-sm font-bold text-white">
-        #{index + 1}
+}) => {
+  const timing = getLockTimingDetails(escrow);
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <div className="w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-left transition-colors hover:border-brand-cyan/25">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-dark-900/80 text-sm font-bold text-white">
+          #{index + 1}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div className="min-w-0">
+              <TokenIdentity token={token} fallback={formatKedolikAddress(escrow.tokenMint)} />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getLockStatusClass(escrow)}`}>
+                  {getLockStatusLabel(escrow)}
+                </span>
+                <span
+                  className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${
+                    timing.isExpired
+                      ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+                      : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+                  }`}
+                >
+                  {timing.timeLeftLabel}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-3 md:min-w-[520px]">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Amount</div>
+                <div className="mt-0.5 min-w-0 font-semibold text-white">
+                  <TokenAmountDisplay
+                    rawAmount={escrow.scheduledTotalAmount}
+                    decimals={escrow.tokenDecimals}
+                    token={token}
+                    mintAddress={escrow.tokenMint}
+                  />
+                </div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Duration</div>
+                <div className="mt-0.5 font-semibold text-white">{timing.durationLabel}</div>
+              </div>
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Unlock Date</div>
+                <div className="mt-0.5 font-semibold text-white">{formatKedolikUnixTime(escrow.cliffTime)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsExpanded((current) => !current)}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-300 transition-colors hover:border-brand-cyan/30 hover:text-brand-cyan"
+          aria-label={isExpanded ? 'Hide lock details' : 'Show lock details'}
+          aria-expanded={isExpanded}
+        >
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 20 20"
+            className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+            fill="none"
+          >
+            <path d="M5 7.5 10 12.5 15 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
       </div>
 
-      <div className="min-w-0">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Locked</div>
-        <div className="mt-1 flex flex-wrap items-center gap-2 text-base font-semibold text-white">
-          <span>{formatKedolikTokenAmount(escrow.scheduledTotalAmount, escrow.tokenDecimals)}</span>
-          <span className="max-w-full truncate rounded-full border border-brand-cyan/25 bg-brand-cyan/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand-cyan">
-            {getTokenDisplayName(token, escrow.tokenMint)}
-          </span>
-        </div>
-        <div className="mt-2">
-          <TokenIdentity token={token} fallback={formatKedolikAddress(escrow.tokenMint)} />
-        </div>
-        <div className="mt-2 text-xs text-gray-400">
-          {getLockProgressPercent(escrow).toFixed(0)}% unlocked
-        </div>
-      </div>
+      {isExpanded ? (
+        <div className="mt-4 border-t border-white/10 pt-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <LockMetric
+              label="Time Left"
+              value={timing.timeLeftLabel}
+              tone={timing.isExpired ? 'expired' : 'active'}
+            />
+            <LockMetric label="Unlocked" value={`${getLockProgressPercent(escrow).toFixed(0)}%`} />
+            <LockMetric label="Token CA" value={<FullAddressValue address={escrow.tokenMint} align="left" />} />
+            <LockMetric label="Escrow" value={<FullAddressValue address={escrow.address} align="left" />} />
+          </div>
 
-      <div>
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">From</div>
-        <div className="mt-1 font-mono text-xs font-medium text-white" title={escrow.creator}>
-          {formatLockHolder(escrow.creator)}
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="rounded-xl border border-white/10 bg-dark-900/45 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500">From Wallet</div>
+              <div className="mt-2">
+                <FullAddressValue address={escrow.creator} align="left" />
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-dark-900/45 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500">Lock Owner</div>
+              <div className="mt-2">
+                <FullAddressValue address={escrow.recipient} align="left" />
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
-
-      <div>
-        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Lock Owner</div>
-        <div className="mt-1 font-mono text-xs font-medium text-white" title={escrow.recipient}>
-          {formatLockHolder(escrow.recipient)}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 md:justify-end">
-        <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getLockStatusClass(escrow)}`}>
-          {getLockStatusLabel(escrow)}
-        </span>
-        <div className="w-full text-xs text-gray-400 md:text-right">
-          {formatKedolikUnixTime(escrow.cliffTime)}
-        </div>
-      </div>
+      ) : null}
     </div>
-  </div>
-);
+  );
+};
 
 const ClaimableLockCard = ({
   escrow,
@@ -677,6 +838,7 @@ export default function KedolikLocker() {
   const createLockToken = getTokenInfo(simpleLockForm.tokenMint.trim());
   const selectedLockToken = getTokenInfo(selectedEscrow?.tokenMint);
   const selectedLockHeadline = selectedEscrow ? getLockHeadline(selectedEscrow) : '';
+  const selectedLockTiming = selectedEscrow ? getLockTimingDetails(selectedEscrow) : null;
   const minimumUnlockAt = useMemo(() => formatDateTimeLocalValue(Date.now() + 5 * 60 * 1000), []);
   const unlockPreviewLabel = simpleLockForm.unlockAt
     ? formatKedolikUnixTime(toUnixTimestamp(simpleLockForm.unlockAt))
@@ -1209,7 +1371,7 @@ export default function KedolikLocker() {
                         />
                       </div>
 
-                      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                         <FieldCard
                           label="Still Locked"
                           value={
@@ -1233,6 +1395,15 @@ export default function KedolikLocker() {
                           }
                         />
                         <FieldCard
+                          label="Time Left"
+                          value={selectedLockTiming?.timeLeftLabel ?? 'Unknown'}
+                          valueClassName={selectedLockTiming?.isExpired ? 'text-amber-200' : 'text-emerald-200'}
+                        />
+                        <FieldCard
+                          label="Duration"
+                          value={selectedLockTiming?.durationLabel ?? 'Unknown'}
+                        />
+                        <FieldCard
                           label="Unlock Date"
                           value={formatKedolikUnixTime(selectedEscrow.cliffTime)}
                         />
@@ -1244,9 +1415,12 @@ export default function KedolikLocker() {
                         Wallets
                       </div>
                       <div className="mt-3">
-                        <PreviewRow label="From" value={formatLockHolder(selectedEscrow.creator)} />
-                        <PreviewRow label="Lock Owner" value={formatLockHolder(selectedEscrow.recipient)} />
-                        <PreviewRow label="Token CA" value={formatKedolikAddress(selectedEscrow.tokenMint)} />
+                        <PreviewRow label="From" value={<FullAddressValue address={selectedEscrow.creator} />} />
+                        <PreviewRow
+                          label="Lock Owner"
+                          value={<FullAddressValue address={selectedEscrow.recipient} />}
+                        />
+                        <PreviewRow label="Token CA" value={<FullAddressValue address={selectedEscrow.tokenMint} />} />
                       </div>
                     </div>
                   </div>
