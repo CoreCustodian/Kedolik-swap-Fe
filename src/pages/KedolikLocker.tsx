@@ -398,59 +398,55 @@ const LockListItem = ({
 
   return (
     <div className="w-full rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-left transition-colors hover:border-brand-cyan/25">
-      <div className="flex items-start gap-3">
+      <div className="grid grid-cols-[40px_minmax(0,1fr)_40px] gap-3 lg:grid-cols-[40px_minmax(240px,1fr)_170px_220px_190px_40px] lg:items-center lg:gap-4">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-dark-900/80 text-sm font-bold text-white">
           #{index + 1}
         </div>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-            <div className="min-w-0">
-              <TokenIdentity token={token} fallback={formatKedolikAddress(escrow.tokenMint)} />
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getLockStatusClass(escrow)}`}>
-                  {getLockStatusLabel(escrow)}
-                </span>
-                <span
-                  className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${
-                    timing.isExpired
-                      ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
-                      : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
-                  }`}
-                >
-                  {timing.timeLeftLabel}
-                </span>
-              </div>
-            </div>
-
-            <div className="grid gap-x-5 gap-y-2 text-sm sm:grid-cols-3 md:min-w-[520px]">
-              <div className="min-w-0">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Amount</div>
-                <div className="mt-0.5 min-w-0 font-semibold text-white">
-                  <TokenAmountDisplay
-                    rawAmount={escrow.scheduledTotalAmount}
-                    decimals={escrow.tokenDecimals}
-                    token={token}
-                    mintAddress={escrow.tokenMint}
-                  />
-                </div>
-              </div>
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Duration</div>
-                <div className="mt-0.5 font-semibold text-white">{timing.durationLabel}</div>
-              </div>
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Unlock Date</div>
-                <div className="mt-0.5 font-semibold text-white">{formatKedolikUnixTime(escrow.cliffTime)}</div>
-              </div>
-            </div>
+        <div className="min-w-0 self-center">
+          <TokenIdentity token={token} fallback={formatKedolikAddress(escrow.tokenMint)} />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${getLockStatusClass(escrow)}`}>
+              {getLockStatusLabel(escrow)}
+            </span>
+            <span
+              className={`rounded-full border px-3 py-1 text-[11px] font-semibold ${
+                timing.isExpired
+                  ? 'border-amber-400/30 bg-amber-400/10 text-amber-200'
+                  : 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200'
+              }`}
+            >
+              {timing.timeLeftLabel}
+            </span>
           </div>
+        </div>
+
+        <div className="col-span-3 min-w-0 text-sm lg:col-span-1">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Amount</div>
+          <div className="mt-0.5 min-w-0 font-semibold text-white">
+            <TokenAmountDisplay
+              rawAmount={escrow.scheduledTotalAmount}
+              decimals={escrow.tokenDecimals}
+              token={token}
+              mintAddress={escrow.tokenMint}
+            />
+          </div>
+        </div>
+
+        <div className="col-span-3 min-w-0 text-sm lg:col-span-1">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Duration</div>
+          <div className="mt-0.5 font-semibold leading-snug text-white lg:max-w-[210px]">{timing.durationLabel}</div>
+        </div>
+
+        <div className="col-span-3 min-w-0 text-sm lg:col-span-1">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-500">Unlock Date</div>
+          <div className="mt-0.5 whitespace-nowrap font-semibold text-white">{formatKedolikUnixTime(escrow.cliffTime)}</div>
         </div>
 
         <button
           type="button"
           onClick={() => setIsExpanded((current) => !current)}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-300 transition-colors hover:border-brand-cyan/30 hover:text-brand-cyan"
+          className="col-start-3 row-start-1 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04] text-gray-300 transition-colors hover:border-brand-cyan/30 hover:text-brand-cyan lg:col-auto lg:row-auto"
           aria-label={isExpanded ? 'Hide lock details' : 'Show lock details'}
           aria-expanded={isExpanded}
         >
