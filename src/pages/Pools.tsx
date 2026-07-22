@@ -9,6 +9,7 @@ import { TokenSelectModal } from '../components/TokenSelectModal';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { fetchPoolStats, formatUsdCompact, PoolStats } from '../utils/poolStats';
+import { getPlatformVolumeStats } from '../utils/tradeVolume';
 
 const hasActivePoolLiquidity = (pool: PoolInfo) =>
   pool.token0Reserve > 0 &&
@@ -30,6 +31,7 @@ const Pools = () => {
   const [userLpBalances, setUserLpBalances] = useState<Map<string, number>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [poolStats, setPoolStats] = useState<PoolStats | null>(null);
+  const [platformVolume, setPlatformVolume] = useState(() => getPlatformVolumeStats());
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [showCreatePool, setShowCreatePool] = useState(false);
@@ -164,13 +166,19 @@ const Pools = () => {
 
     loadPoolStats();
 
+    const refreshPlatformVolume = () => setPlatformVolume(getPlatformVolumeStats());
+    window.addEventListener('kedolik-trade-recorded', refreshPlatformVolume);
+
     return () => {
       cancelled = true;
+      window.removeEventListener('kedolik-trade-recorded', refreshPlatformVolume);
     };
   }, [connection, pools]);
 
   const totalTVL = poolStats?.totalTvlUsd ?? 0;
-  const totalVolume = poolStats?.volume24hUsd ?? 0;
+  const dexVolume24h = poolStats?.volume24hUsd ?? 0;
+  const jupiterVolume24h = platformVolume.jupiterVolume24hUsd;
+  const totalVolume = dexVolume24h + jupiterVolume24h;
   const activePoolCount = pools.filter(hasActivePoolLiquidity).length;
   
   // Filter pools
@@ -234,7 +242,7 @@ const Pools = () => {
                 {isLoadingStats ? 'Loading...' : formatUsdCompact(totalVolume)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                Based on the 24 Hour Volume
+                Combined platform swap volume
               </p>
           </div>
             <div className="card p-4 sm:p-6">

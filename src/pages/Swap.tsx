@@ -28,8 +28,50 @@ import {
   calculateRouteOutput 
 } from '../utils/routing';
 import { isKedologDiscountAvailable, KedologAvailability } from '../utils/swapRestrictions';
-import { useRemoteTokens } from '../hooks/useRemoteTokens';
+import { useSwapTokens } from '../hooks/useSwapTokens';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
+import {
+  executeJupiterSwap,
+  estimateIntegratorFee,
+  fromSmallestUnit,
+  getJupiterPriceImpact,
+  getJupiterQuote,
+  getJupiterRouteLabel,
+  JupiterIntegratorFeeEstimate,
+  JupiterOrderResponse,
+  isJupiterReferralFeeEnabled,
+} from '../utils/jupiter';
+import { getJupiterReferralFeePercent } from '../config/jupiterFees';
+import {
+  recordTrade,
+} from '../utils/tradeVolume';
+import {
+  DEFAULT_SWAP_PAIR,
+  loadSwapPair,
+  saveSwapPair,
+} from '../utils/swapPairStorage';
+
+type SwapProvider = 'kedolik' | 'jupiter';
+
+/** Why a Jupiter route was chosen over the Kedolik DEX (for UI messaging). */
+type JupiterRouteReason = 'no-pool' | 'better-price' | null;
+
+/**
+ * Smart routing threshold.
+ *
+ * When a Kedolik pool/route exists but the trade's price impact on our own
+ * pool exceeds this percentage, the trade is large enough to move our price
+ * significantly. In that case we fetch a Jupiter quote and route through
+ * whichever venue returns the larger output. Below the threshold we always
+ * keep the trade on our DEX and skip the Jupiter call (respecting free-tier
+ * rate limits).
+ *
+ * Override with VITE_MAX_DEX_PRICE_IMPACT_PERCENT.
+ */
+const MAX_DEX_PRICE_IMPACT_PERCENT = (() => {
+  const raw = Number(import.meta.env.VITE_MAX_DEX_PRICE_IMPACT_PERCENT);
+  return Number.isFinite(raw) && raw > 0 ? raw : 5;
+})();
 
 const Swap = () => {
   const { connected, publicKey } = useWallet();
@@ -38,13 +80,25 @@ const Swap = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
-  // Remote config hooks
-  const { tokens, isLoading: isLoadingTokens, getScopedTokenByMint } = useRemoteTokens('swap');
+  // Remote config + Jupiter token hooks
+  const {
+    tokens,
+    isLoading: isLoadingTokens,
+    searchTokens,
+    jupiterEnabled,
+    getTokenByMint,
+  } = useSwapTokens();
   const { swapEnabled, maintenanceMode } = useFeatureFlags();
   
-  // Create placeholder token for initial state
-  const placeholderToken: TokenInfo = {
-    mint: new PublicKey('So11111111111111111111111111111111111111112'),
+  // Initial placeholders until remote token list loads (default: KEDOL → SOL)
+  const kedolPlaceholder: TokenInfo = {
+    mint: KEDOLOG_MINT,
+    symbol: 'KEDOL',
+    name: 'Kedol',
+    decimals: 9,
+  };
+  const solPlaceholder: TokenInfo = {
+    mint: SOL_MINT,
     symbol: 'SOL',
     name: 'Solana',
     decimals: 9,
@@ -56,78 +110,107 @@ const Swap = () => {
   const [toAmount, setToAmount] = useState('');
   
   // Token selection
-  const [fromToken, setFromToken] = useState<TokenInfo>(placeholderToken);
-  const [toToken, setToToken] = useState<TokenInfo>(placeholderToken);
+  const [fromToken, setFromToken] = useState<TokenInfo>(kedolPlaceholder);
+  const [toToken, setToToken] = useState<TokenInfo>(solPlaceholder);
   const [tokensInitialized, setTokensInitialized] = useState(false);
   const [showFromTokenModal, setShowFromTokenModal] = useState(false);
   const [showToTokenModal, setShowToTokenModal] = useState(false);
   
-  // Track if we've initialized from URL to prevent update loop
+  // Track initialization and last URL-applied pair (survives token list refreshes)
   const isInitializedRef = useRef(false);
-  
-  // Initialize tokens from URL parameters or defaults when tokens are loaded
+  const lastAppliedUrlKeyRef = useRef('');
+  const fromMintRef = useRef(fromToken.mint.toString());
+  const toMintRef = useRef(toToken.mint.toString());
+
   useEffect(() => {
-    if (isInitializedRef.current || tokens.length === 0) return;
-    
+    fromMintRef.current = fromToken.mint.toString();
+  }, [fromToken.mint]);
+
+  useEffect(() => {
+    toMintRef.current = toToken.mint.toString();
+  }, [toToken.mint]);
+
+  const getDefaultPair = (): { from: TokenInfo; to: TokenInfo } => ({
+    from: resolveTokenByMintString(DEFAULT_SWAP_PAIR.from) ?? kedolPlaceholder,
+    to: resolveTokenByMintString(DEFAULT_SWAP_PAIR.to) ?? solPlaceholder,
+  });
+
+  const resolveTokenByMintString = (mintStr: string | null | undefined): TokenInfo | undefined => {
+    if (!mintStr) return undefined;
+    try {
+      return getTokenByMint(new PublicKey(mintStr));
+    } catch {
+      return undefined;
+    }
+  };
+
+  // Persist selected pair immediately (survives fast navigation before token list loads)
+  useEffect(() => {
+    saveSwapPair(fromToken.mint.toString(), toToken.mint.toString());
+  }, [fromToken.mint, toToken.mint]);
+
+  // Initialize / restore pair: URL > sessionStorage > KEDOL → SOL defaults
+  useEffect(() => {
     const fromParam = searchParams.get('from');
     const toParam = searchParams.get('to');
-    
-    // Get default tokens (SOL and KEDOL)
-    const defaultFromToken = tokens.find(t => t.symbol === 'SOL') || tokens[0];
-    const defaultToToken = tokens.find(t => t.symbol === 'KEDOL') || tokens[1] || tokens[0];
-    
-    let newFromToken = defaultFromToken;
-    let newToToken = defaultToToken;
-    
-    if (fromParam) {
-      try {
-        const fromMint = new PublicKey(fromParam);
-        const token = getScopedTokenByMint(fromMint);
-        if (token) {
-          newFromToken = token;
-        }
-      } catch (error) {
-        console.warn('Invalid from token address in URL:', fromParam);
+    const urlKey = `${fromParam ?? ''}|${toParam ?? ''}`;
+    const isFirstInit = !isInitializedRef.current;
+    const urlChanged = urlKey !== lastAppliedUrlKeyRef.current;
+
+    if (!isFirstInit && !urlChanged) {
+      const refreshedFrom = resolveTokenByMintString(fromMintRef.current);
+      const refreshedTo = resolveTokenByMintString(toMintRef.current);
+      if (refreshedFrom) {
+        setFromToken(refreshedFrom);
+      }
+      if (refreshedTo) {
+        setToToken(refreshedTo);
+      }
+      return;
+    }
+
+    const stored = loadSwapPair();
+    const defaults = getDefaultPair();
+    const hasUrlPair = Boolean(fromParam && toParam);
+
+    let newFromToken = defaults.from;
+    let newToToken = defaults.to;
+
+    if (hasUrlPair) {
+      newFromToken = resolveTokenByMintString(fromParam) ?? defaults.from;
+      newToToken = resolveTokenByMintString(toParam) ?? defaults.to;
+    } else if (stored?.from && stored?.to && stored.from !== stored.to) {
+      const storedFrom = resolveTokenByMintString(stored.from);
+      const storedTo = resolveTokenByMintString(stored.to);
+      if (storedFrom && storedTo) {
+        newFromToken = storedFrom;
+        newToToken = storedTo;
       }
     }
-    
-    if (toParam) {
-      try {
-        const toMint = new PublicKey(toParam);
-        const token = getScopedTokenByMint(toMint);
-        if (token) {
-          newToToken = token;
-        }
-      } catch (error) {
-        console.warn('Invalid to token address in URL:', toParam);
-      }
-    }
-    
+
     setFromToken(newFromToken);
     setToToken(newToToken);
     setTokensInitialized(true);
-    
     isInitializedRef.current = true;
-  }, [tokens, searchParams, getScopedTokenByMint]); // Re-run when tokens load
-  
-  // Update URL when tokens change (but not during initialization)
+    lastAppliedUrlKeyRef.current = urlKey;
+  }, [tokens, searchParams, getTokenByMint]);
+
+  // Keep URL in sync with the selected pair
   useEffect(() => {
     if (!isInitializedRef.current) return;
-    
-    const fromParam = searchParams.get('from');
-    const toParam = searchParams.get('to');
-    
+
     const currentFrom = fromToken.mint.toString();
     const currentTo = toToken.mint.toString();
-    
-    // Only update URL if tokens have actually changed
-    if (fromParam !== currentFrom || toParam !== currentTo) {
-      const newParams = new URLSearchParams();
-      newParams.set('from', currentFrom);
-      newParams.set('to', currentTo);
-      navigate(`/swap?${newParams.toString()}`, { replace: true });
-    }
-  }, [fromToken.mint, toToken.mint, navigate]);
+    const fromParam = searchParams.get('from');
+    const toParam = searchParams.get('to');
+
+    if (fromParam === currentFrom && toParam === currentTo) return;
+
+    const newParams = new URLSearchParams();
+    newParams.set('from', currentFrom);
+    newParams.set('to', currentTo);
+    navigate(`/swap?${newParams.toString()}`, { replace: true });
+  }, [fromToken.mint, toToken.mint, navigate, searchParams]);
   
   // Balances
   const [fromBalance, setFromBalance] = useState<number>(0);
@@ -146,6 +229,19 @@ const Swap = () => {
   // Multi-hop routing
   const [swapRoute, setSwapRoute] = useState<SwapRoute | null>(null);
   const [isMultiHop, setIsMultiHop] = useState(false);
+
+  // Jupiter aggregator fallback
+  const [swapProvider, setSwapProvider] = useState<SwapProvider>('kedolik');
+  const [jupiterOrder, setJupiterOrder] = useState<JupiterOrderResponse | null>(null);
+  const [isLoadingJupiterQuote, setIsLoadingJupiterQuote] = useState(false);
+  const [jupiterQuoteError, setJupiterQuoteError] = useState<string | null>(null);
+  const [jupiterFeeEstimate, setJupiterFeeEstimate] = useState<JupiterIntegratorFeeEstimate | null>(null);
+
+  // Smart routing (Kedolik DEX vs Jupiter comparison)
+  const [kedolikQuote, setKedolikQuote] = useState<{ amountOut: number; priceImpact: number; fee: number; bonusAmount?: number } | null>(null);
+  const [dexImpactTooHigh, setDexImpactTooHigh] = useState(false);
+  const [jupiterRouteReason, setJupiterRouteReason] = useState<JupiterRouteReason>(null);
+  const kedolikOutput = kedolikQuote?.amountOut ?? 0;
   
   // KEDOLOG discount feature
   const [useKedologDiscount, setUseKedologDiscount] = useState(false);
@@ -278,6 +374,9 @@ const Swap = () => {
           setPoolAddress(pool.address.toString());
           setIsMultiHop(false);
           setSwapRoute(null);
+          setSwapProvider('kedolik');
+          setJupiterOrder(null);
+          setJupiterRouteReason(null);
         } else {
           // No direct pool, look for multi-hop route
           console.log('❌ No direct pool found, searching for multi-hop route...');
@@ -300,10 +399,22 @@ const Swap = () => {
               });
               setSwapRoute(route);
               setIsMultiHop(true);
+              setSwapProvider('kedolik');
+              setJupiterOrder(null);
+              setJupiterRouteReason(null);
             } else {
-              console.log('❌ No route found');
+              console.log('❌ No Kedolik route found');
               setSwapRoute(null);
               setIsMultiHop(false);
+              setKedolikQuote(null);
+              setDexImpactTooHigh(false);
+              if (jupiterEnabled) {
+                setSwapProvider('jupiter');
+                setJupiterRouteReason('no-pool');
+              } else {
+                setSwapProvider('kedolik');
+                setJupiterRouteReason(null);
+              }
             }
           } catch (error) {
             console.error('Error finding route:', error);
@@ -323,7 +434,147 @@ const Swap = () => {
     
     // NO INTERVAL - pool cache (10s TTL) handles refresh automatically
     // Only refetch when tokens actually change
-  }, [fromToken.mint.toString(), toToken.mint.toString(), connection, wallet, poolRefreshTrigger]);
+  }, [fromToken.mint.toString(), toToken.mint.toString(), connection, wallet, poolRefreshTrigger, jupiterEnabled]);
+
+  // Jupiter routing:
+  //  - "pure Jupiter" when there's no Kedolik pool/route for the pair.
+  //  - "comparison" when a Kedolik route exists but its price impact is too high;
+  //    we then route through whichever venue returns the larger output.
+  useEffect(() => {
+    const hasKedolik = Boolean(poolReserves || swapRoute);
+    const pureJupiter = !hasKedolik;
+    const comparisonMode = hasKedolik && dexImpactTooHigh;
+
+    if (!jupiterEnabled) {
+      if (pureJupiter) {
+        setJupiterOrder(null);
+        setJupiterQuoteError(null);
+      }
+      return;
+    }
+
+    // Nothing for Jupiter to do: Kedolik handles low-impact trades directly.
+    if (!pureJupiter && !comparisonMode) {
+      return;
+    }
+
+    if (!fromAmount) {
+      if (pureJupiter) {
+        setJupiterOrder(null);
+        setJupiterQuoteError(null);
+      }
+      return;
+    }
+
+    const amount = parseFloat(fromAmount);
+    if (isNaN(amount) || amount <= 0) {
+      return;
+    }
+
+    if (pureJupiter) {
+      setSwapProvider('jupiter');
+      if (useKedologDiscount) {
+        setUseKedologDiscount(false);
+      }
+    }
+
+    const timer = setTimeout(async () => {
+      setIsLoadingJupiterQuote(true);
+      setJupiterQuoteError(null);
+      try {
+        const slippagePercent = parseFloat(slippage) || 0.5;
+        const quote = await getJupiterQuote(
+          fromToken.mint,
+          toToken.mint,
+          amount,
+          fromToken.decimals,
+          slippagePercent
+        );
+
+        if (!quote) {
+          if (pureJupiter) {
+            setJupiterOrder(null);
+            setJupiterFeeEstimate(null);
+            setToAmount('');
+            setQuoteData(null);
+            setJupiterQuoteError('No Jupiter route found for this pair.');
+          }
+          // Comparison mode: no Jupiter route → keep the trade on our DEX.
+          return;
+        }
+
+        const amountOut = fromSmallestUnit(quote.outAmount, toToken.decimals);
+
+        const routeToJupiter = () => {
+          setSwapProvider('jupiter');
+          setJupiterOrder(quote);
+          setJupiterFeeEstimate(
+            estimateIntegratorFee(quote, fromToken.decimals, toToken.decimals, fromToken.symbol, toToken.symbol)
+          );
+          setQuoteData({
+            amountOut,
+            priceImpact: getJupiterPriceImpact(quote),
+            fee: 0,
+          });
+          setToAmount(amountOut.toFixed(6));
+        };
+
+        if (comparisonMode) {
+          // Route through Jupiter only if it actually beats our (high-impact) DEX quote.
+          if (amountOut > kedolikOutput) {
+            setJupiterRouteReason('better-price');
+            if (useKedologDiscount) {
+              setUseKedologDiscount(false);
+            }
+            routeToJupiter();
+          } else {
+            // Our DEX is still the better deal despite the price impact.
+            setSwapProvider('kedolik');
+            setJupiterRouteReason(null);
+            setJupiterOrder(null);
+            setJupiterFeeEstimate(null);
+            if (kedolikQuote) {
+              setQuoteData(kedolikQuote);
+              setToAmount(kedolikQuote.amountOut.toFixed(6));
+            }
+          }
+          return;
+        }
+
+        // Pure Jupiter (no Kedolik route for this pair).
+        setJupiterRouteReason('no-pool');
+        routeToJupiter();
+      } catch (error) {
+        if (pureJupiter) {
+          console.error('Jupiter quote error:', error);
+          setJupiterOrder(null);
+          setJupiterFeeEstimate(null);
+          setToAmount('');
+          setQuoteData(null);
+          setJupiterQuoteError(error instanceof Error ? error.message : 'Failed to fetch Jupiter quote');
+        } else {
+          // Comparison failed → silently keep the DEX quote already on screen.
+          console.error('Jupiter comparison quote failed:', error);
+        }
+      } finally {
+        setIsLoadingJupiterQuote(false);
+        setIsLoadingQuote(false);
+      }
+    }, 2100);
+
+    return () => clearTimeout(timer);
+  }, [
+    fromAmount,
+    fromToken,
+    toToken,
+    poolReserves,
+    swapRoute,
+    jupiterEnabled,
+    slippage,
+    useKedologDiscount,
+    dexImpactTooHigh,
+    kedolikOutput,
+  ]);
   
   // Check KEDOLOG discount availability when tokens change
   useEffect(() => {
@@ -371,11 +622,14 @@ const Swap = () => {
     fetchUsdPrices();
   }, [connection, fromToken, toToken]);
   
-  // Calculate quote when amount changes (handles both direct and multi-hop)
+  // Calculate the Kedolik DEX quote candidate when amount changes (direct + multi-hop).
+  // The final venue (DEX vs Jupiter) is decided by the smart-routing logic below.
   useEffect(() => {
     if (!fromAmount) {
       setToAmount('');
       setQuoteData(null);
+      setKedolikQuote(null);
+      setDexImpactTooHigh(false);
       setIsLoadingQuote(false);
       return;
     }
@@ -384,13 +638,22 @@ const Swap = () => {
     if (isNaN(amount) || amount <= 0) {
       setToAmount('');
       setQuoteData(null);
+      setKedolikQuote(null);
+      setDexImpactTooHigh(false);
       setIsLoadingQuote(false);
       return;
     }
     
-    // Calculate immediately for instant feedback (no debounce)
-    // This provides instant visual feedback while the accurate calculation is pending
-    const calculateQuote = () => {
+    // Only compute a Kedolik candidate when we actually have a pool/route.
+    // Pairs without a Kedolik route are handled entirely by the Jupiter effect.
+    if (!poolReserves && !swapRoute) {
+      setKedolikQuote(null);
+      setDexImpactTooHigh(false);
+      return;
+    }
+
+    // Build the Kedolik quote candidate (pure calculation, no side effects).
+    const computeKedolikQuote = (): { amountOut: number; priceImpact: number; fee: number; bonusAmount?: number } | null => {
       try {
         if (poolReserves) {
           // Direct pool swap - use pool's actual fee rate
@@ -413,8 +676,7 @@ const Swap = () => {
             bonusAmount = quote.amountOut - normalQuote.amountOut;
           }
           
-          setQuoteData({ ...quote, bonusAmount });
-          setToAmount(quote.amountOut.toFixed(6));
+          return { ...quote, bonusAmount };
         } else if (swapRoute) {
           // Multi-hop swap - apply KEDOLOG discount if enabled
           let expectedOutput = 0;
@@ -448,12 +710,6 @@ const Swap = () => {
             // Calculate bonus (difference vs normal fees)
             const normalOutput = calculateRouteOutput(swapRoute, amount).expectedOutput;
             bonusAmount = expectedOutput - normalOutput;
-            
-            console.log('💰 Multi-hop with discount:', {
-              normalOutput,
-              discountedOutput: expectedOutput,
-              bonus: bonusAmount,
-            });
           } else {
             // Normal multi-hop calculation
             const routeOutput = calculateRouteOutput(swapRoute, amount);
@@ -461,43 +717,63 @@ const Swap = () => {
             priceImpact = routeOutput.priceImpact;
             
             // Calculate total fee
-          let currentAmount = amount;
-          for (const pool of swapRoute.pools) {
+            let currentAmount = amount;
+            for (const pool of swapRoute.pools) {
               const feeRate = pool.tradeFeeRate / 1000000;
-            const hopFee = currentAmount * feeRate;
-            totalFee += hopFee;
+              const hopFee = currentAmount * feeRate;
+              totalFee += hopFee;
               currentAmount = currentAmount - hopFee;
             }
           }
           
-          setQuoteData({
-            amountOut: expectedOutput,
-            priceImpact,
-            fee: totalFee,
-            bonusAmount,
-          });
-          setToAmount(expectedOutput.toFixed(6));
-        } else {
-          setToAmount('');
-          setQuoteData(null);
+          return { amountOut: expectedOutput, priceImpact, fee: totalFee, bonusAmount };
         }
+        return null;
       } catch (error) {
-        console.error('Error calculating quote:', error);
+        console.error('Error calculating Kedolik quote:', error);
+        return null;
+      }
+    };
+
+    const applyKedolikCandidate = () => {
+      const result = computeKedolikQuote();
+      if (!result) return;
+
+      setKedolikQuote(result);
+      const tooHigh = result.priceImpact > MAX_DEX_PRICE_IMPACT_PERCENT;
+      setDexImpactTooHigh(tooHigh);
+
+      // Below the impact threshold: always keep the trade on our own DEX and
+      // discard any pending Jupiter comparison so execution uses Kedolik.
+      if (!tooHigh) {
+        setJupiterRouteReason(null);
+        setJupiterOrder(null);
+        setJupiterFeeEstimate(null);
+        if (swapProvider !== 'kedolik') {
+          setSwapProvider('kedolik');
+        }
+      }
+
+      // Only drive the visible quote while we're actually showing the DEX venue.
+      // When routing has flipped to Jupiter, the Jupiter effect owns the display.
+      if (swapProvider === 'kedolik') {
+        setQuoteData(result);
+        setToAmount(result.amountOut.toFixed(6));
       }
     };
     
     // Call immediately for instant feedback
     setIsLoadingQuote(true);
-    calculateQuote();
+    applyKedolikCandidate();
     
     // Also use a tiny debounce to prevent excessive re-renders during fast typing
     const timer = setTimeout(() => {
-      calculateQuote();
+      applyKedolikCandidate();
       setIsLoadingQuote(false);
     }, 50); // Minimal debounce (50ms) for render optimization
     
     return () => clearTimeout(timer);
-  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount]);
+  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount, swapProvider, jupiterEnabled]);
   
   // Calculate KEDOLOG fee estimate
   useEffect(() => {
@@ -752,6 +1028,36 @@ const Swap = () => {
     prevIsMultiHopRef.current = isMultiHop;
   }, [isMultiHop, useKedologDiscount]);
   
+  const recordSuccessfulTrade = (
+    provider: SwapProvider,
+    signature: string,
+    inputAmount: number,
+    outputAmount: number,
+    fee?: {
+      platformFeeUsd?: number;
+      platformFeeAmount?: number;
+      platformFeeMint?: string;
+      platformFeeSymbol?: string;
+    }
+  ) => {
+    const volumeUsd = inputAmount * fromTokenUsdPrice;
+    recordTrade({
+      provider,
+      inputMint: fromToken.mint.toString(),
+      outputMint: toToken.mint.toString(),
+      inputSymbol: fromToken.symbol,
+      outputSymbol: toToken.symbol,
+      inputAmount,
+      outputAmount,
+      volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : 0,
+      platformFeeUsd: fee?.platformFeeUsd,
+      platformFeeAmount: fee?.platformFeeAmount,
+      platformFeeMint: fee?.platformFeeMint,
+      platformFeeSymbol: fee?.platformFeeSymbol,
+      txSignature: signature,
+    });
+  };
+
   // Handle swap
   const handleSwap = async () => {
     // Prevent multiple transactions at once
@@ -779,8 +1085,13 @@ const Swap = () => {
       return;
     }
     
-    if (!poolReserves && !swapRoute) {
+    if (!poolReserves && !swapRoute && swapProvider !== 'jupiter') {
       showToast('No swap route found. Try creating a pool or using different tokens.', 'error');
+      return;
+    }
+
+    if (swapProvider === 'jupiter' && !jupiterOrder) {
+      showToast(jupiterQuoteError || 'Waiting for Jupiter quote. Please try again in a moment.', 'warning');
       return;
     }
     
@@ -807,8 +1118,8 @@ const Swap = () => {
       }
     }
     
-    // KEDOLOG balance and minimum amount validation
-    if (useKedologDiscount) {
+    // KEDOLOG balance and minimum amount validation (Kedolik routes only)
+    if (useKedologDiscount && swapProvider === 'kedolik') {
       if (estimatedKedologFee) {
         console.log('🔍 KEDOLOG fee validation:', {
           kedologFee: estimatedKedologFee.kedologFee,
@@ -875,8 +1186,48 @@ const Swap = () => {
       });
       
       let signature: string;
-      
-      if (useKedologDiscount && estimatedKedologFee) {
+      let outputAmount = parseFloat(toAmount);
+
+      if (swapProvider === 'jupiter') {
+        console.log('🪐 Executing Jupiter swap...');
+        const slippagePercent = parseFloat(slippage) || 0.5;
+        const result = await executeJupiterSwap(
+          connection,
+          wallet,
+          fromToken.mint,
+          toToken.mint,
+          amountIn,
+          fromToken.decimals,
+          slippagePercent
+        );
+        signature = result.signature;
+        outputAmount = fromSmallestUnit(
+          result.execute.outputAmountResult || result.order.outAmount,
+          toToken.decimals
+        );
+        const feeEstimate = estimateIntegratorFee(
+          result.order,
+          fromToken.decimals,
+          toToken.decimals,
+          fromToken.symbol,
+          toToken.symbol
+        );
+        const integratorFeeShare = feeEstimate
+          ? feeEstimate.feeAmountUi * 0.8
+          : 0;
+        const feeMintPrice =
+          feeEstimate?.feeMint === fromToken.mint.toString()
+            ? fromTokenUsdPrice
+            : feeEstimate?.feeMint === toToken.mint.toString()
+              ? toTokenUsdPrice
+              : 0;
+        recordSuccessfulTrade('jupiter', signature, amountIn, outputAmount, {
+          platformFeeAmount: integratorFeeShare,
+          platformFeeMint: feeEstimate?.feeMint,
+          platformFeeSymbol: feeEstimate?.feeSymbol,
+          platformFeeUsd: integratorFeeShare * feeMintPrice,
+        });
+      } else if (useKedologDiscount && estimatedKedologFee) {
       if (isMultiHop && swapRoute) {
           // Execute multi-hop swap with KEDOLOG discount
           console.log('🔄💰 Executing multi-hop swap with KEDOLOG discount (atomic transaction)...');
@@ -933,6 +1284,10 @@ const Swap = () => {
           minimumOut,
           slippageBps
         );
+      }
+
+      if (swapProvider === 'kedolik') {
+        recordSuccessfulTrade('kedolik', signature, amountIn, outputAmount);
       }
       
       // Show success modal with explorer link
@@ -1107,6 +1462,106 @@ const Swap = () => {
   };
   
   // Percentage quick-fill handled inline with buttons
+
+  const QUICK_ACCESS_SYMBOLS = ['KEDOL', 'SOL', 'USDC'] as const;
+
+  const getQuickAccessToken = (symbol: (typeof QUICK_ACCESS_SYMBOLS)[number]): TokenInfo | undefined => {
+    const aliases =
+      symbol === 'KEDOL' ? ['KEDOL', 'KEDOLOG'] : [symbol];
+    for (const alias of aliases) {
+      const found = tokens.find((t) => t.symbol.toUpperCase() === alias);
+      if (found) return found;
+    }
+
+    const mintBySymbol: Record<(typeof QUICK_ACCESS_SYMBOLS)[number], PublicKey> = {
+      SOL: SOL_MINT,
+      KEDOL: KEDOLOG_MINT,
+      USDC: USDC_MINT,
+    };
+    const mint = mintBySymbol[symbol];
+    return (
+      getTokenByMint(mint) ?? {
+        mint,
+        symbol,
+        name: symbol === 'KEDOL' ? 'Kedol' : symbol,
+        decimals: symbol === 'USDC' ? 6 : 9,
+        logoURI: `/tokens/${mint.toString()}.png`,
+      }
+    );
+  };
+
+  const isQuickTokenActive = (symbol: (typeof QUICK_ACCESS_SYMBOLS)[number], side: 'from' | 'to') => {
+    const token = side === 'from' ? fromToken : toToken;
+    if (symbol === 'KEDOL') {
+      return token.mint.equals(KEDOLOG_MINT) || token.symbol.toUpperCase() === 'KEDOL';
+    }
+    if (symbol === 'SOL') {
+      return (
+        token.mint.equals(SOL_MINT) ||
+        token.mint.equals(WSOL_MINT) ||
+        token.symbol.toUpperCase() === 'SOL'
+      );
+    }
+    if (symbol === 'USDC') {
+      return token.mint.equals(USDC_MINT) || token.symbol.toUpperCase() === 'USDC';
+    }
+    return token.symbol.toUpperCase() === symbol;
+  };
+
+  const selectQuickToken = (symbol: (typeof QUICK_ACCESS_SYMBOLS)[number], side: 'from' | 'to') => {
+    const token = getQuickAccessToken(symbol);
+    if (!token) {
+      showToast(`${symbol} is not available`, 'warning');
+      return;
+    }
+
+    if (side === 'from') {
+      if (token.mint.equals(toToken.mint)) {
+        setToToken(fromToken);
+      }
+      setFromToken(token);
+      return;
+    }
+
+    if (token.mint.equals(fromToken.mint)) {
+      setFromToken(toToken);
+    }
+    setToToken(token);
+  };
+
+  const renderQuickTokenChips = (side: 'from' | 'to') => (
+    <div className="flex flex-wrap items-center gap-1.5 mb-2">
+      <span className="text-[10px] text-gray-500 font-medium mr-0.5">Quick:</span>
+      {QUICK_ACCESS_SYMBOLS.map((symbol) => {
+        const token = getQuickAccessToken(symbol);
+        const active = isQuickTokenActive(symbol, side);
+        return (
+          <button
+            key={`${side}-${symbol}`}
+            type="button"
+            onClick={() => selectQuickToken(symbol, side)}
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] sm:text-xs font-semibold transition-all border ${
+              active
+                ? 'bg-gradient-brand text-white border-transparent shadow-glow-brand'
+                : 'bg-white/5 text-gray-300 border-white/10 hover:bg-white/10 hover:border-brand-cyan/30'
+            }`}
+          >
+            {token?.logoURI ? (
+              <img
+                src={token.logoURI}
+                alt={symbol}
+                className="w-3.5 h-3.5 rounded-full"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            ) : null}
+            {symbol}
+          </button>
+        );
+      })}
+    </div>
+  );
   
 
   // Show loading state while tokens are loading
@@ -1138,12 +1593,17 @@ const Swap = () => {
             <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold mb-4 font-heading">
               <span className="gradient-text">Swap Tokens</span>
             </h1>
-            <p className="text-gray-400 text-base sm:text-lg">Trade tokens instantly with the best rates</p>
           </div>
 
           {/* Main Swap Card */}
           <div className="card p-4 sm:p-6 md:p-8 relative">
-            {/* Settings Button - No overlap */}
+            {jupiterEnabled && !isJupiterReferralFeeEnabled() && (
+              <div className="mb-4 p-3 rounded-xl border border-amber-500/20 bg-amber-500/10 text-xs text-amber-200">
+                Jupiter routing is active. To charge Kedolik fees on Jupiter swaps, run{' '}
+                <code className="text-amber-100">npm run setup-jupiter-referral</code> and add{' '}
+                <code className="text-amber-100">VITE_JUPITER_REFERRAL_ACCOUNT</code> to .env.
+              </div>
+            )}
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-300">Trade Details</h3>
               <button 
@@ -1231,8 +1691,8 @@ const Swap = () => {
               </div>
             )}
 
-            {/* KEDOLOG Discount Feature - Disabled for multi-hop due to small intermediate amounts */}
-            {(
+            {/* KEDOLOG Discount Feature - Kedolik direct swaps only */}
+            {swapProvider === 'kedolik' && (
               <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/20">
                 <div className="flex items-start gap-3">
                   <input
@@ -1350,6 +1810,7 @@ const Swap = () => {
                     )}
                   </span>
                 </div>
+                {renderQuickTokenChips('from')}
                 <div className="bg-dark-900/50 rounded-2xl p-4 sm:p-5 border border-white/10 hover:border-brand-cyan/30 transition-all duration-300">
                   <div className="flex justify-between items-center gap-3 sm:gap-4">
                     <div className="flex-1 min-w-0">
@@ -1465,8 +1926,9 @@ const Swap = () => {
                     Balance: <span className="text-brand-cyan font-semibold">{toBalance.toFixed(2)}</span>
                   </span>
                 </div>
+                {renderQuickTokenChips('to')}
                 <div className="bg-dark-900/50 rounded-2xl p-4 sm:p-5 border border-white/10 hover:border-brand-pink/30 transition-all duration-300 relative">
-                  {isLoadingQuote && (
+                  {(isLoadingQuote || isLoadingJupiterQuote) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-dark-900/50 backdrop-blur-sm rounded-2xl">
                       <div className="w-6 h-6 border-2 border-brand-cyan border-t-transparent rounded-full animate-spin"></div>
                     </div>
@@ -1580,16 +2042,33 @@ const Swap = () => {
                     </span>
                   </div>
                   
-                  {/* Fee */}
+                  {swapProvider === 'jupiter' && jupiterFeeEstimate && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-400">Kedolik fee ({getJupiterReferralFeePercent()}%)</span>
+                      <span className="font-semibold text-green-400">
+                        ~{jupiterFeeEstimate.feeAmountUi.toFixed(6)} {jupiterFeeEstimate.feeSymbol || 'token'}
+                      </span>
+                    </div>
+                  )}
+                  {swapProvider === 'jupiter' && isJupiterReferralFeeEnabled() && !jupiterFeeEstimate && jupiterOrder && (
+                    <div className="text-[10px] text-amber-400">
+                      Referral fee account may be missing for this pair — fee may not collect. Run setup script.
+                    </div>
+                  )}
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">
-                      {useKedologDiscount && estimatedKedologFee ? `Estimated Fee (${fromToken.symbol})` : 'Estimated Fee (0.25%)'}
+                      {swapProvider === 'jupiter'
+                        ? 'Routing'
+                        : useKedologDiscount && estimatedKedologFee
+                          ? `Estimated Fee (${fromToken.symbol})`
+                          : 'Estimated Fee (0.25%)'}
                     </span>
                     <span className="font-semibold text-white">
-                      {useKedologDiscount && estimatedKedologFee 
-                        ? `${estimatedKedologFee.lpFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
-                        : `${quoteData.fee.toFixed(6)} ${fromToken.symbol}`
-                      }
+                      {swapProvider === 'jupiter'
+                        ? 'Jupiter Aggregator'
+                        : useKedologDiscount && estimatedKedologFee
+                          ? `${estimatedKedologFee.lpFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
+                          : `${quoteData.fee.toFixed(6)} ${fromToken.symbol}`}
                     </span>
                   </div>
                   
@@ -1618,8 +2097,16 @@ const Swap = () => {
                     </span>
                   </div>
                   
-                  {/* Route for multi-hop (label simplified, no hop count) */}
-                  {isMultiHop && swapRoute && (
+                  {/* Route */}
+                  {swapProvider === 'jupiter' && jupiterOrder && (
+                    <div className="flex justify-between items-center pt-2 border-t border-white/10">
+                      <span className="text-gray-400">Route</span>
+                      <span className="font-semibold text-green-400 text-xs text-right max-w-[60%]">
+                        🪐 {getJupiterRouteLabel(jupiterOrder)}
+                      </span>
+                    </div>
+                  )}
+                  {isMultiHop && swapRoute && swapProvider === 'kedolik' && (
                     <div className="flex justify-between items-center pt-2 border-t border-white/10">
                       <span className="text-gray-400">Route</span>
                       <div className="flex flex-col items-end gap-1">
@@ -1645,8 +2132,32 @@ const Swap = () => {
               </div>
             )}
             
+            {swapProvider === 'jupiter' && jupiterEnabled && fromAmount && (
+              <div className="mt-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg animate-scale-in">
+                <div className="text-xs text-center text-green-400 flex items-center justify-center gap-2">
+                  <span>🪐</span>
+                  {isLoadingJupiterQuote
+                    ? 'Fetching best Jupiter route (rate limit: ~1 req / 2s on free tier)...'
+                    : jupiterQuoteError
+                      ? jupiterQuoteError
+                      : jupiterRouteReason === 'better-price'
+                        ? `This trade would move the Kedolik pool price too much — routing via Jupiter for a better rate.`
+                        : `No Kedolik pool for ${fromToken.symbol}/${toToken.symbol} — routing via Jupiter.`}
+                </div>
+              </div>
+            )}
+
+            {/* DEX kept despite high impact (Jupiter wasn't better) */}
+            {swapProvider === 'kedolik' && dexImpactTooHigh && !isLoadingJupiterQuote && fromAmount && (
+              <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg animate-scale-in">
+                <div className="text-xs text-center text-orange-300 flex items-center justify-center gap-2">
+                  <span>⚡</span> Large trade for this pool — Kedolik still gives the best rate. Consider splitting the order to reduce price impact.
+                </div>
+              </div>
+            )}
+
             {/* No Route Warning */}
-            {!poolReserves && !swapRoute && fromAmount && (
+            {!poolReserves && !swapRoute && !jupiterEnabled && fromAmount && (
               <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg animate-scale-in">
                 <div className="text-xs text-center text-yellow-400 flex items-center justify-center gap-2">
                   <span>⚠️</span> No swap route found for {fromToken.symbol}/{toToken.symbol}. Create a direct pool or intermediate pools.
@@ -1663,14 +2174,16 @@ const Swap = () => {
                 !swapEnabled ||
                 maintenanceMode ||
                 !connected || 
-                (!poolReserves && !swapRoute) || 
+                (!poolReserves && !swapRoute && swapProvider !== 'jupiter') || 
+                (swapProvider === 'jupiter' && !jupiterOrder) ||
                 !fromAmount || 
                 !toAmount || 
                 isLoadingQuote || 
+                isLoadingJupiterQuote ||
                 isLoadingKedologFee ||
                 isTransactionInProgress ||
-                (useKedologDiscount && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001) ||
-                (useKedologDiscount && estimatedKedologFee === null && isLoadingKedologFee)
+                (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001) ||
+                (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee === null && isLoadingKedologFee)
               }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >
@@ -1696,22 +2209,27 @@ const Swap = () => {
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   Processing...
                 </>
-              ) : isLoadingQuote ? (
+              ) : isLoadingQuote || isLoadingJupiterQuote ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Calculating Quote...
+                  {swapProvider === 'jupiter' ? 'Fetching Jupiter Quote...' : 'Calculating Quote...'}
                 </>
               ) : isLoadingKedologFee ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   Calculating KEDOLOG Fee...
                 </>
-              ) : !poolReserves && !swapRoute ? (
+              ) : !poolReserves && !swapRoute && swapProvider !== 'jupiter' ? (
                 <>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   No Route Available
+                </>
+              ) : swapProvider === 'jupiter' ? (
+                <>
+                  <span>🪐</span>
+                  Swap via Jupiter
                 </>
               ) : (
                 <>
@@ -1754,6 +2272,8 @@ const Swap = () => {
         }}
         excludeToken={toToken}
         tokens={tokens}
+        searchTokens={searchTokens}
+        jupiterEnabled={jupiterEnabled}
       />
       
       <TokenSelectModal
@@ -1765,6 +2285,8 @@ const Swap = () => {
         }}
         excludeToken={fromToken}
         tokens={tokens}
+        searchTokens={searchTokens}
+        jupiterEnabled={jupiterEnabled}
       />
     </>
   );

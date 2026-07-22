@@ -10,6 +10,11 @@ interface ImportMetaEnv {
    */
   readonly VITE_RPC_ENDPOINT: string;
   readonly VITE_NETWORK?: string;
+  readonly VITE_JUPITER_API_KEY?: string;
+  readonly VITE_JUPITER_REFERRAL_ACCOUNT?: string;
+  readonly VITE_JUPITER_REFERRAL_FEE_BPS?: string;
+  readonly VITE_MAX_DEX_PRICE_IMPACT_PERCENT?: string;
+  readonly VITE_DEBUG?: string;
 }
 
 interface ImportMeta {
