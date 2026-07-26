@@ -8,8 +8,7 @@ import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
-import { fetchPoolStats, formatUsdCompact, PoolStats } from '../utils/poolStats';
-import { getPlatformVolumeStats } from '../utils/tradeVolume';
+import { fetchPoolStats, formatUsdCompact, PoolStats, readCachedPoolStats, writeCachedPoolStats } from '../utils/poolStats';
 
 const hasActivePoolLiquidity = (pool: PoolInfo) =>
   pool.token0Reserve > 0 &&
@@ -30,8 +29,7 @@ const Pools = () => {
   const [pools, setPools] = useState<PoolInfo[]>([]);
   const [userLpBalances, setUserLpBalances] = useState<Map<string, number>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
-  const [poolStats, setPoolStats] = useState<PoolStats | null>(null);
-  const [platformVolume, setPlatformVolume] = useState(() => getPlatformVolumeStats());
+  const [poolStats, setPoolStats] = useState<PoolStats | null>(() => readCachedPoolStats());
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [showCreatePool, setShowCreatePool] = useState(false);
@@ -144,13 +142,16 @@ const Pools = () => {
         return;
       }
 
-      setIsLoadingStats(true);
+      if (!readCachedPoolStats()) {
+        setIsLoadingStats(true);
+      }
       setStatsError(null);
 
       try {
         const nextStats = await fetchPoolStats(connection, pools);
         if (!cancelled) {
           setPoolStats(nextStats);
+          writeCachedPoolStats(nextStats);
         }
       } catch (error) {
         if (!cancelled) {
@@ -166,20 +167,14 @@ const Pools = () => {
 
     loadPoolStats();
 
-    const refreshPlatformVolume = () => setPlatformVolume(getPlatformVolumeStats());
-    window.addEventListener('kedolik-trade-recorded', refreshPlatformVolume);
-
     return () => {
       cancelled = true;
-      window.removeEventListener('kedolik-trade-recorded', refreshPlatformVolume);
     };
   }, [connection, pools]);
 
   const totalTVL = poolStats?.totalTvlUsd ?? 0;
-  const onChainDexVolume24h = poolStats?.volume24hUsd ?? 0;
-  const kedolikVolume24h = Math.max(onChainDexVolume24h, platformVolume.kedolikVolume24hUsd);
-  const totalVolume = kedolikVolume24h + platformVolume.jupiterVolume24hUsd + platformVolume.okxVolume24hUsd;
-  const totalTrades24h = platformVolume.tradeCount24h;
+  const dexVolume24h = poolStats?.volume24hUsd ?? 0;
+  const dexSwaps24h = poolStats?.swapEvents24h ?? 0;
   const activePoolCount = pools.filter(hasActivePoolLiquidity).length;
   
   // Filter pools
@@ -231,7 +226,7 @@ const Pools = () => {
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">Total Value Locked</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold gradient-text">
-                {isLoadingStats ? 'Loading...' : formatUsdCompact(totalTVL)}
+                {isLoadingStats && !poolStats ? 'Loading...' : formatUsdCompact(totalTVL)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
                  Based on the Total Value Locked
@@ -240,11 +235,11 @@ const Pools = () => {
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">24h Volume</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-cyan">
-                {isLoadingStats ? 'Loading...' : formatUsdCompact(totalVolume)}
+                {isLoadingStats && !poolStats ? 'Loading...' : formatUsdCompact(dexVolume24h)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                DEX + Jupiter swaps via Kedolik
-                {totalTrades24h > 0 ? ` · ${totalTrades24h} trade${totalTrades24h === 1 ? '' : 's'} (24h)` : ''}
+                Kedolik DEX trading volume
+                {dexSwaps24h > 0 ? ` · ${dexSwaps24h} swap${dexSwaps24h === 1 ? '' : 's'} (24h)` : ''}
               </p>
           </div>
             <div className="card p-4 sm:p-6">

@@ -18,6 +18,11 @@ dist-ssr
 .env.local
 .env.production
 
+# Local wallet keypairs — never commit
+keypair.json
+*-keypair.json
+kedolik-fee-keypair.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

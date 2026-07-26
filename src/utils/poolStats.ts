@@ -34,6 +34,26 @@ export interface PoolStats {
   unpricedVolumeEvents: number;
 }
 
+const POOL_STATS_CACHE_KEY = 'kedolik-pool-stats-cache';
+
+export const readCachedPoolStats = (): PoolStats | null => {
+  try {
+    const raw = sessionStorage.getItem(POOL_STATS_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as PoolStats;
+  } catch {
+    return null;
+  }
+};
+
+export const writeCachedPoolStats = (stats: PoolStats) => {
+  try {
+    sessionStorage.setItem(POOL_STATS_CACHE_KEY, JSON.stringify(stats));
+  } catch {
+    // sessionStorage may be unavailable
+  }
+};
+
 export const formatUsdCompact = (value: number) =>
   new Intl.NumberFormat('en-US', {
     style: 'currency',
