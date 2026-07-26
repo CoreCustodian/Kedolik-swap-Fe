@@ -1,10 +1,9 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import {
   appendAggregatorTrade,
   isBlobConfigured,
   type AggregatorProvider,
-} from './lib/aggregatorVolumeStore';
-import { verifySuccessfulTransaction } from './lib/verifyTransaction';
+} from './_lib/aggregatorVolumeStore';
+import { verifySuccessfulTransaction } from './_lib/verifyTransaction';
 
 interface RecordTradeBody {
   signature?: string;
@@ -12,45 +11,44 @@ interface RecordTradeBody {
   volumeUsd?: number;
 }
 
-const parseBody = (req: VercelRequest): RecordTradeBody => {
-  if (!req.body) return {};
-  if (typeof req.body === 'string') {
-    try {
-      return JSON.parse(req.body) as RecordTradeBody;
-    } catch {
-      return {};
-    }
-  }
-  return req.body as RecordTradeBody;
-};
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'Method not allowed' });
+export default async function handler(request: Request): Promise<Response> {
+  if (request.method !== 'POST') {
+    return Response.json({ error: 'Method not allowed' }, {
+      status: 405,
+      headers: { Allow: 'POST' },
+    });
   }
 
   if (!isBlobConfigured()) {
-    return res.status(503).json({ error: 'BLOB_READ_WRITE_TOKEN is not configured on Vercel' });
+    return Response.json(
+      { error: 'BLOB_READ_WRITE_TOKEN is not configured on Vercel' },
+      { status: 503 },
+    );
   }
 
-  const body = parseBody(req);
+  let body: RecordTradeBody;
+  try {
+    body = (await request.json()) as RecordTradeBody;
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
   const signature = body.signature?.trim();
   const provider = body.provider;
   const volumeUsd = Number(body.volumeUsd);
 
   if (!signature || (provider !== 'jupiter' && provider !== 'okx')) {
-    return res.status(400).json({ error: 'Invalid signature or provider' });
+    return Response.json({ error: 'Invalid signature or provider' }, { status: 400 });
   }
 
   if (!Number.isFinite(volumeUsd) || volumeUsd <= 0 || volumeUsd > 1_000_000_000) {
-    return res.status(400).json({ error: 'Invalid volumeUsd' });
+    return Response.json({ error: 'Invalid volumeUsd' }, { status: 400 });
   }
 
   try {
     const verified = await verifySuccessfulTransaction(signature);
     if (!verified) {
-      return res.status(400).json({ error: 'Transaction not confirmed on-chain yet' });
+      return Response.json({ error: 'Transaction not confirmed on-chain yet' }, { status: 400 });
     }
 
     const recorded = await appendAggregatorTrade({
@@ -60,10 +58,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       timestamp: Date.now(),
     });
 
-    return res.status(recorded ? 201 : 200).json({ ok: true, recorded });
+    return Response.json({ ok: true, recorded }, { status: recorded ? 201 : 200 });
   } catch (error) {
     console.error('record-aggregator-trade failed:', error);
     const message = error instanceof Error ? error.message : 'Failed to record trade';
-    return res.status(500).json({ error: message });
+    return Response.json({ error: message }, { status: 500 });
   }
 }
