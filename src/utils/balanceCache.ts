@@ -2,9 +2,50 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getTokenBalance } from './amm';
 
 /**
- * Balance cache to reduce RPC calls
- * Caches token balances with TTL to prevent excessive requests
+ * Parse token amount from RPC response (handles null uiAmount).
  */
+export const parseTokenAmount = (value: {
+  uiAmount: number | null;
+  uiAmountString?: string;
+  amount: string;
+  decimals: number;
+}): number => {
+  if (value.uiAmount != null && Number.isFinite(value.uiAmount)) {
+    return value.uiAmount;
+  }
+  if (value.uiAmountString) {
+    const parsed = parseFloat(value.uiAmountString);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  try {
+    return Number(value.amount) / Math.pow(10, value.decimals);
+  } catch {
+    return 0;
+  }
+};
+
+/** Format a token balance for display (mobile-friendly, avoids misleading .00 for small amounts). */
+export const formatTokenBalance = (balance: number, symbol?: string): string => {
+  if (!Number.isFinite(balance) || balance <= 0) {
+    return symbol ? `0 ${symbol}` : '0';
+  }
+
+  let formatted: string;
+  if (balance >= 1_000_000) {
+    formatted = balance.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  } else if (balance >= 1_000) {
+    formatted = balance.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  } else if (balance >= 1) {
+    formatted = balance.toFixed(4).replace(/\.?0+$/, '');
+  } else if (balance >= 0.0001) {
+    formatted = balance.toFixed(6).replace(/\.?0+$/, '');
+  } else {
+    formatted = balance.toExponential(2);
+  }
+
+  return symbol ? `${formatted} ${symbol}` : formatted;
+};
+
 
 interface BalanceCacheEntry {
   balance: number;

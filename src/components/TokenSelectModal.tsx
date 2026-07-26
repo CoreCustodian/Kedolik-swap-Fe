@@ -9,6 +9,8 @@ interface TokenSelectModalProps {
   tokens: TokenInfo[];
   searchTokens?: (query: string) => Promise<TokenInfo[]>;
   jupiterEnabled?: boolean;
+  okxEnabled?: boolean;
+  aggregatorsEnabled?: boolean;
 }
 
 export const TokenSelectModal = ({
@@ -19,6 +21,8 @@ export const TokenSelectModal = ({
   tokens,
   searchTokens,
   jupiterEnabled = false,
+  okxEnabled: _okxEnabled = false,
+  aggregatorsEnabled = false,
 }: TokenSelectModalProps) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [displayTokens, setDisplayTokens] = useState<TokenInfo[]>(tokens);
@@ -60,13 +64,13 @@ export const TokenSelectModal = ({
       } finally {
         if (!cancelled) setIsSearching(false);
       }
-    }, jupiterEnabled ? 600 : 200);
+    }, aggregatorsEnabled ? 600 : 200);
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [isOpen, searchQuery, tokens, searchTokens, jupiterEnabled]);
+  }, [isOpen, searchQuery, tokens, searchTokens, aggregatorsEnabled]);
 
   const filteredTokens = displayTokens.filter(
     (token) => !excludeToken || !token.mint.equals(excludeToken.mint)

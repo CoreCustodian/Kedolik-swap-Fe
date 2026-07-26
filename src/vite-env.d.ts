@@ -14,6 +14,13 @@ interface ImportMetaEnv {
   readonly VITE_JUPITER_REFERRAL_ACCOUNT?: string;
   readonly VITE_JUPITER_REFERRAL_FEE_BPS?: string;
   readonly VITE_MAX_DEX_PRICE_IMPACT_PERCENT?: string;
+  readonly VITE_OKX_API_KEY?: string;
+  readonly VITE_OKX_SECRET_KEY?: string;
+  readonly VITE_OKX_PASSPHRASE?: string;
+  readonly VITE_OKX_PROJECT_ID?: string;
+  readonly VITE_OKX_API_BASE?: string;
+  readonly VITE_OKX_FEE_PERCENT?: string;
+  readonly VITE_OKX_REFERRER_WALLET?: string;
   readonly VITE_DEBUG?: string;
 }
 

@@ -1,7 +1,7 @@
 // Platform trade volume tracking for swaps routed through Kedolik DEX or Jupiter.
 // Persists to localStorage (per-browser). For production-wide analytics, add a backend.
 
-export type SwapProvider = 'kedolik' | 'jupiter';
+export type SwapProvider = 'kedolik' | 'jupiter' | 'okx';
 
 export interface TradeRecord {
   id: string;
@@ -25,10 +25,12 @@ export interface PlatformVolumeStats {
   volume24hUsd: number;
   kedolikVolume24hUsd: number;
   jupiterVolume24hUsd: number;
+  okxVolume24hUsd: number;
   platformFees24hUsd: number;
   tradeCount24h: number;
   kedolikTradeCount24h: number;
   jupiterTradeCount24h: number;
+  okxTradeCount24h: number;
 }
 
 const STORAGE_KEY = 'kedolik-platform-trades';
@@ -82,15 +84,20 @@ export const getPlatformVolumeStats = (sinceMs: number = DAY_MS): PlatformVolume
 
   let kedolikVolume24hUsd = 0;
   let jupiterVolume24hUsd = 0;
+  let okxVolume24hUsd = 0;
   let platformFees24hUsd = 0;
   let kedolikTradeCount24h = 0;
   let jupiterTradeCount24h = 0;
+  let okxTradeCount24h = 0;
 
   recent.forEach((trade) => {
     platformFees24hUsd += trade.platformFeeUsd ?? 0;
     if (trade.provider === 'jupiter') {
       jupiterVolume24hUsd += trade.volumeUsd;
       jupiterTradeCount24h += 1;
+    } else if (trade.provider === 'okx') {
+      okxVolume24hUsd += trade.volumeUsd;
+      okxTradeCount24h += 1;
     } else {
       kedolikVolume24hUsd += trade.volumeUsd;
       kedolikTradeCount24h += 1;
@@ -98,13 +105,15 @@ export const getPlatformVolumeStats = (sinceMs: number = DAY_MS): PlatformVolume
   });
 
   return {
-    volume24hUsd: kedolikVolume24hUsd + jupiterVolume24hUsd,
+    volume24hUsd: kedolikVolume24hUsd + jupiterVolume24hUsd + okxVolume24hUsd,
     kedolikVolume24hUsd,
     jupiterVolume24hUsd,
+    okxVolume24hUsd,
     platformFees24hUsd,
     tradeCount24h: recent.length,
     kedolikTradeCount24h,
     jupiterTradeCount24h,
+    okxTradeCount24h,
   };
 };
 

@@ -176,9 +176,10 @@ const Pools = () => {
   }, [connection, pools]);
 
   const totalTVL = poolStats?.totalTvlUsd ?? 0;
-  const dexVolume24h = poolStats?.volume24hUsd ?? 0;
-  const jupiterVolume24h = platformVolume.jupiterVolume24hUsd;
-  const totalVolume = dexVolume24h + jupiterVolume24h;
+  const onChainDexVolume24h = poolStats?.volume24hUsd ?? 0;
+  const kedolikVolume24h = Math.max(onChainDexVolume24h, platformVolume.kedolikVolume24hUsd);
+  const totalVolume = kedolikVolume24h + platformVolume.jupiterVolume24hUsd + platformVolume.okxVolume24hUsd;
+  const totalTrades24h = platformVolume.tradeCount24h;
   const activePoolCount = pools.filter(hasActivePoolLiquidity).length;
   
   // Filter pools
@@ -242,7 +243,8 @@ const Pools = () => {
                 {isLoadingStats ? 'Loading...' : formatUsdCompact(totalVolume)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                Combined platform swap volume
+                DEX + Jupiter swaps via Kedolik
+                {totalTrades24h > 0 ? ` · ${totalTrades24h} trade${totalTrades24h === 1 ? '' : 's'} (24h)` : ''}
               </p>
           </div>
             <div className="card p-4 sm:p-6">

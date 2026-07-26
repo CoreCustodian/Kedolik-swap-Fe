@@ -8,6 +8,15 @@ export default defineConfig({
     global: 'globalThis',
     'process.env': {}
   },
+  server: {
+    proxy: {
+      '/okx-api': {
+        target: 'https://web3.okx.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/okx-api/, ''),
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': '/src',

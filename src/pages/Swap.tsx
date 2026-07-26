@@ -17,8 +17,9 @@ import {
   getTokenBalance,
   clearPoolCache,
   WSOL_MINT,
+  isNativeSOL,
 } from '../utils/amm';
-import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
+import { getCachedBalance, clearBalanceCache, formatTokenBalance, debounce } from '../utils/balanceCache';
 import { KEDOLOG_CONFIG } from '../config/fees';
 import { SOL_MINT, KEDOLOG_MINT, USDC_MINT } from '../config/addresses';
 import { 
@@ -34,14 +35,18 @@ import {
   executeJupiterSwap,
   estimateIntegratorFee,
   fromSmallestUnit,
-  getJupiterPriceImpact,
-  getJupiterQuote,
   getJupiterRouteLabel,
   JupiterIntegratorFeeEstimate,
   JupiterOrderResponse,
   isJupiterReferralFeeEnabled,
 } from '../utils/jupiter';
 import { getJupiterReferralFeePercent } from '../config/jupiterFees';
+import {
+  executeOkxSwap,
+  getOkxRouteLabel,
+  OkxSwapResponse,
+} from '../utils/okx';
+import { fetchBestAggregatorQuote } from '../utils/aggregatorRouter';
 import {
   recordTrade,
 } from '../utils/tradeVolume';
@@ -51,10 +56,13 @@ import {
   saveSwapPair,
 } from '../utils/swapPairStorage';
 
-type SwapProvider = 'kedolik' | 'jupiter';
+type SwapProvider = 'kedolik' | 'jupiter' | 'okx';
 
-/** Why a Jupiter route was chosen over the Kedolik DEX (for UI messaging). */
-type JupiterRouteReason = 'no-pool' | 'better-price' | null;
+/** Why an aggregator route was chosen over the Kedolik DEX (for UI messaging). */
+type AggregatorRouteReason = 'no-pool' | 'better-price' | null;
+
+const isAggregatorProvider = (provider: SwapProvider): boolean =>
+  provider === 'jupiter' || provider === 'okx';
 
 /**
  * Smart routing threshold.
@@ -86,6 +94,8 @@ const Swap = () => {
     isLoading: isLoadingTokens,
     searchTokens,
     jupiterEnabled,
+    okxEnabled,
+    aggregatorsEnabled,
     getTokenByMint,
   } = useSwapTokens();
   const { swapEnabled, maintenanceMode } = useFeatureFlags();
@@ -215,6 +225,7 @@ const Swap = () => {
   // Balances
   const [fromBalance, setFromBalance] = useState<number>(0);
   const [toBalance, setToBalance] = useState<number>(0);
+  const [isLoadingBalances, setIsLoadingBalances] = useState(false);
   
   // USD prices for display
   const [fromTokenUsdPrice, setFromTokenUsdPrice] = useState<number>(0);
@@ -230,17 +241,18 @@ const Swap = () => {
   const [swapRoute, setSwapRoute] = useState<SwapRoute | null>(null);
   const [isMultiHop, setIsMultiHop] = useState(false);
 
-  // Jupiter aggregator fallback
+  // Jupiter / OKX aggregator fallback
   const [swapProvider, setSwapProvider] = useState<SwapProvider>('kedolik');
   const [jupiterOrder, setJupiterOrder] = useState<JupiterOrderResponse | null>(null);
-  const [isLoadingJupiterQuote, setIsLoadingJupiterQuote] = useState(false);
-  const [jupiterQuoteError, setJupiterQuoteError] = useState<string | null>(null);
+  const [okxSwap, setOkxSwap] = useState<OkxSwapResponse | null>(null);
+  const [isLoadingAggregatorQuote, setIsLoadingAggregatorQuote] = useState(false);
+  const [aggregatorQuoteError, setAggregatorQuoteError] = useState<string | null>(null);
   const [jupiterFeeEstimate, setJupiterFeeEstimate] = useState<JupiterIntegratorFeeEstimate | null>(null);
 
-  // Smart routing (Kedolik DEX vs Jupiter comparison)
+  // Smart routing (Kedolik DEX vs Jupiter/OKX comparison)
   const [kedolikQuote, setKedolikQuote] = useState<{ amountOut: number; priceImpact: number; fee: number; bonusAmount?: number } | null>(null);
   const [dexImpactTooHigh, setDexImpactTooHigh] = useState(false);
-  const [jupiterRouteReason, setJupiterRouteReason] = useState<JupiterRouteReason>(null);
+  const [aggregatorRouteReason, setAggregatorRouteReason] = useState<AggregatorRouteReason>(null);
   const kedolikOutput = kedolikQuote?.amountOut ?? 0;
   
   // KEDOLOG discount feature
@@ -294,38 +306,50 @@ const Swap = () => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
   
-  // Fetch token balances with caching and debouncing
+  // Fetch token balances (cancellable — avoids stale results when switching tokens/direction)
   useEffect(() => {
-      if (!publicKey || !connected) {
-        setFromBalance(0);
-        setToBalance(0);
+    if (!publicKey || !connected) {
+      setFromBalance(0);
+      setToBalance(0);
       setKedologBalance(0);
-        return;
-      }
-      
-    // Debounced balance fetcher to prevent excessive RPC calls
-    const fetchBalances = debounce(async () => {
+      setIsLoadingBalances(false);
+      return;
+    }
+
+    let cancelled = false;
+    const fromMint = fromToken.mint;
+    const toMint = toToken.mint;
+
+    const loadBalances = async () => {
+      setIsLoadingBalances(true);
       try {
-        // Use cached balance fetcher (10s cache, prevents duplicate requests)
         const [fromBal, toBal, kedologBal] = await Promise.all([
-          getCachedBalance(connection, fromToken.mint, publicKey),
-          getCachedBalance(connection, toToken.mint, publicKey),
+          getCachedBalance(connection, fromMint, publicKey, true),
+          getCachedBalance(connection, toMint, publicKey, true),
           getCachedBalance(connection, KEDOLOG_CONFIG.MINT, publicKey),
         ]);
-        
-        setFromBalance(fromBal);
-        setToBalance(toBal);
-        setKedologBalance(kedologBal);
+
+        if (!cancelled) {
+          setFromBalance(fromBal);
+          setToBalance(toBal);
+          setKedologBalance(kedologBal);
+        }
       } catch (error) {
-        console.error('Error fetching balances:', error);
-        // Don't show toast on every error to avoid spam
+        if (!cancelled) {
+          console.error('Error fetching balances:', error);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingBalances(false);
+        }
       }
-    }, 500); // 500ms debounce
-    
-    fetchBalances();
-    
-    // No interval - balances will refresh when tokens change or cache expires
-    // Cache TTL is 10 seconds, so balances auto-refresh when needed
+    };
+
+    const timer = window.setTimeout(loadBalances, 150);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [publicKey, connected, fromToken.mint.toString(), toToken.mint.toString(), connection]);
   
   // Fetch pool reserves and check for routes (debounced to prevent excessive calls)
@@ -376,7 +400,8 @@ const Swap = () => {
           setSwapRoute(null);
           setSwapProvider('kedolik');
           setJupiterOrder(null);
-          setJupiterRouteReason(null);
+          setOkxSwap(null);
+          setAggregatorRouteReason(null);
         } else {
           // No direct pool, look for multi-hop route
           console.log('❌ No direct pool found, searching for multi-hop route...');
@@ -401,19 +426,20 @@ const Swap = () => {
               setIsMultiHop(true);
               setSwapProvider('kedolik');
               setJupiterOrder(null);
-              setJupiterRouteReason(null);
+              setOkxSwap(null);
+              setAggregatorRouteReason(null);
             } else {
               console.log('❌ No Kedolik route found');
               setSwapRoute(null);
               setIsMultiHop(false);
               setKedolikQuote(null);
               setDexImpactTooHigh(false);
-              if (jupiterEnabled) {
-                setSwapProvider('jupiter');
-                setJupiterRouteReason('no-pool');
+              if (aggregatorsEnabled) {
+                setSwapProvider(jupiterEnabled ? 'jupiter' : 'okx');
+                setAggregatorRouteReason('no-pool');
               } else {
                 setSwapProvider('kedolik');
-                setJupiterRouteReason(null);
+                setAggregatorRouteReason(null);
               }
             }
           } catch (error) {
@@ -434,34 +460,35 @@ const Swap = () => {
     
     // NO INTERVAL - pool cache (10s TTL) handles refresh automatically
     // Only refetch when tokens actually change
-  }, [fromToken.mint.toString(), toToken.mint.toString(), connection, wallet, poolRefreshTrigger, jupiterEnabled]);
+  }, [fromToken.mint.toString(), toToken.mint.toString(), connection, wallet, poolRefreshTrigger, aggregatorsEnabled, jupiterEnabled]);
 
-  // Jupiter routing:
-  //  - "pure Jupiter" when there's no Kedolik pool/route for the pair.
+  // Aggregator routing (Jupiter + OKX):
+  //  - "pure aggregator" when there's no Kedolik pool/route for the pair.
   //  - "comparison" when a Kedolik route exists but its price impact is too high;
   //    we then route through whichever venue returns the larger output.
   useEffect(() => {
     const hasKedolik = Boolean(poolReserves || swapRoute);
-    const pureJupiter = !hasKedolik;
+    const pureAggregator = !hasKedolik;
     const comparisonMode = hasKedolik && dexImpactTooHigh;
 
-    if (!jupiterEnabled) {
-      if (pureJupiter) {
+    if (!aggregatorsEnabled) {
+      if (pureAggregator) {
         setJupiterOrder(null);
-        setJupiterQuoteError(null);
+        setOkxSwap(null);
+        setAggregatorQuoteError(null);
       }
       return;
     }
 
-    // Nothing for Jupiter to do: Kedolik handles low-impact trades directly.
-    if (!pureJupiter && !comparisonMode) {
+    if (!pureAggregator && !comparisonMode) {
       return;
     }
 
     if (!fromAmount) {
-      if (pureJupiter) {
+      if (pureAggregator) {
         setJupiterOrder(null);
-        setJupiterQuoteError(null);
+        setOkxSwap(null);
+        setAggregatorQuoteError(null);
       }
       return;
     }
@@ -471,67 +498,75 @@ const Swap = () => {
       return;
     }
 
-    if (pureJupiter) {
-      setSwapProvider('jupiter');
+    if (pureAggregator) {
+      setSwapProvider(jupiterEnabled ? 'jupiter' : 'okx');
       if (useKedologDiscount) {
         setUseKedologDiscount(false);
       }
     }
 
     const timer = setTimeout(async () => {
-      setIsLoadingJupiterQuote(true);
-      setJupiterQuoteError(null);
+      setIsLoadingAggregatorQuote(true);
+      setAggregatorQuoteError(null);
       try {
         const slippagePercent = parseFloat(slippage) || 0.5;
-        const quote = await getJupiterQuote(
-          fromToken.mint,
-          toToken.mint,
+        const best = await fetchBestAggregatorQuote({
+          inputMint: fromToken.mint,
+          outputMint: toToken.mint,
           amount,
-          fromToken.decimals,
-          slippagePercent
-        );
+          inputDecimals: fromToken.decimals,
+          outputDecimals: toToken.decimals,
+          slippagePercent,
+          userWallet: publicKey?.toString(),
+        });
 
-        if (!quote) {
-          if (pureJupiter) {
+        if (!best) {
+          if (pureAggregator) {
             setJupiterOrder(null);
+            setOkxSwap(null);
             setJupiterFeeEstimate(null);
             setToAmount('');
             setQuoteData(null);
-            setJupiterQuoteError('No Jupiter route found for this pair.');
+            setAggregatorQuoteError('No aggregator route found for this pair.');
           }
-          // Comparison mode: no Jupiter route → keep the trade on our DEX.
           return;
         }
 
-        const amountOut = fromSmallestUnit(quote.outAmount, toToken.decimals);
-
-        const routeToJupiter = () => {
-          setSwapProvider('jupiter');
-          setJupiterOrder(quote);
+        const routeToAggregator = () => {
+          setSwapProvider(best.provider);
+          setJupiterOrder(best.jupiterOrder ?? null);
+          setOkxSwap(best.okxSwap ?? null);
           setJupiterFeeEstimate(
-            estimateIntegratorFee(quote, fromToken.decimals, toToken.decimals, fromToken.symbol, toToken.symbol)
+            best.jupiterOrder
+              ? estimateIntegratorFee(
+                  best.jupiterOrder,
+                  fromToken.decimals,
+                  toToken.decimals,
+                  fromToken.symbol,
+                  toToken.symbol
+                )
+              : null
           );
           setQuoteData({
-            amountOut,
-            priceImpact: getJupiterPriceImpact(quote),
+            amountOut: best.amountOut,
+            priceImpact: best.priceImpact,
             fee: 0,
           });
-          setToAmount(amountOut.toFixed(6));
+          setToAmount(best.amountOut.toFixed(6));
         };
 
         if (comparisonMode) {
-          // Route through Jupiter only if it actually beats our (high-impact) DEX quote.
-          if (amountOut > kedolikOutput) {
-            setJupiterRouteReason('better-price');
+          if (best.amountOut > kedolikOutput) {
+            setAggregatorRouteReason('better-price');
             if (useKedologDiscount) {
               setUseKedologDiscount(false);
             }
-            routeToJupiter();
+            routeToAggregator();
           } else {
-            // Our DEX is still the better deal despite the price impact.
             setSwapProvider('kedolik');
-            setJupiterRouteReason(null);
+            setAggregatorRouteReason(null);
             setJupiterOrder(null);
+            setOkxSwap(null);
             setJupiterFeeEstimate(null);
             if (kedolikQuote) {
               setQuoteData(kedolikQuote);
@@ -541,26 +576,27 @@ const Swap = () => {
           return;
         }
 
-        // Pure Jupiter (no Kedolik route for this pair).
-        setJupiterRouteReason('no-pool');
-        routeToJupiter();
+        setAggregatorRouteReason('no-pool');
+        routeToAggregator();
       } catch (error) {
-        if (pureJupiter) {
-          console.error('Jupiter quote error:', error);
+        if (pureAggregator) {
+          console.error('Aggregator quote error:', error);
           setJupiterOrder(null);
+          setOkxSwap(null);
           setJupiterFeeEstimate(null);
           setToAmount('');
           setQuoteData(null);
-          setJupiterQuoteError(error instanceof Error ? error.message : 'Failed to fetch Jupiter quote');
+          setAggregatorQuoteError(
+            error instanceof Error ? error.message : 'Failed to fetch aggregator quote'
+          );
         } else {
-          // Comparison failed → silently keep the DEX quote already on screen.
-          console.error('Jupiter comparison quote failed:', error);
+          console.error('Aggregator comparison quote failed:', error);
         }
       } finally {
-        setIsLoadingJupiterQuote(false);
+        setIsLoadingAggregatorQuote(false);
         setIsLoadingQuote(false);
       }
-    }, 2100);
+    }, jupiterEnabled ? 2100 : 1200);
 
     return () => clearTimeout(timer);
   }, [
@@ -569,11 +605,14 @@ const Swap = () => {
     toToken,
     poolReserves,
     swapRoute,
+    aggregatorsEnabled,
     jupiterEnabled,
     slippage,
     useKedologDiscount,
     dexImpactTooHigh,
     kedolikOutput,
+    kedolikQuote,
+    publicKey,
   ]);
   
   // Check KEDOLOG discount availability when tokens change
@@ -746,8 +785,9 @@ const Swap = () => {
       // Below the impact threshold: always keep the trade on our own DEX and
       // discard any pending Jupiter comparison so execution uses Kedolik.
       if (!tooHigh) {
-        setJupiterRouteReason(null);
+        setAggregatorRouteReason(null);
         setJupiterOrder(null);
+        setOkxSwap(null);
         setJupiterFeeEstimate(null);
         if (swapProvider !== 'kedolik') {
           setSwapProvider('kedolik');
@@ -755,7 +795,7 @@ const Swap = () => {
       }
 
       // Only drive the visible quote while we're actually showing the DEX venue.
-      // When routing has flipped to Jupiter, the Jupiter effect owns the display.
+      // When routing has flipped to an aggregator, the aggregator effect owns the display.
       if (swapProvider === 'kedolik') {
         setQuoteData(result);
         setToAmount(result.amountOut.toFixed(6));
@@ -773,7 +813,7 @@ const Swap = () => {
     }, 50); // Minimal debounce (50ms) for render optimization
     
     return () => clearTimeout(timer);
-  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount, swapProvider, jupiterEnabled]);
+  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount, swapProvider, aggregatorsEnabled]);
   
   // Calculate KEDOLOG fee estimate
   useEffect(() => {
@@ -1040,7 +1080,10 @@ const Swap = () => {
       platformFeeSymbol?: string;
     }
   ) => {
-    const volumeUsd = inputAmount * fromTokenUsdPrice;
+    const volumeUsd =
+      inputAmount * fromTokenUsdPrice ||
+      outputAmount * toTokenUsdPrice ||
+      0;
     recordTrade({
       provider,
       inputMint: fromToken.mint.toString(),
@@ -1085,20 +1128,25 @@ const Swap = () => {
       return;
     }
     
-    if (!poolReserves && !swapRoute && swapProvider !== 'jupiter') {
+    if (!poolReserves && !swapRoute && !isAggregatorProvider(swapProvider)) {
       showToast('No swap route found. Try creating a pool or using different tokens.', 'error');
       return;
     }
 
     if (swapProvider === 'jupiter' && !jupiterOrder) {
-      showToast(jupiterQuoteError || 'Waiting for Jupiter quote. Please try again in a moment.', 'warning');
+      showToast(aggregatorQuoteError || 'Waiting for Jupiter quote. Please try again in a moment.', 'warning');
+      return;
+    }
+
+    if (swapProvider === 'okx' && !okxSwap) {
+      showToast(aggregatorQuoteError || 'Waiting for OKX quote. Please try again in a moment.', 'warning');
       return;
     }
     
     const amountIn = parseFloat(fromAmount);
     
     // Special handling for native SOL swaps
-    if (fromToken.symbol === 'SOL') {
+    if (isNativeSOL(fromToken.mint)) {
       // Reserve SOL for transaction fees and rent (~0.005 SOL)
       const MIN_SOL_RESERVE = 0.005;
       const maxSwappableSOL = fromBalance - MIN_SOL_RESERVE;
@@ -1227,6 +1275,13 @@ const Swap = () => {
           platformFeeSymbol: feeEstimate?.feeSymbol,
           platformFeeUsd: integratorFeeShare * feeMintPrice,
         });
+      } else if (swapProvider === 'okx') {
+        if (!okxSwap) {
+          throw new Error('OKX quote expired. Please try again.');
+        }
+        console.log('⚡ Executing OKX swap...');
+        signature = await executeOkxSwap(connection, wallet, okxSwap);
+        recordSuccessfulTrade('okx', signature, amountIn, outputAmount);
       } else if (useKedologDiscount && estimatedKedologFee) {
       if (isMultiHop && swapRoute) {
           // Execute multi-hop swap with KEDOLOG discount
@@ -1457,8 +1512,7 @@ const Swap = () => {
     setToToken(fromToken);
     setFromAmount(toAmount);
     setToAmount(fromAmount);
-    setFromBalance(toBalance);
-    setToBalance(fromBalance);
+    // Balances refetch automatically when from/to mints change
   };
   
   // Percentage quick-fill handled inline with buttons
@@ -1799,14 +1853,23 @@ const Swap = () => {
             <div className="space-y-2">
               {/* From Token */}
               <div className="relative">
-                <div className="flex justify-between mb-2">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-2">
                   <label className="text-sm text-gray-400 font-medium">You Pay</label>
-                  <span className="text-xs text-gray-500">
-                    Balance: <span className="text-brand-cyan font-semibold">{fromBalance.toFixed(2)}</span>
-                    {fromToken.symbol === 'SOL' && fromBalance > 0.005 && (
-                      <span className="text-yellow-400 ml-1" title="Keep 0.005 SOL for transaction fees">
-                        (Max: {(fromBalance - 0.005).toFixed(4)})
-                      </span>
+                  <span className="text-[11px] sm:text-xs text-gray-500 sm:text-right">
+                    {isLoadingBalances ? (
+                      <span className="text-gray-600">Balance: …</span>
+                    ) : (
+                      <>
+                        <span className="text-gray-500">Balance: </span>
+                        <span className="text-brand-cyan font-semibold">
+                          {formatTokenBalance(fromBalance, fromToken.symbol)}
+                        </span>
+                        {isNativeSOL(fromToken.mint) && fromBalance > 0.005 && (
+                          <span className="text-yellow-400 ml-1 block sm:inline" title="Keep 0.005 SOL for transaction fees">
+                            (Max: {(fromBalance - 0.005).toFixed(4)} SOL)
+                          </span>
+                        )}
+                      </>
                     )}
                   </span>
                 </div>
@@ -1853,7 +1916,7 @@ const Swap = () => {
                           >
                             {fromToken.symbol[0]}
                           </div>
-                          <span className="hidden sm:inline">{fromToken.symbol}</span>
+                          <span className="max-w-[4.5rem] truncate">{fromToken.symbol}</span>
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
@@ -1881,7 +1944,7 @@ const Swap = () => {
                             onClick={() => {
                               // For SOL, reserve some for transaction fees
                               let maxBalance = fromBalance;
-                              if (fromToken.symbol === 'SOL') {
+                              if (isNativeSOL(fromToken.mint)) {
                                 const MIN_SOL_RESERVE = 0.005;
                                 maxBalance = Math.max(0, fromBalance - MIN_SOL_RESERVE);
                               }
@@ -1913,7 +1976,7 @@ const Swap = () => {
 
               {/* To Token */}
               <div className="relative">
-                <div className="flex justify-between mb-2">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between mb-2">
                   <label className="text-sm text-gray-400 font-medium">
                     You Receive
                     {useKedologDiscount && estimatedKedologFee && quoteData && quoteData.bonusAmount && quoteData.bonusAmount > 0 && toTokenUsdPrice > 0 && (
@@ -1922,13 +1985,22 @@ const Swap = () => {
                       </span>
                     )}
                   </label>
-                  <span className="text-xs text-gray-500">
-                    Balance: <span className="text-brand-cyan font-semibold">{toBalance.toFixed(2)}</span>
+                  <span className="text-[11px] sm:text-xs text-gray-500 sm:text-right">
+                    {isLoadingBalances ? (
+                      <span className="text-gray-600">Balance: …</span>
+                    ) : (
+                      <>
+                        <span className="text-gray-500">Balance: </span>
+                        <span className="text-brand-cyan font-semibold">
+                          {formatTokenBalance(toBalance, toToken.symbol)}
+                        </span>
+                      </>
+                    )}
                   </span>
                 </div>
                 {renderQuickTokenChips('to')}
                 <div className="bg-dark-900/50 rounded-2xl p-4 sm:p-5 border border-white/10 hover:border-brand-pink/30 transition-all duration-300 relative">
-                  {(isLoadingQuote || isLoadingJupiterQuote) && (
+                  {(isLoadingQuote || isLoadingAggregatorQuote) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-dark-900/50 backdrop-blur-sm rounded-2xl">
                       <div className="w-6 h-6 border-2 border-brand-cyan border-t-transparent rounded-full animate-spin"></div>
                     </div>
@@ -1980,7 +2052,7 @@ const Swap = () => {
                         >
                           {toToken.symbol[0]}
                         </div>
-                        <span className="hidden sm:inline">{toToken.symbol}</span>
+                        <span className="max-w-[4.5rem] truncate">{toToken.symbol}</span>
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                         </svg>
@@ -2057,7 +2129,7 @@ const Swap = () => {
                   )}
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">
-                      {swapProvider === 'jupiter'
+                      {isAggregatorProvider(swapProvider)
                         ? 'Routing'
                         : useKedologDiscount && estimatedKedologFee
                           ? `Estimated Fee (${fromToken.symbol})`
@@ -2066,9 +2138,11 @@ const Swap = () => {
                     <span className="font-semibold text-white">
                       {swapProvider === 'jupiter'
                         ? 'Jupiter Aggregator'
-                        : useKedologDiscount && estimatedKedologFee
-                          ? `${estimatedKedologFee.lpFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
-                          : `${quoteData.fee.toFixed(6)} ${fromToken.symbol}`}
+                        : swapProvider === 'okx'
+                          ? 'OKX DEX'
+                          : useKedologDiscount && estimatedKedologFee
+                            ? `${estimatedKedologFee.lpFeeInInputToken.toFixed(6)} ${fromToken.symbol}`
+                            : `${quoteData.fee.toFixed(6)} ${fromToken.symbol}`}
                     </span>
                   </div>
                   
@@ -2098,11 +2172,15 @@ const Swap = () => {
                   </div>
                   
                   {/* Route */}
-                  {swapProvider === 'jupiter' && jupiterOrder && (
+                  {isAggregatorProvider(swapProvider) && (jupiterOrder || okxSwap) && (
                     <div className="flex justify-between items-center pt-2 border-t border-white/10">
                       <span className="text-gray-400">Route</span>
                       <span className="font-semibold text-green-400 text-xs text-right max-w-[60%]">
-                        🪐 {getJupiterRouteLabel(jupiterOrder)}
+                        {swapProvider === 'okx' && okxSwap
+                          ? `⚡ ${getOkxRouteLabel(okxSwap)}`
+                          : swapProvider === 'jupiter' && jupiterOrder
+                            ? `🪐 ${getJupiterRouteLabel(jupiterOrder)}`
+                            : ''}
                       </span>
                     </div>
                   )}
@@ -2132,23 +2210,23 @@ const Swap = () => {
               </div>
             )}
             
-            {swapProvider === 'jupiter' && jupiterEnabled && fromAmount && (
+            {isAggregatorProvider(swapProvider) && aggregatorsEnabled && fromAmount && (
               <div className="mt-4 p-3 bg-green-500/10 border border-green-500/20 rounded-lg animate-scale-in">
                 <div className="text-xs text-center text-green-400 flex items-center justify-center gap-2">
-                  <span>🪐</span>
-                  {isLoadingJupiterQuote
-                    ? 'Fetching best Jupiter route (rate limit: ~1 req / 2s on free tier)...'
-                    : jupiterQuoteError
-                      ? jupiterQuoteError
-                      : jupiterRouteReason === 'better-price'
-                        ? `This trade would move the Kedolik pool price too much — routing via Jupiter for a better rate.`
-                        : `No Kedolik pool for ${fromToken.symbol}/${toToken.symbol} — routing via Jupiter.`}
+                  <span>{swapProvider === 'okx' ? '⚡' : '🪐'}</span>
+                  {isLoadingAggregatorQuote
+                    ? `Fetching best ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'} route...`
+                    : aggregatorQuoteError
+                      ? aggregatorQuoteError
+                      : aggregatorRouteReason === 'better-price'
+                        ? `This trade would move the Kedolik pool price too much — routing via ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'} for a better rate.`
+                        : `No Kedolik pool for ${fromToken.symbol}/${toToken.symbol} — routing via ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'}.`}
                 </div>
               </div>
             )}
 
-            {/* DEX kept despite high impact (Jupiter wasn't better) */}
-            {swapProvider === 'kedolik' && dexImpactTooHigh && !isLoadingJupiterQuote && fromAmount && (
+            {/* DEX kept despite high impact (aggregators weren't better) */}
+            {swapProvider === 'kedolik' && dexImpactTooHigh && !isLoadingAggregatorQuote && fromAmount && (
               <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/20 rounded-lg animate-scale-in">
                 <div className="text-xs text-center text-orange-300 flex items-center justify-center gap-2">
                   <span>⚡</span> Large trade for this pool — Kedolik still gives the best rate. Consider splitting the order to reduce price impact.
@@ -2157,7 +2235,7 @@ const Swap = () => {
             )}
 
             {/* No Route Warning */}
-            {!poolReserves && !swapRoute && !jupiterEnabled && fromAmount && (
+            {!poolReserves && !swapRoute && !aggregatorsEnabled && fromAmount && (
               <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg animate-scale-in">
                 <div className="text-xs text-center text-yellow-400 flex items-center justify-center gap-2">
                   <span>⚠️</span> No swap route found for {fromToken.symbol}/{toToken.symbol}. Create a direct pool or intermediate pools.
@@ -2174,12 +2252,13 @@ const Swap = () => {
                 !swapEnabled ||
                 maintenanceMode ||
                 !connected || 
-                (!poolReserves && !swapRoute && swapProvider !== 'jupiter') || 
+                (!poolReserves && !swapRoute && !isAggregatorProvider(swapProvider)) || 
                 (swapProvider === 'jupiter' && !jupiterOrder) ||
+                (swapProvider === 'okx' && !okxSwap) ||
                 !fromAmount || 
                 !toAmount || 
                 isLoadingQuote || 
-                isLoadingJupiterQuote ||
+                isLoadingAggregatorQuote ||
                 isLoadingKedologFee ||
                 isTransactionInProgress ||
                 (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001) ||
@@ -2209,17 +2288,19 @@ const Swap = () => {
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   Processing...
                 </>
-              ) : isLoadingQuote || isLoadingJupiterQuote ? (
+              ) : isLoadingQuote || isLoadingAggregatorQuote ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  {swapProvider === 'jupiter' ? 'Fetching Jupiter Quote...' : 'Calculating Quote...'}
+                  {isAggregatorProvider(swapProvider)
+                    ? `Fetching ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'} Quote...`
+                    : 'Calculating Quote...'}
                 </>
               ) : isLoadingKedologFee ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
                   Calculating KEDOLOG Fee...
                 </>
-              ) : !poolReserves && !swapRoute && swapProvider !== 'jupiter' ? (
+              ) : !poolReserves && !swapRoute && !isAggregatorProvider(swapProvider) ? (
                 <>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -2230,6 +2311,11 @@ const Swap = () => {
                 <>
                   <span>🪐</span>
                   Swap via Jupiter
+                </>
+              ) : swapProvider === 'okx' ? (
+                <>
+                  <span>⚡</span>
+                  Swap via OKX
                 </>
               ) : (
                 <>
@@ -2274,6 +2360,8 @@ const Swap = () => {
         tokens={tokens}
         searchTokens={searchTokens}
         jupiterEnabled={jupiterEnabled}
+        okxEnabled={okxEnabled}
+        aggregatorsEnabled={aggregatorsEnabled}
       />
       
       <TokenSelectModal
@@ -2287,6 +2375,8 @@ const Swap = () => {
         tokens={tokens}
         searchTokens={searchTokens}
         jupiterEnabled={jupiterEnabled}
+        okxEnabled={okxEnabled}
+        aggregatorsEnabled={aggregatorsEnabled}
       />
     </>
   );

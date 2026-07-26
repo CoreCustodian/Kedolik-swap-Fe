@@ -3,53 +3,65 @@ import { PublicKey } from '@solana/web3.js';
 import { useRemoteTokens } from './useRemoteTokens';
 import { TokenInfo } from '../config/tokens';
 import { getJupiterTrendingTokens, isJupiterEnabled, searchJupiterTokens } from '../utils/jupiter';
+import { getOkxTokenList, isOkxEnabled, searchOkxTokens } from '../utils/okx';
+import { isAnyAggregatorEnabled } from '../utils/aggregatorRouter';
 
 const TRENDING_CACHE_MS = 60 * 60 * 1000;
 
-let trendingCache: { tokens: TokenInfo[]; timestamp: number } | null = null;
+let aggregatorCache: { tokens: TokenInfo[]; timestamp: number } | null = null;
 
 /**
- * Swap token list: Kedolik remote config + Jupiter trending/search tokens.
+ * Swap token list: Kedolik remote config + Jupiter + OKX aggregator tokens.
  */
 export function useSwapTokens() {
   const remote = useRemoteTokens('swap');
-  const [jupiterTokens, setJupiterTokens] = useState<TokenInfo[]>([]);
-  const [isLoadingJupiter, setIsLoadingJupiter] = useState(false);
+  const [aggregatorTokens, setAggregatorTokens] = useState<TokenInfo[]>([]);
+  const [isLoadingAggregators, setIsLoadingAggregators] = useState(false);
 
   useEffect(() => {
-    if (!isJupiterEnabled()) return;
+    if (!isAnyAggregatorEnabled()) return;
 
-    const loadTrending = async () => {
-      if (trendingCache && Date.now() - trendingCache.timestamp < TRENDING_CACHE_MS) {
-        setJupiterTokens(trendingCache.tokens);
+    const loadAggregatorTokens = async () => {
+      if (aggregatorCache && Date.now() - aggregatorCache.timestamp < TRENDING_CACHE_MS) {
+        setAggregatorTokens(aggregatorCache.tokens);
         return;
       }
 
-      setIsLoadingJupiter(true);
+      setIsLoadingAggregators(true);
       try {
-        const trending = await getJupiterTrendingTokens();
-        trendingCache = { tokens: trending, timestamp: Date.now() };
-        setJupiterTokens(trending);
+        const [jupiterTokens, okxTokens] = await Promise.all([
+          isJupiterEnabled() ? getJupiterTrendingTokens() : Promise.resolve([]),
+          isOkxEnabled() ? getOkxTokenList() : Promise.resolve([]),
+        ]);
+
+        const byMint = new Map<string, TokenInfo>();
+        [...jupiterTokens, ...okxTokens].forEach((token) => {
+          byMint.set(token.mint.toString(), token);
+        });
+
+        const merged = Array.from(byMint.values());
+        aggregatorCache = { tokens: merged, timestamp: Date.now() };
+        setAggregatorTokens(merged);
       } catch (error) {
-        console.error('Failed to load Jupiter trending tokens:', error);
+        console.error('Failed to load aggregator tokens:', error);
       } finally {
-        setIsLoadingJupiter(false);
+        setIsLoadingAggregators(false);
       }
     };
 
-    loadTrending();
+    loadAggregatorTokens();
   }, []);
 
   const mergedTokens = useMemo(() => {
     const byMint = new Map<string, TokenInfo>();
     remote.tokens.forEach((token) => byMint.set(token.mint.toString(), token));
-    jupiterTokens.forEach((token) => {
+    aggregatorTokens.forEach((token) => {
       if (!byMint.has(token.mint.toString())) {
         byMint.set(token.mint.toString(), token);
       }
     });
     return Array.from(byMint.values()).sort((a, b) => a.symbol.localeCompare(b.symbol));
-  }, [remote.tokens, jupiterTokens]);
+  }, [remote.tokens, aggregatorTokens]);
 
   const searchTokens = useCallback(
     async (query: string): Promise<TokenInfo[]> => {
@@ -63,14 +75,18 @@ export function useSwapTokens() {
           token.mint.toString().toLowerCase().includes(normalized)
       );
 
-      if (!isJupiterEnabled() || normalized.length < 2) {
+      if (!isAnyAggregatorEnabled() || normalized.length < 2) {
         return localMatches;
       }
 
-      const jupiterMatches = await searchJupiterTokens(query);
+      const [jupiterMatches, okxMatches] = await Promise.all([
+        isJupiterEnabled() ? searchJupiterTokens(query) : Promise.resolve([]),
+        isOkxEnabled() ? searchOkxTokens(query) : Promise.resolve([]),
+      ]);
+
       const byMint = new Map<string, TokenInfo>();
       localMatches.forEach((token) => byMint.set(token.mint.toString(), token));
-      jupiterMatches.forEach((token) => {
+      [...jupiterMatches, ...okxMatches].forEach((token) => {
         if (!byMint.has(token.mint.toString())) {
           byMint.set(token.mint.toString(), token);
         }
@@ -94,9 +110,9 @@ export function useSwapTokens() {
   return {
     tokens: mergedTokens,
     remoteTokens: remote.tokens,
-    jupiterTokens,
+    aggregatorTokens,
     isLoading: remote.isLoading,
-    isLoadingJupiter,
+    isLoadingAggregators,
     error: remote.error,
     version: remote.version,
     refresh: remote.refresh,
@@ -104,6 +120,8 @@ export function useSwapTokens() {
     getTokenByMint,
     getScopedTokenByMint: getTokenByMint,
     jupiterEnabled: isJupiterEnabled(),
+    okxEnabled: isOkxEnabled(),
+    aggregatorsEnabled: isAnyAggregatorEnabled(),
   };
 }
 

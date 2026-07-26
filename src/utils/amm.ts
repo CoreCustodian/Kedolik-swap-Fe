@@ -247,6 +247,26 @@ export const isNativeSOL = (mint: PublicKey): boolean => {
   return mint.equals(WSOL_MINT);
 };
 
+const parseRpcTokenAmount = (value: {
+  uiAmount: number | null;
+  uiAmountString?: string;
+  amount: string;
+  decimals: number;
+}): number => {
+  if (value.uiAmount != null && Number.isFinite(value.uiAmount)) {
+    return value.uiAmount;
+  }
+  if (value.uiAmountString) {
+    const parsed = parseFloat(value.uiAmountString);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  try {
+    return Number(value.amount) / Math.pow(10, value.decimals);
+  } catch {
+    return 0;
+  }
+};
+
 /**
  * Creates instructions to wrap native SOL to WSOL
  * Returns: { instructions, wsolAccount }
@@ -387,10 +407,24 @@ export const getTokenBalance = async (
       return balance / 1e9; // Convert lamports to SOL
     }
 
-    // Otherwise, fetch SPL token balance
-    const tokenAccount = await getAssociatedTokenAddress(mint, owner);
-    const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
-    return parseFloat(accountInfo.value.uiAmount?.toString() || '0');
+    // Prefer ATA (standard wallet layout)
+    try {
+      const tokenAccount = await getAssociatedTokenAddress(mint, owner);
+      const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
+      return parseRpcTokenAmount(accountInfo.value);
+    } catch {
+      // Fallback: sum all token accounts for this mint (handles edge wallet layouts)
+      const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint });
+      if (accounts.value.length === 0) {
+        return 0;
+      }
+
+      return accounts.value.reduce((total, { account }) => {
+        const info = account.data.parsed?.info;
+        if (!info?.tokenAmount) return total;
+        return total + parseRpcTokenAmount(info.tokenAmount);
+      }, 0);
+    }
   } catch (error) {
     console.log(`Balance not found for token ${mint.toString()}:`, error);
     return 0;
