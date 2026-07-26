@@ -34,7 +34,10 @@ export const fetchBestAggregatorQuote = async (params: {
   amount: number;
   inputDecimals: number;
   outputDecimals: number;
+  /** Numeric slippage for OKX */
   slippagePercent: number;
+  /** Raw UI slippage string for Jupiter (RTSE when default 0.5%) */
+  slippageSetting: string;
   userWallet?: string;
 }): Promise<AggregatorQuoteResult | null> => {
   const candidates: AggregatorQuoteResult[] = [];
@@ -49,7 +52,7 @@ export const fetchBestAggregatorQuote = async (params: {
           params.outputMint,
           params.amount,
           params.inputDecimals,
-          params.slippagePercent
+          params.slippageSetting
         );
         if (!order) return;
         candidates.push({

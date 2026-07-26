@@ -342,6 +342,8 @@ const Swap = () => {
   const [dexImpactTooHigh, setDexImpactTooHigh] = useState(false);
   const [aggregatorRouteReason, setAggregatorRouteReason] = useState<AggregatorRouteReason>(null);
   const kedolikOutput = kedolikQuote?.amountOut ?? 0;
+  // Direct Kedolik pool (discount only applies here — not tied to swapProvider to avoid UI flicker)
+  const hasKedolikDirectPool = Boolean(poolReserves) && !isMultiHop;
   
   // KEDOLOG discount feature
   const [useKedologDiscount, setUseKedologDiscount] = useState(false);
@@ -559,6 +561,12 @@ const Swap = () => {
     const pureAggregator = !hasKedolik;
     const comparisonMode = hasKedolik && dexImpactTooHigh;
 
+    // KEDOL discount only executes on Kedolik direct pools — skip aggregator routing
+    // so swapProvider and the discount toggle don't fight each other.
+    if (useKedologDiscount && poolReserves && !isMultiHop) {
+      return;
+    }
+
     if (!aggregatorsEnabled) {
       if (pureAggregator) {
         setJupiterOrder(null);
@@ -605,6 +613,7 @@ const Swap = () => {
           inputDecimals: fromToken.decimals,
           outputDecimals: toToken.decimals,
           slippagePercent,
+          slippageSetting: slippage || '0.5',
           userWallet: publicKey?.toString(),
         });
 
@@ -646,9 +655,6 @@ const Swap = () => {
         if (comparisonMode) {
           if (best.amountOut > kedolikOutput) {
             setAggregatorRouteReason('better-price');
-            if (useKedologDiscount) {
-              setUseKedologDiscount(false);
-            }
             routeToAggregator();
           } else {
             setSwapProvider('kedolik');
@@ -696,11 +702,12 @@ const Swap = () => {
     aggregatorsEnabled,
     jupiterEnabled,
     slippage,
-    useKedologDiscount,
     dexImpactTooHigh,
     kedolikOutput,
     kedolikQuote,
     publicKey,
+    isMultiHop,
+    useKedologDiscount,
   ]);
   
   // Check KEDOLOG discount availability when tokens change
@@ -724,7 +731,7 @@ const Swap = () => {
       console.error('Error checking KEDOLOG availability:', error);
       setKedologAvailability({ available: true }); // Default to available on error
     }
-  }, [fromToken, toToken, poolAddress, useKedologDiscount]);
+  }, [fromToken, toToken, poolAddress]);
   
   // Fetch USD prices for tokens
   useEffect(() => {
@@ -870,9 +877,10 @@ const Swap = () => {
       const tooHigh = result.priceImpact > MAX_DEX_PRICE_IMPACT_PERCENT;
       setDexImpactTooHigh(tooHigh);
 
-      // Below the impact threshold: always keep the trade on our own DEX and
-      // discard any pending Jupiter comparison so execution uses Kedolik.
-      if (!tooHigh) {
+      const discountLocksKedolik = useKedologDiscount && Boolean(poolReserves) && !isMultiHop;
+
+      // Below the impact threshold (or KEDOL discount enabled): keep the trade on our DEX.
+      if (!tooHigh || discountLocksKedolik) {
         setAggregatorRouteReason(null);
         setJupiterOrder(null);
         setOkxSwap(null);
@@ -882,9 +890,9 @@ const Swap = () => {
         }
       }
 
-      // Only drive the visible quote while we're actually showing the DEX venue.
-      // When routing has flipped to an aggregator, the aggregator effect owns the display.
-      if (swapProvider === 'kedolik') {
+      // Drive the visible quote on Kedolik when that's the active venue, or when
+      // the user opted into KEDOL discount (aggregator effect is skipped in that case).
+      if (swapProvider === 'kedolik' || discountLocksKedolik) {
         setQuoteData(result);
         setToAmount(result.amountOut.toFixed(6));
       }
@@ -901,7 +909,7 @@ const Swap = () => {
     }, 50); // Minimal debounce (50ms) for render optimization
     
     return () => clearTimeout(timer);
-  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount, swapProvider, aggregatorsEnabled]);
+  }, [fromAmount, poolReserves, swapRoute, fromToken, toToken, useKedologDiscount, swapProvider, aggregatorsEnabled, isMultiHop]);
   
   // Calculate KEDOLOG fee estimate
   useEffect(() => {
@@ -1145,6 +1153,13 @@ const Swap = () => {
     calculateFee();
   }, [fromAmount, useKedologDiscount, wallet, connection, isMultiHop, swapRoute, quoteData, toToken, fromToken]);
   
+  // Auto-disable KEDOLOG discount when the pair no longer has a direct Kedolik pool
+  useEffect(() => {
+    if (useKedologDiscount && !hasKedolikDirectPool) {
+      setUseKedologDiscount(false);
+    }
+  }, [useKedologDiscount, hasKedolikDirectPool]);
+
   // Auto-disable KEDOLOG discount for multi-hop swaps
   const prevIsMultiHopRef = useRef(isMultiHop);
   useEffect(() => {
@@ -1326,7 +1341,6 @@ const Swap = () => {
 
       if (swapProvider === 'jupiter') {
         console.log('🪐 Executing Jupiter swap...');
-        const slippagePercent = parseFloat(slippage) || 0.5;
         const result = await executeJupiterSwap(
           connection,
           wallet,
@@ -1334,7 +1348,7 @@ const Swap = () => {
           toToken.mint,
           amountIn,
           fromToken.decimals,
-          slippagePercent
+          slippage || '0.5'
         );
         signature = result.signature;
         outputAmount = fromSmallestUnit(
@@ -1816,7 +1830,12 @@ const Swap = () => {
                   <span>⚙️</span> Transaction Settings
                 </h3>
                 <div>
-                  <label className="text-xs text-gray-400 mb-3 block font-medium">Slippage Tolerance</label>
+                  <label className="text-xs text-gray-400 mb-3 block font-medium">
+                    Slippage Tolerance
+                    {swapProvider === 'jupiter' && (
+                      <span className="text-gray-500 font-normal"> — Jupiter uses auto slippage at default 0.5%</span>
+                    )}
+                  </label>
                   <div className="grid grid-cols-5 gap-2">
                     {['0.1', '0.5', '1.0', '2.0'].map((val) => (
                       <button
@@ -1881,7 +1900,7 @@ const Swap = () => {
             )}
 
             {/* KEDOLOG Discount Feature - Kedolik direct swaps only */}
-            {swapProvider === 'kedolik' && (
+            {hasKedolikDirectPool && (
               <div className="mb-4 p-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 rounded-xl border border-purple-500/20">
                 <div className="flex items-start gap-3">
                   <input
@@ -1897,7 +1916,15 @@ const Swap = () => {
                         showToast(kedologAvailability.reason || 'KEDOL discount not available for this pair', 'warning');
                         return;
                       }
-                      setUseKedologDiscount(e.target.checked);
+                      const enabled = e.target.checked;
+                      setUseKedologDiscount(enabled);
+                      if (enabled) {
+                        setSwapProvider('kedolik');
+                        setAggregatorRouteReason(null);
+                        setJupiterOrder(null);
+                        setOkxSwap(null);
+                        setJupiterFeeEstimate(null);
+                      }
                     }}
                     disabled={isMultiHop || !kedologAvailability.available}
                     className={`mt-0.5 w-5 h-5 rounded border-purple-500/50 bg-dark-900 text-purple-500 focus:ring-purple-500 focus:ring-offset-0 ${(isMultiHop || !kedologAvailability.available) ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
@@ -2245,7 +2272,11 @@ const Swap = () => {
                   <div className="flex justify-between items-center">
                     <span className="text-gray-400">Slippage Tolerance</span>
                     <span className="font-semibold text-white">
-                      {slippage}%
+                      {swapProvider === 'jupiter' && jupiterOrder
+                        ? jupiterOrder.slippageBps > 0
+                          ? `${(jupiterOrder.slippageBps / 100).toFixed(2)}% (auto)`
+                          : 'Auto'
+                        : `${slippage}%`}
                     </span>
                   </div>
                   
@@ -2302,7 +2333,9 @@ const Swap = () => {
                       )}
                     </span>
                     <span className="font-bold text-brand-cyan">
-                      {(parseFloat(toAmount) * (1 - parseFloat(slippage) / 100)).toFixed(6)} {toToken.symbol}
+                      {swapProvider === 'jupiter' && jupiterOrder?.otherAmountThreshold
+                        ? `${fromSmallestUnit(jupiterOrder.otherAmountThreshold, toToken.decimals).toFixed(6)} ${toToken.symbol}`
+                        : `${(parseFloat(toAmount) * (1 - parseFloat(slippage || '0') / 100)).toFixed(6)} ${toToken.symbol}`}
                     </span>
                   </div>
                   

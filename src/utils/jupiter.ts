@@ -141,7 +141,7 @@ const buildJupiterOrderSearch = (
     inputMint: string;
     outputMint: string;
     amount: string;
-    slippageBps: number;
+    slippageBps?: number;
     taker?: string;
   },
   includeReferral: boolean
@@ -150,8 +150,12 @@ const buildJupiterOrderSearch = (
     inputMint: params.inputMint,
     outputMint: params.outputMint,
     amount: params.amount,
-    slippageBps: String(params.slippageBps),
   });
+
+  // Omit slippageBps to use Jupiter RTSE (recommended for volatile tokens).
+  if (params.slippageBps !== undefined) {
+    search.set('slippageBps', String(params.slippageBps));
+  }
 
   if (params.taker) {
     search.set('taker', params.taker);
@@ -175,7 +179,7 @@ export const getJupiterOrder = async (params: {
   inputMint: string;
   outputMint: string;
   amount: string;
-  slippageBps: number;
+  slippageBps?: number;
   taker?: string;
 }): Promise<JupiterOrderResponse> => {
   const path = '/swap/v2/order';
@@ -198,22 +202,44 @@ export const getJupiterOrder = async (params: {
   }
 };
 
+/** Default UI slippage — Jupiter uses RTSE instead of this fixed value. */
+export const JUPITER_DEFAULT_UI_SLIPPAGE = '0.5';
+
+/**
+ * Map UI slippage to Jupiter bps. Returns undefined to use Jupiter RTSE (auto).
+ * Fixed 0.5% overrides RTSE and often fails on volatile memecoins.
+ */
+export const jupiterSlippageBpsFromUi = (slippagePercent: string): number | undefined => {
+  const trimmed = slippagePercent.trim();
+  if (!trimmed || trimmed === JUPITER_DEFAULT_UI_SLIPPAGE) {
+    return undefined;
+  }
+  const n = parseFloat(trimmed);
+  if (!Number.isFinite(n) || n <= 0) {
+    return undefined;
+  }
+  return Math.min(10000, Math.round(n * 100));
+};
+
+export const isJupiterSlippageError = (message: string): boolean =>
+  /slippage/i.test(message);
+
 export const getJupiterQuote = async (
   inputMint: PublicKey,
   outputMint: PublicKey,
   amount: number,
   inputDecimals: number,
-  slippagePercent: number = 0.5
+  slippagePercent: string = JUPITER_DEFAULT_UI_SLIPPAGE
 ): Promise<JupiterOrderResponse | null> => {
   if (!isJupiterEnabled()) return null;
 
   try {
-    const slippageBps = Math.round(slippagePercent * 100);
+    const slippageBps = jupiterSlippageBpsFromUi(slippagePercent);
     return await getJupiterOrder({
       inputMint: toJupiterMint(inputMint),
       outputMint: toJupiterMint(outputMint),
       amount: toSmallestUnit(amount, inputDecimals),
-      slippageBps,
+      ...(slippageBps !== undefined ? { slippageBps } : {}),
     });
   } catch (error) {
     console.error('Error fetching Jupiter quote:', error);
@@ -242,43 +268,64 @@ export const executeJupiterSwap = async (
   outputMint: PublicKey,
   amountIn: number,
   inputDecimals: number,
-  slippagePercent: number
+  slippagePercent: string
 ): Promise<{ signature: string; order: JupiterOrderResponse; execute: JupiterExecuteResponse }> => {
-  const slippageBps = Math.round(slippagePercent * 100);
   const amount = toSmallestUnit(amountIn, inputDecimals);
 
-  const order = await getJupiterOrder({
-    inputMint: toJupiterMint(inputMint),
-    outputMint: toJupiterMint(outputMint),
-    amount,
-    slippageBps,
-    taker: wallet.publicKey.toString(),
-  });
+  const signAndExecute = async (
+    order: JupiterOrderResponse
+  ): Promise<{ signature: string; order: JupiterOrderResponse; execute: JupiterExecuteResponse }> => {
+    if (!order.transaction) {
+      throw new Error('Jupiter did not return a swap transaction. Try again with a fresh quote.');
+    }
 
-  if (!order.transaction) {
-    throw new Error('Jupiter did not return a swap transaction. Try again with a fresh quote.');
-  }
+    const transaction = VersionedTransaction.deserialize(
+      Buffer.from(order.transaction, 'base64')
+    );
+    const signed = await wallet.signTransaction(transaction);
+    const signedBase64 = Buffer.from(signed.serialize()).toString('base64');
 
-  const transaction = VersionedTransaction.deserialize(
-    Buffer.from(order.transaction, 'base64')
-  );
-  const signed = await wallet.signTransaction(transaction);
-  const signedBase64 = Buffer.from(signed.serialize()).toString('base64');
+    const execute = await executeJupiterOrder(signedBase64, order.requestId);
 
-  const execute = await executeJupiterOrder(signedBase64, order.requestId);
+    if (execute.status !== 'Success' || !execute.signature) {
+      throw new Error(execute.error || `Jupiter swap failed (code ${execute.code})`);
+    }
 
-  if (execute.status !== 'Success' || !execute.signature) {
-    throw new Error(execute.error || `Jupiter swap failed (code ${execute.code})`);
-  }
+    try {
+      await connection.confirmTransaction(execute.signature, 'confirmed');
+    } catch {
+      // Jupiter execute already landed the tx; confirmation is best-effort
+    }
 
-  // Confirm on local RPC as well for faster UI feedback
+    return { signature: execute.signature, order, execute };
+  };
+
+  const fetchOrder = (slippageBps?: number) =>
+    getJupiterOrder({
+      inputMint: toJupiterMint(inputMint),
+      outputMint: toJupiterMint(outputMint),
+      amount,
+      ...(slippageBps !== undefined ? { slippageBps } : {}),
+      taker: wallet.publicKey.toString(),
+    });
+
+  const initialSlippageBps = jupiterSlippageBpsFromUi(slippagePercent);
+
+  const attemptSwap = async (slippageBps?: number) => {
+    const order = await fetchOrder(slippageBps);
+    return signAndExecute(order);
+  };
+
   try {
-    await connection.confirmTransaction(execute.signature, 'confirmed');
-  } catch {
-    // Jupiter execute already landed the tx; confirmation is best-effort
+    return await attemptSwap(initialSlippageBps);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isJupiterSlippageError(message)) {
+      throw error;
+    }
+    console.warn('Jupiter slippage exceeded; retrying with a fresh automatic quote...');
+    return await attemptSwap(undefined);
   }
-
-  return { signature: execute.signature, order, execute };
 };
 
 export const searchJupiterTokens = async (query: string): Promise<TokenInfo[]> => {

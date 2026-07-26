@@ -45,11 +45,11 @@ export function useFeatureFlags() {
 
   useEffect(() => {
     loadFlags();
-    
-    // Refresh flags every 10 seconds for real-time updates
+
+    // Refresh periodically without busting cache every time (avoids console spam / re-renders)
     const interval = setInterval(() => {
-      loadFlags(true); // Force refresh to bypass cache
-    }, 10 * 1000);
+      loadFlags(false);
+    }, 60 * 1000);
 
     return () => clearInterval(interval);
   }, [loadFlags]);
