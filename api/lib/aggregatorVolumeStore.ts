@@ -1,5 +1,4 @@
 import { get, put } from '@vercel/blob';
-import { Connection } from '@solana/web3.js';
 
 const BLOB_PATHNAME = 'kedolik/aggregator-trades.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -20,6 +19,20 @@ interface TradeStore {
 
 const emptyStore = (): TradeStore => ({ trades: [] });
 
+const blobToken = (): string | undefined => process.env.BLOB_READ_WRITE_TOKEN?.trim() || undefined;
+
+const blobStoreId = (): string | undefined => process.env.BLOB_STORE_ID?.trim() || undefined;
+
+const blobOptions = () => {
+  const token = blobToken();
+  const storeId = blobStoreId();
+  return {
+    access: 'private' as const,
+    ...(token ? { token } : {}),
+    ...(storeId ? { storeId } : {}),
+  };
+};
+
 const pruneTrades = (trades: AggregatorTradeRecord[]) => {
   const cutoff = Date.now() - RETENTION_MS;
   const seen = new Set<string>();
@@ -33,8 +46,7 @@ const pruneTrades = (trades: AggregatorTradeRecord[]) => {
     .sort((a, b) => b.timestamp - a.timestamp);
 };
 
-export const isBlobConfigured = (): boolean =>
-  Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
+export const isBlobConfigured = (): boolean => Boolean(blobToken());
 
 export const readTradeStore = async (): Promise<TradeStore> => {
   if (!isBlobConfigured()) {
@@ -42,8 +54,16 @@ export const readTradeStore = async (): Promise<TradeStore> => {
   }
 
   try {
-    const blob = await get(BLOB_PATHNAME, { access: 'private' });
-    const text = await new Response(blob as BodyInit).text();
+    const result = await get(BLOB_PATHNAME, {
+      ...blobOptions(),
+      useCache: false,
+    });
+
+    if (!result || result.statusCode !== 200 || !result.stream) {
+      return emptyStore();
+    }
+
+    const text = await new Response(result.stream).text();
     const parsed = JSON.parse(text) as TradeStore;
     if (!Array.isArray(parsed.trades)) {
       return emptyStore();
@@ -57,7 +77,8 @@ export const readTradeStore = async (): Promise<TradeStore> => {
 };
 
 export const writeTradeStore = async (store: TradeStore): Promise<void> => {
-  if (!isBlobConfigured()) {
+  const token = blobToken();
+  if (!token) {
     throw new Error('BLOB_READ_WRITE_TOKEN is not configured');
   }
 
@@ -66,7 +87,7 @@ export const writeTradeStore = async (store: TradeStore): Promise<void> => {
   };
 
   await put(BLOB_PATHNAME, JSON.stringify(payload), {
-    access: 'private',
+    ...blobOptions(),
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: 'application/json',
@@ -102,28 +123,6 @@ export const getAggregatorVolume24h = async () => {
     okxTradeCount24h,
     storageEnabled: isBlobConfigured(),
   };
-};
-
-export const verifySuccessfulTransaction = async (signature: string): Promise<boolean> => {
-  const rpcUrl =
-    process.env.SOLANA_RPC_URL?.trim() ||
-    process.env.VITE_RPC_ENDPOINT?.trim() ||
-    'https://api.mainnet-beta.solana.com';
-
-  const connection = new Connection(rpcUrl, 'confirmed');
-  const { value } = await connection.getSignatureStatuses([signature], {
-    searchTransactionHistory: true,
-  });
-  const status = value[0];
-  if (!status || status.err) {
-    return false;
-  }
-
-  return (
-    status.confirmationStatus === 'confirmed' ||
-    status.confirmationStatus === 'finalized' ||
-    status.confirmations === null
-  );
 };
 
 export const appendAggregatorTrade = async (trade: AggregatorTradeRecord): Promise<boolean> => {

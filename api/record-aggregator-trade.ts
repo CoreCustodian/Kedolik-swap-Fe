@@ -2,15 +2,27 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import {
   appendAggregatorTrade,
   isBlobConfigured,
-  verifySuccessfulTransaction,
   type AggregatorProvider,
-} from './_lib/aggregatorVolumeStore';
+} from './lib/aggregatorVolumeStore';
+import { verifySuccessfulTransaction } from './lib/verifyTransaction';
 
 interface RecordTradeBody {
   signature?: string;
   provider?: AggregatorProvider;
   volumeUsd?: number;
 }
+
+const parseBody = (req: VercelRequest): RecordTradeBody => {
+  if (!req.body) return {};
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body) as RecordTradeBody;
+    } catch {
+      return {};
+    }
+  }
+  return req.body as RecordTradeBody;
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') {
@@ -19,10 +31,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!isBlobConfigured()) {
-    return res.status(503).json({ error: 'Aggregator volume storage is not configured' });
+    return res.status(503).json({ error: 'BLOB_READ_WRITE_TOKEN is not configured on Vercel' });
   }
 
-  const body = (typeof req.body === 'string' ? JSON.parse(req.body) : req.body) as RecordTradeBody;
+  const body = parseBody(req);
   const signature = body.signature?.trim();
   const provider = body.provider;
   const volumeUsd = Number(body.volumeUsd);
@@ -38,7 +50,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const verified = await verifySuccessfulTransaction(signature);
     if (!verified) {
-      return res.status(400).json({ error: 'Transaction not confirmed on-chain' });
+      return res.status(400).json({ error: 'Transaction not confirmed on-chain yet' });
     }
 
     const recorded = await appendAggregatorTrade({
@@ -51,6 +63,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(recorded ? 201 : 200).json({ ok: true, recorded });
   } catch (error) {
     console.error('record-aggregator-trade failed:', error);
-    return res.status(500).json({ error: 'Failed to record trade' });
+    const message = error instanceof Error ? error.message : 'Failed to record trade';
+    return res.status(500).json({ error: message });
   }
 }

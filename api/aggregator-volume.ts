@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { getAggregatorVolume24h } from './_lib/aggregatorVolumeStore';
+import { getAggregatorVolume24h } from './lib/aggregatorVolumeStore';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') {
@@ -13,6 +13,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(stats);
   } catch (error) {
     console.error('aggregator-volume GET failed:', error);
-    return res.status(500).json({ error: 'Failed to load aggregator volume' });
+    const message = error instanceof Error ? error.message : 'Failed to load aggregator volume';
+    return res.status(500).json({ error: message });
   }
 }
