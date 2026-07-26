@@ -52,6 +52,7 @@ import {
 } from '../utils/tradeVolume';
 import {
   DEFAULT_SWAP_PAIR,
+  deserializeToken,
   loadSwapPair,
   saveSwapPair,
 } from '../utils/swapPairStorage';
@@ -97,6 +98,8 @@ const Swap = () => {
     okxEnabled,
     aggregatorsEnabled,
     getTokenByMint,
+    rememberToken,
+    lookupTokenByMint,
   } = useSwapTokens();
   const { swapEnabled, maintenanceMode } = useFeatureFlags();
   
@@ -131,14 +134,18 @@ const Swap = () => {
   const lastAppliedUrlKeyRef = useRef('');
   const fromMintRef = useRef(fromToken.mint.toString());
   const toMintRef = useRef(toToken.mint.toString());
+  const fromTokenRef = useRef(fromToken);
+  const toTokenRef = useRef(toToken);
 
   useEffect(() => {
     fromMintRef.current = fromToken.mint.toString();
-  }, [fromToken.mint]);
+    fromTokenRef.current = fromToken;
+  }, [fromToken]);
 
   useEffect(() => {
     toMintRef.current = toToken.mint.toString();
-  }, [toToken.mint]);
+    toTokenRef.current = toToken;
+  }, [toToken]);
 
   const getDefaultPair = (): { from: TokenInfo; to: TokenInfo } => ({
     from: resolveTokenByMintString(DEFAULT_SWAP_PAIR.from) ?? kedolPlaceholder,
@@ -154,10 +161,48 @@ const Swap = () => {
     }
   };
 
+  const createPlaceholderToken = (mintStr: string): TokenInfo | null => {
+    try {
+      const mint = new PublicKey(mintStr);
+      return {
+        mint,
+        symbol: `${mintStr.slice(0, 4)}...${mintStr.slice(-4)}`,
+        name: 'Loading token...',
+        decimals: 9,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveTokenForMint = (
+    mintStr: string | null | undefined,
+    current: TokenInfo,
+    storedMeta?: { mint: string; symbol: string; name: string; decimals: number; logoURI?: string }
+  ): TokenInfo | null => {
+    if (!mintStr) return null;
+    const resolved = resolveTokenByMintString(mintStr);
+    if (resolved) return resolved;
+    if (current.mint.toString() === mintStr) return current;
+    if (storedMeta?.mint === mintStr) {
+      try {
+        return deserializeToken(storedMeta);
+      } catch {
+        // fall through
+      }
+    }
+    return createPlaceholderToken(mintStr);
+  };
+
   // Persist selected pair immediately (survives fast navigation before token list loads)
   useEffect(() => {
-    saveSwapPair(fromToken.mint.toString(), toToken.mint.toString());
-  }, [fromToken.mint, toToken.mint]);
+    saveSwapPair(
+      fromToken.mint.toString(),
+      toToken.mint.toString(),
+      fromToken,
+      toToken
+    );
+  }, [fromToken, toToken]);
 
   // Initialize / restore pair: URL > sessionStorage > KEDOL → SOL defaults
   useEffect(() => {
@@ -179,6 +224,17 @@ const Swap = () => {
       return;
     }
 
+    // URL updated by our own token picker — don't re-resolve and overwrite the selection.
+    if (
+      !isFirstInit &&
+      urlChanged &&
+      fromParam === fromMintRef.current &&
+      toParam === toMintRef.current
+    ) {
+      lastAppliedUrlKeyRef.current = urlKey;
+      return;
+    }
+
     const stored = loadSwapPair();
     const defaults = getDefaultPair();
     const hasUrlPair = Boolean(fromParam && toParam);
@@ -187,11 +243,12 @@ const Swap = () => {
     let newToToken = defaults.to;
 
     if (hasUrlPair) {
-      newFromToken = resolveTokenByMintString(fromParam) ?? defaults.from;
-      newToToken = resolveTokenByMintString(toParam) ?? defaults.to;
+      newFromToken =
+        resolveTokenForMint(fromParam, fromTokenRef.current, stored?.fromMeta) ?? defaults.from;
+      newToToken = resolveTokenForMint(toParam, toTokenRef.current, stored?.toMeta) ?? defaults.to;
     } else if (stored?.from && stored?.to && stored.from !== stored.to) {
-      const storedFrom = resolveTokenByMintString(stored.from);
-      const storedTo = resolveTokenByMintString(stored.to);
+      const storedFrom = resolveTokenForMint(stored.from, fromTokenRef.current, stored.fromMeta);
+      const storedTo = resolveTokenForMint(stored.to, toTokenRef.current, stored.toMeta);
       if (storedFrom && storedTo) {
         newFromToken = storedFrom;
         newToToken = storedTo;
@@ -200,10 +257,41 @@ const Swap = () => {
 
     setFromToken(newFromToken);
     setToToken(newToToken);
+    rememberToken(newFromToken);
+    rememberToken(newToToken);
     setTokensInitialized(true);
     isInitializedRef.current = true;
     lastAppliedUrlKeyRef.current = urlKey;
-  }, [tokens, searchParams, getTokenByMint]);
+  }, [tokens, searchParams, getTokenByMint, rememberToken]);
+
+  // Resolve aggregator-only mints after token lists finish loading
+  useEffect(() => {
+    if (!isInitializedRef.current || !aggregatorsEnabled) return;
+
+    let cancelled = false;
+    const resolveUnknownMints = async () => {
+      const fromMint = fromMintRef.current;
+      const toMint = toMintRef.current;
+      const needsFrom = !resolveTokenByMintString(fromMint);
+      const needsTo = !resolveTokenByMintString(toMint);
+
+      if (!needsFrom && !needsTo) return;
+
+      const [fromLookup, toLookup] = await Promise.all([
+        needsFrom ? lookupTokenByMint(fromMint) : Promise.resolve(null),
+        needsTo ? lookupTokenByMint(toMint) : Promise.resolve(null),
+      ]);
+
+      if (cancelled) return;
+      if (fromLookup) setFromToken(fromLookup);
+      if (toLookup) setToToken(toLookup);
+    };
+
+    resolveUnknownMints();
+    return () => {
+      cancelled = true;
+    };
+  }, [tokens, aggregatorsEnabled, lookupTokenByMint, getTokenByMint]);
 
   // Keep URL in sync with the selected pair
   useEffect(() => {
@@ -1619,6 +1707,53 @@ const Swap = () => {
   
 
   // Show loading state while tokens are loading
+  const enrichTokenIfNeeded = async (token: TokenInfo, apply: (resolved: TokenInfo) => void) => {
+    if (token.name !== 'Loading token...') return;
+    const resolved = await lookupTokenByMint(token.mint.toString());
+    if (resolved) {
+      rememberToken(resolved);
+      apply(resolved);
+    }
+  };
+
+  const handleSelectFromToken = (token: TokenInfo) => {
+    rememberToken(token);
+    fromTokenRef.current = token;
+    fromMintRef.current = token.mint.toString();
+    if (token.mint.equals(toToken.mint)) {
+      setToToken(fromToken);
+      toTokenRef.current = fromToken;
+      toMintRef.current = fromToken.mint.toString();
+    }
+    setFromToken(token);
+    setFromAmount('');
+    setToAmount('');
+    setShowFromTokenModal(false);
+    void enrichTokenIfNeeded(token, (resolved) => {
+      fromTokenRef.current = resolved;
+      setFromToken(resolved);
+    });
+  };
+
+  const handleSelectToToken = (token: TokenInfo) => {
+    rememberToken(token);
+    toTokenRef.current = token;
+    toMintRef.current = token.mint.toString();
+    if (token.mint.equals(fromToken.mint)) {
+      setFromToken(toToken);
+      fromTokenRef.current = toToken;
+      fromMintRef.current = toToken.mint.toString();
+    }
+    setToToken(token);
+    setFromAmount('');
+    setToAmount('');
+    setShowToTokenModal(false);
+    void enrichTokenIfNeeded(token, (resolved) => {
+      toTokenRef.current = resolved;
+      setToToken(resolved);
+    });
+  };
+
   if (isLoadingTokens || !tokensInitialized) {
     return (
       <div className="relative min-h-screen overflow-hidden">
@@ -2352,10 +2487,7 @@ const Swap = () => {
       <TokenSelectModal
         isOpen={showFromTokenModal}
         onClose={() => setShowFromTokenModal(false)}
-        onSelect={(token) => {
-          setFromToken(token);
-          setShowFromTokenModal(false);
-        }}
+        onSelect={handleSelectFromToken}
         excludeToken={toToken}
         tokens={tokens}
         searchTokens={searchTokens}
@@ -2367,10 +2499,7 @@ const Swap = () => {
       <TokenSelectModal
         isOpen={showToTokenModal}
         onClose={() => setShowToTokenModal(false)}
-        onSelect={(token) => {
-          setToToken(token);
-          setShowToTokenModal(false);
-        }}
+        onSelect={handleSelectToToken}
         excludeToken={fromToken}
         tokens={tokens}
         searchTokens={searchTokens}
