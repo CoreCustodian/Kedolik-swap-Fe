@@ -2426,9 +2426,7 @@ const Swap = () => {
               ) : isLoadingQuote || isLoadingAggregatorQuote ? (
                 <>
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  {isAggregatorProvider(swapProvider)
-                    ? `Fetching ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'} Quote...`
-                    : 'Calculating Quote...'}
+                  Fetching Quote...
                 </>
               ) : isLoadingKedologFee ? (
                 <>
@@ -2441,16 +2439,6 @@ const Swap = () => {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   No Route Available
-                </>
-              ) : swapProvider === 'jupiter' ? (
-                <>
-                  <span>🪐</span>
-                  Swap via Jupiter
-                </>
-              ) : swapProvider === 'okx' ? (
-                <>
-                  <span>⚡</span>
-                  Swap via OKX
                 </>
               ) : (
                 <>
