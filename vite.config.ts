@@ -10,6 +10,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      '/api': {
+        target: process.env.VITE_AGGREGATOR_VOLUME_API || 'https://kedolik-swap-fe-secret.vercel.app',
+        changeOrigin: true,
+      },
       '/okx-api': {
         target: 'https://web3.okx.com',
         changeOrigin: true,

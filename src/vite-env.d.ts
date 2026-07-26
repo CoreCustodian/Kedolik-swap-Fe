@@ -21,6 +21,7 @@ interface ImportMetaEnv {
   readonly VITE_OKX_API_BASE?: string;
   readonly VITE_OKX_FEE_PERCENT?: string;
   readonly VITE_OKX_REFERRER_WALLET?: string;
+  readonly VITE_AGGREGATOR_VOLUME_API?: string;
   readonly VITE_DEBUG?: string;
 }
 

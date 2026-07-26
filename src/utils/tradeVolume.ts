@@ -1,5 +1,8 @@
-// Platform trade volume tracking for swaps routed through Kedolik DEX or Jupiter.
-// Persists to localStorage (per-browser). For production-wide analytics, add a backend.
+// Platform trade volume tracking.
+// Kedolik DEX volume is computed on-chain (poolStats).
+// Jupiter/OKX aggregator volume is stored globally via /api (Vercel Blob).
+
+import { recordAggregatorTradeRemote } from './aggregatorVolumeApi';
 
 export type SwapProvider = 'kedolik' | 'jupiter' | 'okx';
 
@@ -61,6 +64,15 @@ const writeTrades = (trades: TradeRecord[]) => {
 };
 
 export const recordTrade = (trade: Omit<TradeRecord, 'id' | 'timestamp'> & { timestamp?: number }) => {
+  if (trade.provider === 'jupiter' || trade.provider === 'okx') {
+    void recordAggregatorTradeRemote({
+      signature: trade.txSignature,
+      provider: trade.provider,
+      volumeUsd: trade.volumeUsd,
+    });
+    return;
+  }
+
   const trades = readTrades();
   const record: TradeRecord = {
     ...trade,

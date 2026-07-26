@@ -9,6 +9,10 @@ import { TokenSelectModal } from '../components/TokenSelectModal';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
 import { fetchPoolStats, formatUsdCompact, PoolStats, readCachedPoolStats, writeCachedPoolStats } from '../utils/poolStats';
+import {
+  AggregatorVolumeStats,
+  fetchAggregatorVolume24h,
+} from '../utils/aggregatorVolumeApi';
 
 const hasActivePoolLiquidity = (pool: PoolInfo) =>
   pool.token0Reserve > 0 &&
@@ -30,6 +34,7 @@ const Pools = () => {
   const [userLpBalances, setUserLpBalances] = useState<Map<string, number>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [poolStats, setPoolStats] = useState<PoolStats | null>(() => readCachedPoolStats());
+  const [aggregatorVolume, setAggregatorVolume] = useState<AggregatorVolumeStats | null>(null);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [showCreatePool, setShowCreatePool] = useState(false);
@@ -135,6 +140,27 @@ const Pools = () => {
   useEffect(() => {
     let cancelled = false;
 
+    const refreshAggregatorVolume = async () => {
+      const stats = await fetchAggregatorVolume24h();
+      if (!cancelled) {
+        setAggregatorVolume(stats);
+      }
+    };
+
+    refreshAggregatorVolume();
+    const interval = window.setInterval(refreshAggregatorVolume, 60_000);
+    window.addEventListener('kedolik-aggregator-volume-updated', refreshAggregatorVolume);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      window.removeEventListener('kedolik-aggregator-volume-updated', refreshAggregatorVolume);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
     const loadPoolStats = async () => {
       if (pools.length === 0) {
         setPoolStats(null);
@@ -175,6 +201,11 @@ const Pools = () => {
   const totalTVL = poolStats?.totalTvlUsd ?? 0;
   const dexVolume24h = poolStats?.volume24hUsd ?? 0;
   const dexSwaps24h = poolStats?.swapEvents24h ?? 0;
+  const aggregatorVolume24h = aggregatorVolume?.volume24hUsd ?? 0;
+  const aggregatorSwaps24h = aggregatorVolume?.tradeCount24h ?? 0;
+  const totalVolume24h = dexVolume24h + aggregatorVolume24h;
+  const totalSwaps24h = dexSwaps24h + aggregatorSwaps24h;
+  const hasVolumeData = Boolean(poolStats) || aggregatorVolume24h > 0;
   const activePoolCount = pools.filter(hasActivePoolLiquidity).length;
   
   // Filter pools
@@ -235,11 +266,11 @@ const Pools = () => {
             <div className="card p-4 sm:p-6">
               <p className="text-xs sm:text-sm text-gray-400 mb-2">24h Volume</p>
               <p className="text-lg sm:text-2xl md:text-3xl font-bold text-brand-cyan">
-                {isLoadingStats && !poolStats ? 'Loading...' : formatUsdCompact(dexVolume24h)}
+                {isLoadingStats && !hasVolumeData ? 'Loading...' : formatUsdCompact(totalVolume24h)}
               </p>
               <p className="mt-2 text-[11px] sm:text-xs text-gray-500">
-                Kedolik DEX trading volume
-                {dexSwaps24h > 0 ? ` · ${dexSwaps24h} swap${dexSwaps24h === 1 ? '' : 's'} (24h)` : ''}
+                DEX &amp; aggregator swaps via Kedolik
+                {totalSwaps24h > 0 ? ` · ${totalSwaps24h} swap${totalSwaps24h === 1 ? '' : 's'} (24h)` : ''}
               </p>
           </div>
             <div className="card p-4 sm:p-6">
