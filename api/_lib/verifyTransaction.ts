@@ -12,9 +12,15 @@ export const verifySuccessfulTransaction = async (signature: string): Promise<bo
 
   // Tx may not be visible immediately after Jupiter lands it — retry briefly.
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const { value } = await connection.getSignatureStatuses([signature], {
-      searchTransactionHistory: true,
-    });
+    let value;
+    try {
+      ({ value } = await connection.getSignatureStatuses([signature], {
+        searchTransactionHistory: true,
+      }));
+    } catch (error) {
+      console.warn('Signature status lookup failed:', error);
+      return false;
+    }
     const status = value[0];
 
     if (status?.err) {
