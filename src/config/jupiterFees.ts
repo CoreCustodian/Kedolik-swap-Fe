@@ -4,10 +4,13 @@ import { PublicKey } from '@solana/web3.js';
  * Jupiter integrator fee config (Referral Program).
  * Docs: https://dev.jup.ag/docs/swap/order-and-execute#referral-fees
  *
- * Setup (one-time):
- *   1. Run: npx tsx scripts/setup-jupiter-referral.ts
- *   2. Add printed VITE_JUPITER_REFERRAL_ACCOUNT to .env
- *   3. Fees accumulate on-chain in referral token accounts per mint
+ * Two addresses are involved:
+ *   - VITE_JUPITER_REFERRAL_ACCOUNT = Jupiter referral PDA (from setup script output)
+ *   - Fee wallet (e.g. treasury) = where you claim accumulated fees in referral.jup.ag
+ *
+ * Setup:
+ *   1. KEYPAIR_PATH=<treasury-keypair.json> npx tsx scripts/setup-jupiter-referral.ts
+ *   2. Put the printed referralAccount (NOT your wallet) in VITE_JUPITER_REFERRAL_ACCOUNT
  */
 
 /** Jupiter Ultra / Swap API v2 referral project */
@@ -15,8 +18,8 @@ export const JUPITER_REFERRAL_PROJECT = new PublicKey(
   'DkiqsTrw1u1bYFumumC7sCG2S8K25qc2vemJFHyW2wJc'
 );
 
-/** Kedolik Jupiter integrator fee receiver (referral account) */
-export const KEDOLIK_JUPITER_REFERRAL_ACCOUNT = new PublicKey(
+/** Kedolik treasury — fees are claimed here via referral.jup.ag (not the referral PDA). */
+export const KEDOLIK_JUPITER_FEE_WALLET = new PublicKey(
   'EGX4XLHooJ8vtMeyu6JRzudPMv39Cy91bJV49oaHqHom'
 );
 
@@ -31,15 +34,14 @@ export const getJupiterReferralAccount = (): PublicKey | null => {
   if (!isJupiterEnabled()) return null;
 
   const raw = import.meta.env.VITE_JUPITER_REFERRAL_ACCOUNT?.trim();
-  if (raw) {
-    try {
-      return new PublicKey(raw);
-    } catch {
-      console.warn('Invalid VITE_JUPITER_REFERRAL_ACCOUNT, using default');
-    }
-  }
+  if (!raw) return null;
 
-  return KEDOLIK_JUPITER_REFERRAL_ACCOUNT;
+  try {
+    return new PublicKey(raw);
+  } catch {
+    console.warn('Invalid VITE_JUPITER_REFERRAL_ACCOUNT');
+    return null;
+  }
 };
 
 export const getJupiterReferralFeeBps = (): number => parseFeeBps();
