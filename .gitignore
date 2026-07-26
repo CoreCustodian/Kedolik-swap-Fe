@@ -33,3 +33,5 @@ kedolik-fee-keypair.json
 *.njsproj
 *.sln
 *.sw?
+
+.vercel

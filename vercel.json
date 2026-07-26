@@ -1,6 +1,9 @@
 {
   "functions": {
-    "api/**/*.ts": {
+    "api/aggregator-volume.ts": {
+      "maxDuration": 30
+    },
+    "api/record-aggregator-trade.ts": {
       "maxDuration": 30
     }
   },
