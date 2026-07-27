@@ -91,7 +91,7 @@ export const confirmTransactionWithPolling = async (
   timeout: number = 60000 // 60 seconds default timeout
 ): Promise<{ value: { err: any } | null }> => {
   const startTime = Date.now();
-  const pollInterval = 1000; // Poll every 1 second
+  const pollInterval = 2000; // Poll every 2 seconds (was 1s — reduces RPC quota use)
   
   console.log(`⏳ Confirming transaction with polling: ${signature.slice(0, 8)}...`);
   

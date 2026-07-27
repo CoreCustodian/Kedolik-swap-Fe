@@ -23,6 +23,7 @@ import {
   createCloseAccountInstruction,
   createInitializeAccount3Instruction,
   NATIVE_MINT,
+  unpackAccount,
 } from '@solana/spl-token';
 import IDLJson from '../../kedolik_cp_swap.json';
 import { getTokenByMint } from '../config/tokens';
@@ -760,7 +761,7 @@ export interface PoolInfo {
 
 // Pool cache to reduce RPC calls
 let poolCache: { pools: PoolInfo[]; timestamp: number } | null = null;
-const POOL_CACHE_TTL = 10000; // 10 seconds cache
+const POOL_CACHE_TTL = 30_000; // 30 seconds — reserves; invalidated on liquidity tx
 let isFetchingPools = false; // Prevent concurrent fetches
 
 // Fetch all pools with caching
@@ -800,20 +801,56 @@ export const fetchPools = async (
     console.log('📊 Found', pools.length, 'pools from program:', program.programId.toString());
 
     const poolInfos: PoolInfo[] = [];
+    const vaultPubkeys: PublicKey[] = [];
+    const mintPubkeys: PublicKey[] = [];
+    const poolRows: Array<{ pool: (typeof pools)[number]; data: any }> = [];
 
     for (const pool of pools) {
       const data = pool.account as any;
+      poolRows.push({ pool, data });
+      vaultPubkeys.push(data.token0Vault, data.token1Vault);
+      mintPubkeys.push(data.token0Mint, data.token1Mint);
+    }
 
-      // Get vault balances
-      const token0VaultInfo = await connection.getTokenAccountBalance(data.token0Vault);
-      const token1VaultInfo = await connection.getTokenAccountBalance(data.token1Vault);
+    const vaultBalances = new Map<string, number>();
+    for (let i = 0; i < vaultPubkeys.length; i += 100) {
+      const chunk = vaultPubkeys.slice(i, i + 100);
+      const accounts = await connection.getMultipleAccountsInfo(chunk, 'confirmed');
+      chunk.forEach((pubkey, index) => {
+        const account = accounts[index];
+        let amount = 0;
+        if (account?.data) {
+          try {
+            const unpacked = unpackAccount(pubkey, account);
+            amount = Number(unpacked.amount);
+          } catch {
+            amount = 0;
+          }
+        }
+        vaultBalances.set(pubkey.toString(), amount);
+      });
+    }
 
-      // Get token metadata
-      const token0MintInfo = await connection.getParsedAccountInfo(data.token0Mint);
-      const token1MintInfo = await connection.getParsedAccountInfo(data.token1Mint);
+    const mintDecimals = new Map<string, number>();
+    const uniqueMints = [...new Map(mintPubkeys.map((mint) => [mint.toString(), mint])).values()];
+    for (let i = 0; i < uniqueMints.length; i += 100) {
+      const chunk = uniqueMints.slice(i, i + 100);
+      const accounts = await connection.getMultipleAccountsInfo(chunk, 'confirmed');
+      chunk.forEach((mint, index) => {
+        const data = accounts[index]?.data;
+        let decimals = 9;
+        if (data && data.length >= 45) {
+          decimals = data[44];
+        }
+        mintDecimals.set(mint.toString(), decimals);
+      });
+    }
 
-      const token0Decimals = (token0MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
-      const token1Decimals = (token1MintInfo.value?.data as any)?.parsed?.info?.decimals || 9;
+    for (const { pool, data } of poolRows) {
+      const token0Decimals = mintDecimals.get(data.token0Mint.toString()) ?? 9;
+      const token1Decimals = mintDecimals.get(data.token1Mint.toString()) ?? 9;
+      const token0Raw = vaultBalances.get(data.token0Vault.toString()) ?? 0;
+      const token1Raw = vaultBalances.get(data.token1Vault.toString()) ?? 0;
 
       // Parse fee data (these are in base units)
       // Log raw values for debugging
@@ -874,8 +911,8 @@ export const fetchPools = async (
         token0Vault: data.token0Vault,
         token1Vault: data.token1Vault,
         lpMint: data.lpMint,
-        token0Reserve: parseFloat(token0VaultInfo.value.uiAmount?.toString() || '0'),
-        token1Reserve: parseFloat(token1VaultInfo.value.uiAmount?.toString() || '0'),
+        token0Reserve: token0Raw / Math.pow(10, token0Decimals),
+        token1Reserve: token1Raw / Math.pow(10, token1Decimals),
         lpSupply: Number(data.lpSupply?.toString() || '0'),
         token0Symbol,
         token1Symbol,

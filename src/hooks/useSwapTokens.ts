@@ -60,10 +60,13 @@ export function useSwapTokens() {
 
       setIsLoadingAggregators(true);
       try {
-        const [jupiterTokens, okxTokens] = await Promise.all([
-          isJupiterEnabled() ? getJupiterTrendingTokens() : Promise.resolve([]),
-          isOkxEnabled() ? getOkxTokenList() : Promise.resolve([]),
-        ]);
+        const jupiterTokens = isJupiterEnabled()
+          ? await getJupiterTrendingTokens()
+          : [];
+        const okxTokens =
+          isOkxEnabled() && jupiterTokens.length === 0
+            ? await getOkxTokenList()
+            : [];
 
         const byMint = new Map<string, TokenInfo>();
         [...jupiterTokens, ...okxTokens].forEach((token) => {

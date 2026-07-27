@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getPoolCreationFee } from '../utils/amm';
-import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
+import { getCachedBalance, debounce } from '../utils/balanceCache';
+import { dispatchBalanceInvalidation } from '../utils/refreshEvents';
 import { TokenInfo } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
 import { TokenSelectModal } from '../components/TokenSelectModal';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import { useFeatureFlags } from '../hooks/useFeatureFlags';
-import { fetchPoolStats, formatUsdCompact, PoolStats, readCachedPoolStats, writeCachedPoolStats } from '../utils/poolStats';
+import { fetchPoolStats, formatUsdCompact, PoolStats, isPoolStatsCacheFresh, readCachedPoolStats, writeCachedPoolStats } from '../utils/poolStats';
 import {
   AggregatorVolumeStats,
   fetchAggregatorVolume24h,
@@ -141,6 +142,7 @@ const Pools = () => {
     let cancelled = false;
 
     const refreshAggregatorVolume = async () => {
+      if (document.visibilityState === 'hidden') return;
       const stats = await fetchAggregatorVolume24h();
       if (!cancelled) {
         setAggregatorVolume(stats);
@@ -148,13 +150,20 @@ const Pools = () => {
     };
 
     refreshAggregatorVolume();
-    const interval = window.setInterval(refreshAggregatorVolume, 60_000);
+    const interval = window.setInterval(refreshAggregatorVolume, 5 * 60 * 1000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshAggregatorVolume();
+      }
+    };
     window.addEventListener('kedolik-aggregator-volume-updated', refreshAggregatorVolume);
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       cancelled = true;
       window.clearInterval(interval);
       window.removeEventListener('kedolik-aggregator-volume-updated', refreshAggregatorVolume);
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   }, []);
 
@@ -166,6 +175,15 @@ const Pools = () => {
         setPoolStats(null);
         setStatsError(null);
         return;
+      }
+
+      if (isPoolStatsCacheFresh()) {
+        const cached = readCachedPoolStats();
+        if (cached && !cancelled) {
+          setPoolStats(cached);
+          setIsLoadingStats(false);
+          return;
+        }
       }
 
       if (!readCachedPoolStats()) {
@@ -196,7 +214,7 @@ const Pools = () => {
     return () => {
       cancelled = true;
     };
-  }, [connection, pools]);
+  }, [connection, pools.length]);
 
   const totalTVL = poolStats?.totalTvlUsd ?? 0;
   const dexVolume24h = poolStats?.volume24hUsd ?? 0;
@@ -383,7 +401,7 @@ const Pools = () => {
             // Clear caches and refresh pools list
             const { clearPoolCache } = await import('../utils/amm');
             clearPoolCache();
-            if (publicKey) clearBalanceCache(publicKey);
+            if (publicKey) dispatchBalanceInvalidation(publicKey.toString());
             try {
               const fetchedPools = await fetchPools(connection, wallet, true); // Force refresh
               setPools(fetchedPools);
@@ -838,7 +856,7 @@ const CreatePoolModal = ({
       // Clear caches - onSuccess callback will refresh pools
       const { clearPoolCache } = await import('../utils/amm');
       clearPoolCache();
-      if (publicKey) clearBalanceCache(publicKey);
+      if (publicKey) dispatchBalanceInvalidation(publicKey.toString());
       
       onSuccess();
     } catch (error: unknown) {
@@ -1215,7 +1233,7 @@ const AddLiquidityModal = ({
       });
       
       showToast('Liquidity added successfully!', 'success', result);
-      if (publicKey) clearBalanceCache(publicKey);
+      if (publicKey) dispatchBalanceInvalidation(publicKey.toString());
       onSuccess();
     } catch (error: unknown) {
       const err = error as { message?: string };
@@ -1457,7 +1475,7 @@ const RemoveLiquidityModal = ({
         tx
       );
 
-      if (publicKey) clearBalanceCache(publicKey);
+      if (publicKey) dispatchBalanceInvalidation(publicKey.toString());
       onSuccess();
       onClose();
     } catch (error: unknown) {

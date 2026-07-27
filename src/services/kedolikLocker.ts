@@ -21,6 +21,9 @@ import {
   KEDOLIK_STAKE_LOCK_PROGRAM_ID,
 } from '../config/kedolikStakeLockV1';
 import { confirmTransactionWithBlockhash } from '../utils/transactionConfirmation';
+import { createRpcCache } from '../utils/rpcCache';
+
+const allLockerEscrowsCache = createRpcCache<LockerEscrowSummary[]>(5 * 60 * 1000);
 
 const TOKEN_LOCK_DISCRIMINATOR = Buffer.from('49e490f19a2c5dee', 'hex');
 const CREATE_LOCK_DISCRIMINATOR = Buffer.from('abd85ca7a508995a', 'hex');
@@ -440,16 +443,19 @@ export const fetchLockerEscrowsForWallet = async (
 };
 
 export const fetchAllLockerEscrows = async (
-  connection: Connection
+  connection: Connection,
+  forceRefresh = false,
 ): Promise<LockerEscrowSummary[]> => {
-  const accounts = await fetchTokenLockAccounts(connection);
-  const summaries = await Promise.all(
-    accounts.map(({ pubkey, account }) =>
-      buildLockerSummary(connection, pubkey, decodeTokenLockState(Buffer.from(account.data)))
-    )
-  );
+  return allLockerEscrowsCache.getOrFetch(async () => {
+    const accounts = await fetchTokenLockAccounts(connection);
+    const summaries = await Promise.all(
+      accounts.map(({ pubkey, account }) =>
+        buildLockerSummary(connection, pubkey, decodeTokenLockState(Buffer.from(account.data))),
+      ),
+    );
 
-  return summaries.sort((left, right) => right.vestingStartTime - left.vestingStartTime);
+    return summaries.sort((left, right) => right.vestingStartTime - left.vestingStartTime);
+  }, forceRefresh);
 };
 
 const buildCreateLockInstruction = (

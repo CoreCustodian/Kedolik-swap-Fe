@@ -24,8 +24,8 @@ export const REMOTE_URLS = {
   featureFlags: `${BASE_URL}/features.json`,
 };
 
-// Cache duration in milliseconds (0 = always fetch fresh)
-const CACHE_DURATION = 0;
+// Cache duration in milliseconds (5 min — avoids re-fetching on every hook mount / poll)
+const CACHE_DURATION = 5 * 60 * 1000;
 
 // ============================================================================
 // TYPES
@@ -119,10 +119,8 @@ export async function fetchRemoteTokenList(): Promise<TokenListResponse | null> 
   }
 
   try {
-    // Add timestamp to bypass browser cache
-    const url = `${REMOTE_URLS.tokenList}?_=${Date.now()}`;
-    console.log('🌐 Fetching token list from:', url);
-    const response = await fetch(url);
+    console.log('🌐 Fetching token list from:', REMOTE_URLS.tokenList);
+    const response = await fetch(REMOTE_URLS.tokenList);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -195,10 +193,8 @@ export async function fetchFeatureFlags(): Promise<FeatureFlags> {
   }
 
   try {
-    // Add timestamp to bypass browser cache
-    const url = `${REMOTE_URLS.featureFlags}?_=${Date.now()}`;
-    console.log('🌐 Fetching feature flags from:', url);
-    const response = await fetch(url);
+    console.log('🌐 Fetching feature flags from:', REMOTE_URLS.featureFlags);
+    const response = await fetch(REMOTE_URLS.featureFlags);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);

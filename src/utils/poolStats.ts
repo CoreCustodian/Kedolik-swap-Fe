@@ -35,20 +35,43 @@ export interface PoolStats {
 }
 
 const POOL_STATS_CACHE_KEY = 'kedolik-pool-stats-cache';
+const POOL_STATS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+interface CachedPoolStatsPayload {
+  stats: PoolStats;
+  cachedAt: number;
+}
 
 export const readCachedPoolStats = (): PoolStats | null => {
   try {
     const raw = sessionStorage.getItem(POOL_STATS_CACHE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as PoolStats;
+    const parsed = JSON.parse(raw) as CachedPoolStatsPayload | PoolStats;
+    if ('stats' in parsed && parsed.stats) {
+      return parsed.stats;
+    }
+    return parsed as PoolStats;
   } catch {
     return null;
   }
 };
 
+export const isPoolStatsCacheFresh = (): boolean => {
+  try {
+    const raw = sessionStorage.getItem(POOL_STATS_CACHE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as CachedPoolStatsPayload;
+    if (!parsed?.cachedAt) return false;
+    return Date.now() - parsed.cachedAt < POOL_STATS_CACHE_TTL_MS;
+  } catch {
+    return false;
+  }
+};
+
 export const writeCachedPoolStats = (stats: PoolStats) => {
   try {
-    sessionStorage.setItem(POOL_STATS_CACHE_KEY, JSON.stringify(stats));
+    const payload: CachedPoolStatsPayload = { stats, cachedAt: Date.now() };
+    sessionStorage.setItem(POOL_STATS_CACHE_KEY, JSON.stringify(payload));
   } catch {
     // sessionStorage may be unavailable
   }

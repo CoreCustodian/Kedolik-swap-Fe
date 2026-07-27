@@ -1,5 +1,6 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getTokenBalance } from './amm';
+import { getAssociatedTokenAddressSync, unpackAccount } from '@solana/spl-token';
+import { getTokenBalance, isNativeSOL } from './amm';
 
 /**
  * Parse token amount from RPC response (handles null uiAmount).
@@ -53,8 +54,8 @@ interface BalanceCacheEntry {
 }
 
 const balanceCache = new Map<string, BalanceCacheEntry>();
-const BALANCE_CACHE_TTL = 10000; // 10 seconds cache
-const BALANCE_DEBOUNCE_MS = 500; // 500ms debounce
+const BALANCE_CACHE_TTL = 120_000; // 2 min — invalidated by WS + swap/stake events
+const BALANCE_DEBOUNCE_MS = 500;
 
 // Track pending requests to prevent duplicate fetches
 const pendingRequests = new Map<string, Promise<number>>();
@@ -118,23 +119,86 @@ export const getCachedBalance = async (
  */
 export const batchGetBalances = async (
   connection: Connection,
-  requests: Array<{ mint: PublicKey; wallet: PublicKey }>
+  requests: Array<{ mint: PublicKey; wallet: PublicKey }>,
 ): Promise<Map<string, number>> => {
   const results = new Map<string, number>();
-  
-  // Fetch all balances in parallel
-  const promises = requests.map(async ({ mint, wallet }) => {
+  const now = Date.now();
+  const pending: Array<{ mint: PublicKey; wallet: PublicKey; cacheKey: string }> = [];
+
+  for (const { mint, wallet } of requests) {
     const cacheKey = `${mint.toString()}-${wallet.toString()}`;
-    try {
-      const balance = await getCachedBalance(connection, mint, wallet);
-      results.set(cacheKey, balance);
-    } catch (error) {
-      console.error(`Error fetching balance for ${mint.toString()}:`, error);
-      results.set(cacheKey, 0);
+    const cached = balanceCache.get(cacheKey);
+    if (cached && now - cached.timestamp < BALANCE_CACHE_TTL) {
+      results.set(cacheKey, cached.balance);
+      continue;
     }
+    pending.push({ mint, wallet, cacheKey });
+  }
+
+  if (pending.length === 0) {
+    return results;
+  }
+
+  const solPending = pending.filter(({ mint }) => isNativeSOL(mint));
+  const splPending = pending.filter(({ mint }) => !isNativeSOL(mint));
+
+  await Promise.all(
+    solPending.map(async ({ wallet, cacheKey }) => {
+      const lamports = await connection.getBalance(wallet, 'confirmed');
+      const balance = lamports / 1e9;
+      balanceCache.set(cacheKey, { balance, timestamp: Date.now() });
+      results.set(cacheKey, balance);
+    }),
+  );
+
+  if (splPending.length === 0) {
+    return results;
+  }
+
+  const ataEntries = splPending.map((entry) => {
+    const ata = getAssociatedTokenAddressSync(entry.mint, entry.wallet);
+    return { ...entry, ata };
   });
-  
-  await Promise.all(promises);
+
+  const uniqueMints = [...new Map(splPending.map((e) => [e.mint.toString(), e.mint])).values()];
+  const mintDecimals = new Map<string, number>();
+  for (let i = 0; i < uniqueMints.length; i += 100) {
+    const chunk = uniqueMints.slice(i, i + 100);
+    const infos = await connection.getMultipleAccountsInfo(chunk, 'confirmed');
+    chunk.forEach((mint, index) => {
+      const data = infos[index]?.data;
+      let decimals = 9;
+      if (data && data.length >= 45) {
+        decimals = data[44];
+      }
+      mintDecimals.set(mint.toString(), decimals);
+    });
+  }
+
+  for (let i = 0; i < ataEntries.length; i += 100) {
+    const chunk = ataEntries.slice(i, i + 100);
+    const accounts = await connection.getMultipleAccountsInfo(
+      chunk.map((entry) => entry.ata),
+      'confirmed',
+    );
+
+    chunk.forEach((entry, index) => {
+      const account = accounts[index];
+      let balance = 0;
+      if (account?.data) {
+        try {
+          const unpacked = unpackAccount(entry.ata, account);
+          const decimals = mintDecimals.get(entry.mint.toString()) ?? 9;
+          balance = Number(unpacked.amount) / Math.pow(10, decimals);
+        } catch {
+          balance = 0;
+        }
+      }
+      balanceCache.set(entry.cacheKey, { balance, timestamp: Date.now() });
+      results.set(entry.cacheKey, balance);
+    });
+  }
+
   return results;
 };
 

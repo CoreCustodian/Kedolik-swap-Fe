@@ -1,5 +1,5 @@
 import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createLockerVestingEscrow,
   cancelLockerEscrow,
@@ -11,6 +11,10 @@ import {
   LockerEscrowSummary,
   updateLockerEscrowRecipient,
 } from '../services/kedolikLocker';
+import { onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
+import { isPageVisible } from '../utils/visibilityControl';
+
+const LOCKER_CACHE_MS = 5 * 60 * 1000;
 
 interface UseKedolikLockerOptions {
   enabled?: boolean;
@@ -23,11 +27,20 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
   const [escrows, setEscrows] = useState<LockerEscrowSummary[]>([]);
   const [isLoadingEscrows, setIsLoadingEscrows] = useState(false);
   const [escrowsError, setEscrowsError] = useState<string | null>(null);
+  const lastFetchAt = useRef(0);
 
-  const refreshEscrows = useCallback(async () => {
+  const refreshEscrows = useCallback(async (force = false) => {
     if (!enabled || !publicKey) {
       setEscrows([]);
       setEscrowsError(null);
+      return;
+    }
+
+    if (!isPageVisible() && !force) {
+      return;
+    }
+
+    if (!force && Date.now() - lastFetchAt.current < LOCKER_CACHE_MS) {
       return;
     }
 
@@ -36,6 +49,7 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
 
     try {
       const nextEscrows = await fetchLockerEscrowsForWallet(connection, publicKey);
+      lastFetchAt.current = Date.now();
       setEscrows(nextEscrows);
     } catch (error) {
       setEscrows([]);
@@ -46,12 +60,22 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
   }, [connection, enabled, publicKey]);
 
   useEffect(() => {
-    refreshEscrows();
+    lastFetchAt.current = 0;
+    void refreshEscrows(true);
+  }, [refreshEscrows]);
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      lastFetchAt.current = 0;
+      void refreshEscrows(true);
+    };
+    const stopLocksEvent = onRefreshEvent(REFRESH_EVENTS.LOCKS, handleRefresh);
+    return stopLocksEvent;
   }, [refreshEscrows]);
 
   const lookupEscrow = useCallback(
     async (escrowAddress: string) => fetchLockerEscrow(connection, escrowAddress, publicKey ?? undefined),
-    [connection, publicKey]
+    [connection, publicKey],
   );
 
   const claim = useCallback(
@@ -62,7 +86,7 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
 
       return claimLockerEscrow(connection, anchorWallet, escrowAddress);
     },
-    [anchorWallet, connection]
+    [anchorWallet, connection],
   );
 
   const cancel = useCallback(
@@ -73,7 +97,7 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
 
       return cancelLockerEscrow(connection, anchorWallet, escrowAddress);
     },
-    [anchorWallet, connection]
+    [anchorWallet, connection],
   );
 
   const close = useCallback(
@@ -84,7 +108,7 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
 
       return closeLockerEscrow(connection, anchorWallet, escrowAddress);
     },
-    [anchorWallet, connection]
+    [anchorWallet, connection],
   );
 
   const updateRecipient = useCallback(
@@ -98,10 +122,10 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
         anchorWallet,
         escrowAddress,
         newRecipient,
-        newRecipientEmail
+        newRecipientEmail,
       );
     },
-    [anchorWallet, connection]
+    [anchorWallet, connection],
   );
 
   const create = useCallback(
@@ -112,14 +136,17 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
 
       return createLockerVestingEscrow(connection, anchorWallet, input);
     },
-    [anchorWallet, connection]
+    [anchorWallet, connection],
   );
 
   return {
     escrows,
     isLoadingEscrows,
     escrowsError,
-    refreshEscrows,
+    refreshEscrows: () => {
+      lastFetchAt.current = 0;
+      return refreshEscrows(true);
+    },
     lookupEscrow,
     create,
     claim,

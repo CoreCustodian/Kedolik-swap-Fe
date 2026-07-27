@@ -1,67 +1,109 @@
 import { useState, useEffect, useCallback } from 'react';
-import { 
-  fetchFeatureFlags, 
-  FeatureFlags, 
+import {
+  fetchFeatureFlags,
+  FeatureFlags,
   DEFAULT_FEATURE_FLAGS,
-  clearRemoteConfigCache 
+  clearRemoteConfigCache,
 } from '../config/remoteConfig';
 
-/**
- * React hook for accessing feature flags
- * 
- * Features can be toggled remotely via GitHub without code changes.
- * 
- * Usage:
- * ```tsx
- * const { flags, isLoading, refresh } = useFeatureFlags();
- * 
- * if (!flags.swapEnabled) {
- *   return <div>Swap is currently disabled</div>;
- * }
- * ```
- */
-export function useFeatureFlags() {
-  const [flags, setFlags] = useState<FeatureFlags>(DEFAULT_FEATURE_FLAGS);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+const FEATURE_FLAG_POLL_MS = 5 * 60 * 1000;
 
-  const loadFlags = useCallback(async (forceRefresh = false) => {
+let sharedFlags: FeatureFlags = DEFAULT_FEATURE_FLAGS;
+let sharedLoading = true;
+let sharedError: string | null = null;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+let inflight: Promise<void> | null = null;
+let subscriberCount = 0;
+const listeners = new Set<() => void>();
+
+const emit = () => listeners.forEach((listener) => listener());
+
+const loadSharedFlags = async (forceRefresh = false): Promise<void> => {
+  if (inflight) {
+    return inflight;
+  }
+
+  inflight = (async () => {
     try {
       if (forceRefresh) {
         clearRemoteConfigCache();
       }
-      
-      const fetchedFlags = await fetchFeatureFlags();
-      setFlags(fetchedFlags);
-      console.log('🎛️ Feature flags loaded:', { swapEnabled: fetchedFlags.swapEnabled, poolsEnabled: fetchedFlags.poolsEnabled });
+
+      sharedFlags = await fetchFeatureFlags();
+      sharedError = null;
     } catch (err) {
       console.error('Error loading feature flags:', err);
-      setError(err instanceof Error ? err.message : 'Unknown error');
-      // Keep using default/cached flags on error
+      sharedError = err instanceof Error ? err.message : 'Unknown error';
     } finally {
-      setIsLoading(false);
+      sharedLoading = false;
+      inflight = null;
+      emit();
     }
-  }, []);
+  })();
+
+  return inflight;
+};
+
+const startSharedPolling = () => {
+  if (pollTimer) return;
+
+  void loadSharedFlags();
+
+  pollTimer = setInterval(() => {
+    void loadSharedFlags(false);
+  }, FEATURE_FLAG_POLL_MS);
+};
+
+const stopSharedPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+};
+
+/**
+ * React hook for accessing feature flags.
+ * One shared poll for the whole app — Navbar, Swap, Pools, etc. do not each hit GitHub.
+ */
+export function useFeatureFlags() {
+  const [flags, setFlags] = useState<FeatureFlags>(sharedFlags);
+  const [isLoading, setIsLoading] = useState(sharedLoading);
+  const [error, setError] = useState<string | null>(sharedError);
 
   useEffect(() => {
-    loadFlags();
+    subscriberCount += 1;
+    startSharedPolling();
 
-    // Refresh periodically without busting cache every time (avoids console spam / re-renders)
-    const interval = setInterval(() => {
-      loadFlags(false);
-    }, 60 * 1000);
+    const sync = () => {
+      setFlags({ ...sharedFlags });
+      setIsLoading(sharedLoading);
+      setError(sharedError);
+    };
 
-    return () => clearInterval(interval);
-  }, [loadFlags]);
+    listeners.add(sync);
+    sync();
 
-  const refresh = useCallback(() => loadFlags(true), [loadFlags]);
+    return () => {
+      listeners.delete(sync);
+      subscriberCount -= 1;
+      if (subscriberCount <= 0) {
+        subscriberCount = 0;
+        stopSharedPolling();
+      }
+    };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    sharedLoading = true;
+    emit();
+    await loadSharedFlags(true);
+  }, []);
 
   return {
     flags,
     isLoading,
     error,
     refresh,
-    // Convenience accessors
     swapEnabled: flags.swapEnabled,
     poolsEnabled: flags.poolsEnabled,
     liquidityEnabled: flags.liquidityEnabled,
@@ -73,4 +115,3 @@ export function useFeatureFlags() {
 }
 
 export default useFeatureFlags;
-

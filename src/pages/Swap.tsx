@@ -19,7 +19,9 @@ import {
   WSOL_MINT,
   isNativeSOL,
 } from '../utils/amm';
-import { getCachedBalance, clearBalanceCache, formatTokenBalance, debounce } from '../utils/balanceCache';
+import { formatTokenBalance, debounce, batchGetBalances } from '../utils/balanceCache';
+import { dispatchSwapSuccess } from '../utils/refreshEvents';
+import { subscribeWalletBalanceUpdates } from '../utils/walletBalanceSubscriptions';
 import { KEDOLOG_CONFIG } from '../config/fees';
 import { SOL_MINT, KEDOLOG_MINT, USDC_MINT } from '../config/addresses';
 import { 
@@ -411,18 +413,19 @@ const Swap = () => {
     const toMint = toToken.mint;
 
     const loadBalances = async () => {
+      if (document.visibilityState === 'hidden') return;
       setIsLoadingBalances(true);
       try {
-        const [fromBal, toBal, kedologBal] = await Promise.all([
-          getCachedBalance(connection, fromMint, publicKey, true),
-          getCachedBalance(connection, toMint, publicKey, true),
-          getCachedBalance(connection, KEDOLOG_CONFIG.MINT, publicKey),
+        const results = await batchGetBalances(connection, [
+          { mint: fromMint, wallet: publicKey },
+          { mint: toMint, wallet: publicKey },
+          { mint: KEDOLOG_CONFIG.MINT, wallet: publicKey },
         ]);
 
         if (!cancelled) {
-          setFromBalance(fromBal);
-          setToBalance(toBal);
-          setKedologBalance(kedologBal);
+          setFromBalance(results.get(`${fromMint.toString()}-${publicKey.toString()}`) ?? 0);
+          setToBalance(results.get(`${toMint.toString()}-${publicKey.toString()}`) ?? 0);
+          setKedologBalance(results.get(`${KEDOLOG_CONFIG.MINT.toString()}-${publicKey.toString()}`) ?? 0);
         }
       } catch (error) {
         if (!cancelled) {
@@ -435,10 +438,20 @@ const Swap = () => {
       }
     };
 
-    const timer = window.setTimeout(loadBalances, 150);
+    void loadBalances();
+
+    const unsubscribe = subscribeWalletBalanceUpdates(
+      connection,
+      publicKey,
+      [fromMint, toMint, KEDOLOG_CONFIG.MINT],
+      () => {
+        void loadBalances();
+      },
+    );
+
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      unsubscribe();
     };
   }, [publicKey, connected, fromToken.mint.toString(), toToken.mint.toString(), connection]);
   
@@ -601,6 +614,8 @@ const Swap = () => {
       }
     }
 
+    let cancelled = false;
+
     const timer = setTimeout(async () => {
       setIsLoadingAggregatorQuote(true);
       setAggregatorQuoteError(null);
@@ -615,7 +630,10 @@ const Swap = () => {
           slippagePercent,
           slippageSetting: slippage || '0.5',
           userWallet: publicKey?.toString(),
+          compareAllProviders: comparisonMode,
         });
+
+        if (cancelled) return;
 
         if (!best) {
           if (pureAggregator) {
@@ -687,16 +705,25 @@ const Swap = () => {
           console.error('Aggregator comparison quote failed:', error);
         }
       } finally {
-        setIsLoadingAggregatorQuote(false);
-        setIsLoadingQuote(false);
+        if (!cancelled) {
+          setIsLoadingAggregatorQuote(false);
+          setIsLoadingQuote(false);
+        }
       }
-    }, jupiterEnabled ? 2100 : 1200);
+    }, 500);
 
-    return () => clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [
     fromAmount,
-    fromToken,
-    toToken,
+    fromToken.mint.toString(),
+    toToken.mint.toString(),
+    fromToken.decimals,
+    toToken.decimals,
+    fromToken.symbol,
+    toToken.symbol,
     poolReserves,
     swapRoute,
     aggregatorsEnabled,
@@ -733,28 +760,32 @@ const Swap = () => {
     }
   }, [fromToken, toToken, poolAddress]);
   
-  // Fetch USD prices for tokens
+  // Fetch USD prices for tokens (debounced — each call can trigger fetchPools)
   useEffect(() => {
-    const fetchUsdPrices = async () => {
-      if (!connection) return;
-      
-      try {
-        const { getTokenUsdPrice } = await import('../utils/prices');
-        const [fromPrice, toPrice] = await Promise.all([
-          getTokenUsdPrice(connection, fromToken.mint.toString(), fromToken.symbol),
-          getTokenUsdPrice(connection, toToken.mint.toString(), toToken.symbol),
-        ]);
-        setFromTokenUsdPrice(fromPrice);
-        setToTokenUsdPrice(toPrice);
-      } catch (error) {
-        console.error('Error fetching USD prices:', error);
-        setFromTokenUsdPrice(0);
-        setToTokenUsdPrice(0);
-      }
-    };
-    
-    fetchUsdPrices();
-  }, [connection, fromToken, toToken]);
+    const timer = window.setTimeout(() => {
+      const fetchUsdPrices = async () => {
+        if (!connection) return;
+
+        try {
+          const { getTokenUsdPrice } = await import('../utils/prices');
+          const [fromPrice, toPrice] = await Promise.all([
+            getTokenUsdPrice(connection, fromToken.mint.toString(), fromToken.symbol),
+            getTokenUsdPrice(connection, toToken.mint.toString(), toToken.symbol),
+          ]);
+          setFromTokenUsdPrice(fromPrice);
+          setToTokenUsdPrice(toPrice);
+        } catch (error) {
+          console.error('Error fetching USD prices:', error);
+          setFromTokenUsdPrice(0);
+          setToTokenUsdPrice(0);
+        }
+      };
+
+      void fetchUsdPrices();
+    }, 600);
+
+    return () => window.clearTimeout(timer);
+  }, [connection, fromToken.mint.toString(), toToken.mint.toString(), fromToken.symbol, toToken.symbol]);
   
   // Calculate the Kedolik DEX quote candidate when amount changes (direct + multi-hop).
   // The final venue (DEX vs Jupiter) is decided by the smart-routing logic below.
@@ -1467,7 +1498,7 @@ const Swap = () => {
       // Clear caches and trigger refresh after successful swap
       console.log('🔄 Clearing cache and triggering pool refresh after successful swap');
       clearPoolCache(); // Clear cache to force fresh fetch
-      if (publicKey) clearBalanceCache(publicKey); // Clear balance cache
+      if (publicKey) dispatchSwapSuccess(publicKey.toString());
       setPoolRefreshTrigger(prev => prev + 1);
       
       // Refresh balances and pool reserves after successful swap
@@ -1530,7 +1561,7 @@ const Swap = () => {
         
         // Refresh data
         clearPoolCache();
-        if (publicKey) clearBalanceCache(publicKey); // Clear balance cache
+        if (publicKey) dispatchSwapSuccess(publicKey.toString());
         setPoolRefreshTrigger(prev => prev + 1);
         
         setTimeout(() => {

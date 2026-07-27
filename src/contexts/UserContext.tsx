@@ -1,8 +1,10 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { getTokenAccounts, getSolBalance, getTransactionHistory } from '../utils/solana';
 import { getTokenPrices, getTokenMetadata } from '../utils/prices';
 import { SOL_MINT } from '../config/addresses';
+import { onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
+import { isPageVisible } from '../utils/visibilityControl';
 
 interface Transaction {
   id: string;
@@ -54,10 +56,20 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const { connection } = useConnection();
   const [userData, setUserData] = useState<UserData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const hasLoadedRef = useRef(false);
 
-  const fetchUserData = async () => {
+  const fetchUserData = useCallback(async (force = false) => {
     if (!publicKey || !connected) {
       setUserData(null);
+      hasLoadedRef.current = false;
+      return;
+    }
+
+    if (!force && hasLoadedRef.current) {
+      return;
+    }
+
+    if (!isPageVisible() && !force) {
       return;
     }
 
@@ -133,11 +145,12 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       // 7. Set user data
       setUserData({
         totalValue: totalValue.toFixed(2),
-        totalPnL: 0, // Calculate based on historical data if needed
-        pnl24h: 0, // Can be calculated from 24h old snapshot
-        assets: assets.filter(a => parseFloat(a.valueUsd) > 0.01), // Filter out dust
+        totalPnL: 0,
+        pnl24h: 0,
+        assets: assets.filter(a => parseFloat(a.valueUsd) > 0.01),
         recentTransactions: recentTransactions.slice(0, 10)
       });
+      hasLoadedRef.current = true;
       
     } catch (error) {
       console.error('Error fetching user data:', error);
@@ -152,14 +165,31 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchUserData();
   }, [publicKey, connected, connection]);
 
+  useEffect(() => {
+    hasLoadedRef.current = false;
+    void fetchUserData(true);
+  }, [publicKey, connected, connection, fetchUserData]);
+
+  useEffect(() => {
+    const stopBalance = onRefreshEvent(REFRESH_EVENTS.BALANCES, () => {
+      hasLoadedRef.current = false;
+      void fetchUserData(true);
+    });
+    const stopSwap = onRefreshEvent(REFRESH_EVENTS.SWAP_SUCCESS, () => {
+      hasLoadedRef.current = false;
+      void fetchUserData(true);
+    });
+    return () => {
+      stopBalance();
+      stopSwap();
+    };
+  }, [fetchUserData]);
+
   const refreshUserData = async () => {
-    await fetchUserData();
+    hasLoadedRef.current = false;
+    await fetchUserData(true);
   };
 
   return (

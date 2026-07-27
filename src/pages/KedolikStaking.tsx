@@ -10,6 +10,7 @@ import { useRemoteTokens } from '../hooks/useRemoteTokens';
 import type { TokenInfo } from '../config/tokens';
 import { KEDOLIK_STAKE_LOCK_V1 } from '../config/kedolikStakeLockV1';
 import { KEDOLIK_NO_STAKING_POOL_INSTANCE_MESSAGE } from '../services/kedolikStaking';
+import { dispatchBalanceInvalidation, dispatchStakingInvalidation } from '../utils/refreshEvents';
 import {
   KedolikPageFrame,
   KedolikProgramStatusBadge,
@@ -699,6 +700,8 @@ export default function KedolikStaking() {
       setIsStakeModalOpen(false);
       await refresh();
       await refreshProgramStatus();
+      dispatchStakingInvalidation();
+      dispatchBalanceInvalidation(publicKey?.toString());
     } catch (actionError) {
       toast.error(getActionErrorMessage(actionError));
     } finally {
@@ -745,6 +748,8 @@ export default function KedolikStaking() {
       setIsStakeModalOpen(false);
       await refresh();
       await refreshProgramStatus();
+      dispatchStakingInvalidation();
+      dispatchBalanceInvalidation(publicKey?.toString());
     } catch (actionError) {
       toast.error(getActionErrorMessage(actionError));
     } finally {
@@ -769,6 +774,8 @@ export default function KedolikStaking() {
       toast.success('Claim transaction submitted.');
       await refresh();
       await refreshProgramStatus();
+      dispatchStakingInvalidation();
+      dispatchBalanceInvalidation(publicKey?.toString());
     } catch (actionError) {
       toast.error(getActionErrorMessage(actionError));
     } finally {
