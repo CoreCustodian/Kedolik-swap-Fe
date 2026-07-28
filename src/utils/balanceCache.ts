@@ -1,6 +1,11 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { getAssociatedTokenAddressSync, unpackAccount } from '@solana/spl-token';
-import { getTokenBalance, isNativeSOL } from './amm';
+import {
+  getCachedMintDecimals,
+  getTokenBalance,
+  isNativeSOL,
+  primeMintDecimals,
+} from './amm';
 
 /**
  * Parse token amount from RPC response (handles null uiAmount).
@@ -160,18 +165,18 @@ export const batchGetBalances = async (
     return { ...entry, ata };
   });
 
+  // Decimals are immutable, so only look up mints we've never seen this session.
   const uniqueMints = [...new Map(splPending.map((e) => [e.mint.toString(), e.mint])).values()];
-  const mintDecimals = new Map<string, number>();
-  for (let i = 0; i < uniqueMints.length; i += 100) {
-    const chunk = uniqueMints.slice(i, i + 100);
+  const unknownMints = uniqueMints.filter(
+    (mint) => getCachedMintDecimals(mint.toString()) === undefined,
+  );
+
+  for (let i = 0; i < unknownMints.length; i += 100) {
+    const chunk = unknownMints.slice(i, i + 100);
     const infos = await connection.getMultipleAccountsInfo(chunk, 'confirmed');
     chunk.forEach((mint, index) => {
       const data = infos[index]?.data;
-      let decimals = 9;
-      if (data && data.length >= 45) {
-        decimals = data[44];
-      }
-      mintDecimals.set(mint.toString(), decimals);
+      primeMintDecimals(mint.toString(), data && data.length >= 45 ? data[44] : 9);
     });
   }
 
@@ -188,7 +193,7 @@ export const batchGetBalances = async (
       if (account?.data) {
         try {
           const unpacked = unpackAccount(entry.ata, account);
-          const decimals = mintDecimals.get(entry.mint.toString()) ?? 9;
+          const decimals = getCachedMintDecimals(entry.mint.toString()) ?? 9;
           balance = Number(unpacked.amount) / Math.pow(10, decimals);
         } catch {
           balance = 0;

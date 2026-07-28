@@ -17,11 +17,18 @@ export const subscribeWalletBalanceUpdates = (
 ): (() => void) => {
   const subscriptionIds: number[] = [];
   let paused = !document || document.visibilityState === 'hidden';
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // A single swap mutates SOL plus both token accounts, so coalesce the
+  // notifications into one refetch instead of three.
   const scheduleUpdate = () => {
     if (paused) return;
-    clearBalanceCache(wallet);
-    onUpdate();
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      clearBalanceCache(wallet);
+      onUpdate();
+    }, 400);
   };
 
   // Native SOL
@@ -61,6 +68,7 @@ export const subscribeWalletBalanceUpdates = (
   });
 
   return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     subscriptionIds.forEach((id) => {
       try {
         void connection.removeAccountChangeListener(id);

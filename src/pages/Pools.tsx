@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getPoolCreationFee } from '../utils/amm';
 import { getCachedBalance, debounce } from '../utils/balanceCache';
-import { dispatchBalanceInvalidation } from '../utils/refreshEvents';
+import { dispatchBalanceInvalidation, onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
+import { subscribePoolUpdates } from '../utils/poolSubscriptions';
+import { isPageVisible } from '../utils/visibilityControl';
 import { TokenInfo } from '../config/tokens';
 import { ToastContainer, ToastType } from '../components/Toast';
 import { TransactionModal } from '../components/TransactionModal';
@@ -100,7 +102,19 @@ const Pools = () => {
     };
     
     loadPools();
-    // No auto-refresh - user can manually refresh if needed
+
+    // Push-based refresh: the websocket tells us when a pool actually changes,
+    // so there is no polling interval here.
+    const stopSubscription = subscribePoolUpdates(connection);
+    const stopPoolEvent = onRefreshEvent(REFRESH_EVENTS.POOLS, () => {
+      if (!isPageVisible()) return;
+      void loadPools();
+    });
+
+    return () => {
+      stopSubscription();
+      stopPoolEvent();
+    };
   }, [connection, wallet]);
   
   // Fetch user's LP token balances for each pool (debounced and cached)

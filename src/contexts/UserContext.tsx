@@ -41,6 +41,9 @@ interface UserContextType {
   refreshUserData: () => Promise<void>;
 }
 
+const MIN_REFRESH_INTERVAL_MS = 20_000;
+const TX_HISTORY_TTL_MS = 2 * 60 * 1000;
+
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export const useUser = () => {
@@ -57,6 +60,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const [userData, setUserData] = useState<UserData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const hasLoadedRef = useRef(false);
+  const lastFetchAtRef = useRef(0);
+  const inflightRef = useRef<Promise<void> | null>(null);
+  const txCacheRef = useRef<{ transactions: Transaction[]; fetchedAt: number } | null>(null);
 
   const fetchUserData = useCallback(async (force = false) => {
     if (!publicKey || !connected) {
@@ -69,12 +75,25 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    if (!isPageVisible() && !force) {
+    if (!isPageVisible()) {
       return;
     }
 
+    // Refresh events (swap/stake/balance) can arrive in bursts; a forced refresh
+    // still has to respect this floor so one swap isn't worth many portfolio scans.
+    if (Date.now() - lastFetchAtRef.current < MIN_REFRESH_INTERVAL_MS) {
+      return;
+    }
+
+    if (inflightRef.current) {
+      return inflightRef.current;
+    }
+
+    lastFetchAtRef.current = Date.now();
     setIsLoading(true);
-    try {
+
+    const run = async () => {
+      try {
       // Fetch data directly from blockchain - NO SERVER NEEDED!
       // Uses connection from wallet context (which can use wallet's RPC endpoint)
       
@@ -129,18 +148,28 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       }, 0);
       
       // 6. Get transaction history (directly from blockchain!)
-      const signatures = await getTransactionHistory(connection, publicKey, 20);
-      const recentTransactions: Transaction[] = signatures.map((sig) => ({
-        id: sig.signature,
-        type: 'swap', // You can parse this from transaction details
-        tokenIn: 'SOL',
-        tokenOut: 'USDC',
-        amountIn: '0.0',
-        amountOut: '0.0',
-        timestamp: (sig.blockTime || 0) * 1000,
-        signature: sig.signature,
-        status: sig.err ? 'failed' : 'success'
-      }));
+      // getSignaturesForAddress is one of the priciest calls, so it gets its own
+      // longer TTL rather than riding along with every balance refresh.
+      const txCache = txCacheRef.current;
+      let recentTransactions: Transaction[];
+
+      if (txCache && Date.now() - txCache.fetchedAt < TX_HISTORY_TTL_MS) {
+        recentTransactions = txCache.transactions;
+      } else {
+        const signatures = await getTransactionHistory(connection, publicKey, 20);
+        recentTransactions = signatures.map((sig) => ({
+          id: sig.signature,
+          type: 'swap' as const,
+          tokenIn: 'SOL',
+          tokenOut: 'USDC',
+          amountIn: '0.0',
+          amountOut: '0.0',
+          timestamp: (sig.blockTime || 0) * 1000,
+          signature: sig.signature,
+          status: sig.err ? ('failed' as const) : ('success' as const),
+        }));
+        txCacheRef.current = { transactions: recentTransactions, fetchedAt: Date.now() };
+      }
       
       // 7. Set user data
       setUserData({
@@ -152,23 +181,29 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       });
       hasLoadedRef.current = true;
       
-    } catch (error) {
-      console.error('Error fetching user data:', error);
-      // Fallback to mock data if blockchain fetch fails
-      setUserData({
-        totalValue: '0.00',
-        totalPnL: 0,
-        pnl24h: 0,
-        assets: [],
-        recentTransactions: []
-      });
-    } finally {
-      setIsLoading(false);
-    }
+      } catch (error) {
+        console.error('Error fetching user data:', error);
+        setUserData({
+          totalValue: '0.00',
+          totalPnL: 0,
+          pnl24h: 0,
+          assets: [],
+          recentTransactions: []
+        });
+      } finally {
+        setIsLoading(false);
+        inflightRef.current = null;
+      }
+    };
+
+    inflightRef.current = run();
+    return inflightRef.current;
   }, [publicKey, connected, connection]);
 
   useEffect(() => {
     hasLoadedRef.current = false;
+    lastFetchAtRef.current = 0;
+    txCacheRef.current = null;
     void fetchUserData(true);
   }, [publicKey, connected, connection, fetchUserData]);
 
@@ -187,8 +222,11 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     };
   }, [fetchUserData]);
 
+  // Explicit user action, so it clears the rate-limit floor first.
   const refreshUserData = async () => {
     hasLoadedRef.current = false;
+    lastFetchAtRef.current = 0;
+    txCacheRef.current = null;
     await fetchUserData(true);
   };
 

@@ -22,6 +22,7 @@ import {
 import { formatTokenBalance, debounce, batchGetBalances } from '../utils/balanceCache';
 import { dispatchSwapSuccess } from '../utils/refreshEvents';
 import { subscribeWalletBalanceUpdates } from '../utils/walletBalanceSubscriptions';
+import { subscribePoolUpdates } from '../utils/poolSubscriptions';
 import { KEDOLOG_CONFIG } from '../config/fees';
 import { SOL_MINT, KEDOLOG_MINT, USDC_MINT } from '../config/addresses';
 import { 
@@ -455,6 +456,9 @@ const Swap = () => {
     };
   }, [publicKey, connected, fromToken.mint.toString(), toToken.mint.toString(), connection]);
   
+  // Keep the pool cache fresh over the websocket rather than by re-fetching on a timer.
+  useEffect(() => subscribePoolUpdates(connection), [connection]);
+
   // Fetch pool reserves and check for routes (debounced to prevent excessive calls)
   useEffect(() => {
     // Debounce pool data fetching to prevent rapid successive calls

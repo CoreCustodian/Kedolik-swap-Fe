@@ -3,7 +3,7 @@ import { ConnectionProvider, WalletProvider as SolanaWalletProvider, useConnecti
 import { PhantomWalletAdapter, SolflareWalletAdapter } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { patchConnectionConfirmTransaction } from '../utils/transactionConfirmation';
-import { KEDOLIK_STAKE_LOCK_V1 } from '../config/kedolikStakeLockV1';
+import { getConnectionConfig, RPC_HTTP_ENDPOINT, RPC_WS_ENDPOINT } from '../config/rpc';
 
 // Default styles that can be overridden by your app
 import '@solana/wallet-adapter-react-ui/styles.css';
@@ -16,7 +16,7 @@ interface WalletProviderProps {
 const ConnectionProviderWithRPC: FC<{ children: ReactNode }> = ({ children }) => {
   // Prefer an environment override, otherwise use the configured Kedolik mainnet RPC.
   const endpoint = useMemo(() => {
-    const rpcEndpoint = import.meta.env.VITE_RPC_ENDPOINT || KEDOLIK_STAKE_LOCK_V1.preferredRpcEndpoint;
+    const rpcEndpoint = RPC_HTTP_ENDPOINT;
     
     if (!rpcEndpoint) {
       console.error('❌ ERROR: VITE_RPC_ENDPOINT is not set in .env file!');
@@ -32,11 +32,15 @@ const ConnectionProviderWithRPC: FC<{ children: ReactNode }> = ({ children }) =>
     return rpcEndpoint;
   }, []);
 
-  // Configure connection
+  // Explicit wsEndpoint so account/signature subscriptions are pushed over the
+  // configured socket instead of falling back to HTTP polling.
   const connectionConfig = useMemo(() => {
-    return {
-      commitment: 'confirmed' as const,
-    };
+    if (RPC_WS_ENDPOINT) {
+      console.log('🔌 WebSocket subscriptions enabled');
+    } else {
+      console.warn('⚠️ No WebSocket RPC endpoint — falling back to polling');
+    }
+    return getConnectionConfig();
   }, []);
 
   return (

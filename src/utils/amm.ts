@@ -29,6 +29,7 @@ import IDLJson from '../../kedolik_cp_swap.json';
 import { getTokenByMint } from '../config/tokens';
 import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddress, KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 import * as ADDRESSES from '../config/addresses';
+import { getConnectionConfig, hasWebsocketEndpoint, RPC_HTTP_ENDPOINT } from '../config/rpc';
 import { confirmTransactionWithBlockhash, smartConfirmTransaction } from './transactionConfirmation';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
@@ -248,25 +249,29 @@ export const isNativeSOL = (mint: PublicKey): boolean => {
   return mint.equals(WSOL_MINT);
 };
 
-const parseRpcTokenAmount = (value: {
-  uiAmount: number | null;
-  uiAmountString?: string;
-  amount: string;
-  decimals: number;
-}): number => {
-  if (value.uiAmount != null && Number.isFinite(value.uiAmount)) {
-    return value.uiAmount;
-  }
-  if (value.uiAmountString) {
-    const parsed = parseFloat(value.uiAmountString);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  try {
-    return Number(value.amount) / Math.pow(10, value.decimals);
-  } catch {
-    return 0;
-  }
+// Mint decimals never change, so this cache is permanent for the session.
+const mintDecimalsCache = new Map<string, number>();
+
+export const getMintDecimals = async (
+  connection: Connection,
+  mint: PublicKey
+): Promise<number> => {
+  const key = mint.toString();
+  const cached = mintDecimalsCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const info = await connection.getAccountInfo(mint, 'confirmed');
+  const decimals = info?.data && info.data.length >= 45 ? info.data.readUInt8(44) : 9;
+  mintDecimalsCache.set(key, decimals);
+  return decimals;
 };
+
+export const primeMintDecimals = (mint: string, decimals: number): void => {
+  mintDecimalsCache.set(mint, decimals);
+};
+
+export const getCachedMintDecimals = (mint: string): number | undefined =>
+  mintDecimalsCache.get(mint);
 
 /**
  * Creates instructions to wrap native SOL to WSOL
@@ -408,24 +413,19 @@ export const getTokenBalance = async (
       return balance / 1e9; // Convert lamports to SOL
     }
 
-    // Prefer ATA (standard wallet layout)
-    try {
-      const tokenAccount = await getAssociatedTokenAddress(mint, owner);
-      const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
-      return parseRpcTokenAmount(accountInfo.value);
-    } catch {
-      // Fallback: sum all token accounts for this mint (handles edge wallet layouts)
-      const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint });
-      if (accounts.value.length === 0) {
-        return 0;
-      }
+    // Single getAccountInfo on the ATA. getTokenAccountBalance throws when the account
+    // is missing, and the old getParsedTokenAccountsByOwner fallback made every
+    // not-yet-held token cost two calls (the second one expensive).
+    const tokenAccount = await getAssociatedTokenAddress(mint, owner);
+    const accountInfo = await connection.getAccountInfo(tokenAccount, 'confirmed');
 
-      return accounts.value.reduce((total, { account }) => {
-        const info = account.data.parsed?.info;
-        if (!info?.tokenAmount) return total;
-        return total + parseRpcTokenAmount(info.tokenAmount);
-      }, 0);
+    if (!accountInfo) {
+      return 0;
     }
+
+    const unpacked = unpackAccount(tokenAccount, accountInfo);
+    const decimals = await getMintDecimals(connection, mint);
+    return Number(unpacked.amount) / Math.pow(10, decimals);
   } catch (error) {
     console.log(`Balance not found for token ${mint.toString()}:`, error);
     return 0;
@@ -542,11 +542,11 @@ export const ensureAmmConfig030 = async (connection: Connection, wallet: any) =>
 if (typeof window !== 'undefined') {
   (window as any).kedolikInitAmm030 = async () => {
     // Use RPC from environment variable
-    const rpc = import.meta.env.VITE_RPC_ENDPOINT;
+    const rpc = RPC_HTTP_ENDPOINT;
     if (!rpc) {
       throw new Error('VITE_RPC_ENDPOINT is not set in .env file');
     }
-    const conn = new (await import('@solana/web3.js')).Connection(rpc, 'confirmed');
+    const conn = new (await import('@solana/web3.js')).Connection(rpc, getConnectionConfig());
     const wallet = (window as any).solana;
     if (!wallet?.publicKey) throw new Error('Connect wallet first');
     const res = await ensureAmmConfig030(conn as unknown as Connection, wallet);
@@ -761,7 +761,9 @@ export interface PoolInfo {
 
 // Pool cache to reduce RPC calls
 let poolCache: { pools: PoolInfo[]; timestamp: number } | null = null;
-const POOL_CACHE_TTL = 30_000; // 30 seconds — reserves; invalidated on liquidity tx
+// With a websocket, programSubscribe invalidates this cache the moment any pool
+// changes, so the TTL is only a backstop. Without one it has to stay short.
+const POOL_CACHE_TTL = hasWebsocketEndpoint() ? 120_000 : 30_000;
 let isFetchingPools = false; // Prevent concurrent fetches
 
 // Fetch all pools with caching
@@ -843,7 +845,33 @@ export const fetchPools = async (
           decimals = data[44];
         }
         mintDecimals.set(mint.toString(), decimals);
+        primeMintDecimals(mint.toString(), decimals);
       });
+    }
+
+    // One batched read for every distinct AMM config instead of one per pool.
+    const tradeFeeRates = new Map<string, number>();
+    const uniqueConfigs = [
+      ...new Map(
+        poolRows.map(({ data }) => {
+          const config: PublicKey = data.ammConfig || AMM_CONFIG;
+          return [config.toString(), config];
+        })
+      ).values(),
+    ];
+
+    if (uniqueConfigs.length > 0) {
+      try {
+        const configs = await (program.account as any).ammConfig.fetchMultiple(uniqueConfigs);
+        uniqueConfigs.forEach((config, index) => {
+          const rate = configs?.[index]?.tradeFeeRate;
+          if (rate !== undefined && rate !== null) {
+            tradeFeeRates.set(config.toString(), Number(rate));
+          }
+        });
+      } catch (error) {
+        console.warn('Could not batch-fetch AMM configs, using default fee rate', error);
+      }
     }
 
     for (const { pool, data } of poolRows) {
@@ -883,17 +911,8 @@ export const fetchPools = async (
       const creatorFeesToken0 = Number(rawCreatorFeesToken0) / Math.pow(10, token0Decimals);
       const creatorFeesToken1 = Number(rawCreatorFeesToken1) / Math.pow(10, token1Decimals);
 
-      // Fetch trade fee rate from pool's specific AMM config
-      let tradeFeeRate = 100; // Default 0.01% (100 parts per million)
-      const poolAmmConfig = data.ammConfig || AMM_CONFIG;
-      try {
-        const ammConfigData = await (program.account as any).ammConfig.fetch(poolAmmConfig);
-        tradeFeeRate = ammConfigData.tradeFeeRate || 100;
-        console.log(`📊 Pool ${pool.publicKey.toString().slice(0, 8)}... - Trade Fee Rate: ${tradeFeeRate} (${tradeFeeRate / 10000}%)`);
-        console.log(`   Full address: ${pool.publicKey.toString()}`);
-      } catch (error) {
-        console.warn(`Could not fetch AMM config for pool ${pool.publicKey.toString().slice(0, 8)}..., using default fee rate`);
-      }
+      const poolAmmConfig: PublicKey = data.ammConfig || AMM_CONFIG;
+      const tradeFeeRate = tradeFeeRates.get(poolAmmConfig.toString()) || 100;
 
       const token0Symbol = getTokenSymbol(data.token0Mint);
       const token1Symbol = getTokenSymbol(data.token1Mint);

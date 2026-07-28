@@ -9,6 +9,11 @@ interface ImportMetaEnv {
    * ⚠️ IMPORTANT: This will be exposed in the client bundle. Never commit .env to git.
    */
   readonly VITE_RPC_ENDPOINT: string;
+  /**
+   * WebSocket RPC endpoint. Optional — derived from VITE_RPC_ENDPOINT when unset.
+   * Used for account/signature subscriptions so updates are pushed instead of polled.
+   */
+  readonly VITE_RPC_ENDPOINT_WS?: string;
   readonly VITE_NETWORK?: string;
   readonly VITE_JUPITER_API_KEY?: string;
   readonly VITE_JUPITER_REFERRAL_ACCOUNT?: string;

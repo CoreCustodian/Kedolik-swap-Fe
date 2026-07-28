@@ -5,6 +5,9 @@
     },
     "api/record-aggregator-trade.ts": {
       "maxDuration": 30
+    },
+    "api/pool-swap-volume.ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

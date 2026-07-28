@@ -1,6 +1,8 @@
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { getAssociatedTokenAddress } from '@solana/spl-token';
 import { TokenInfo } from '../config/tokens';
+import { primeMintDecimals } from './amm';
+import { batchGetBalances } from './balanceCache';
 
 export interface TokenBalance {
   mint: string;
@@ -22,9 +24,8 @@ export const fetchAllBalances = async (
   tokenList: TokenInfo[] = []
 ): Promise<TokenBalance[]> => {
   const balances: TokenBalance[] = [];
-  
+
   try {
-    // Fetch native SOL balance
     const solBalance = await connection.getBalance(walletAddress);
     balances.push({
       mint: 'native',
@@ -43,36 +44,32 @@ export const fetchAllBalances = async (
       decimals: 9,
     });
   }
-  
-  // Fetch SPL token balances
-  for (const token of tokenList) {
-    try {
-      const tokenAccount = await getAssociatedTokenAddress(
-        token.mint,
-        walletAddress
-      );
-      const accountInfo = await connection.getTokenAccountBalance(tokenAccount);
-      const balance = parseFloat(accountInfo.value.uiAmount?.toString() || '0');
-      
-      balances.push({
-        mint: token.mint.toString(),
-        symbol: token.symbol,
-        name: token.name,
-        balance: balance,
-        decimals: token.decimals,
-      });
-    } catch (error) {
-      // Token account doesn't exist, set balance to 0
-      balances.push({
-        mint: token.mint.toString(),
-        symbol: token.symbol,
-        name: token.name,
-        balance: 0,
-        decimals: token.decimals,
-      });
-    }
+
+  if (tokenList.length === 0) {
+    return balances;
   }
-  
+
+  // Decimals come from the token list, so no per-mint lookups are needed.
+  tokenList.forEach((token) => primeMintDecimals(token.mint.toString(), token.decimals));
+
+  // One batched read for every token instead of a getTokenAccountBalance per token.
+  const batched = await batchGetBalances(
+    connection,
+    tokenList.map((token) => ({ mint: token.mint, wallet: walletAddress })),
+  ).catch(() => new Map<string, number>());
+
+  const walletKey = walletAddress.toString();
+
+  tokenList.forEach((token) => {
+    balances.push({
+      mint: token.mint.toString(),
+      symbol: token.symbol,
+      name: token.name,
+      balance: batched.get(`${token.mint.toString()}-${walletKey}`) ?? 0,
+      decimals: token.decimals,
+    });
+  });
+
   return balances;
 };
 

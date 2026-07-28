@@ -1,23 +1,9 @@
 import { getMint } from '@solana/spl-token';
-import {
-  Connection,
-  ParsedTransactionWithMeta,
-  PublicKey,
-  SignaturesForAddressOptions,
-} from '@solana/web3.js';
-import { PROGRAM_ID, USDC_MINT, USDT_MINT } from '../config/addresses';
+import { Connection, PublicKey } from '@solana/web3.js';
+import { USDC_MINT, USDT_MINT } from '../config/addresses';
 import { fetchAllLockerEscrows } from '../services/kedolikLocker';
 import { PoolInfo } from './amm';
-
-const DAY_SECONDS = 24 * 60 * 60;
-const SIGNATURE_PAGE_SIZE = 1000;
-const TRANSACTION_BATCH_SIZE = 100;
-const SWAP_EVENT_DISCRIMINATOR = Buffer.from([64, 198, 205, 232, 38, 8, 113, 226]);
-
-interface DecodedSwapEvent {
-  inputAmount: string;
-  inputMint: string;
-}
+import { fetchSwapVolumeByMint } from './poolVolumeApi';
 
 export interface PoolStats {
   totalTvlUsd: number;
@@ -42,38 +28,32 @@ interface CachedPoolStatsPayload {
   cachedAt: number;
 }
 
-export const readCachedPoolStats = (): PoolStats | null => {
+// localStorage (not sessionStorage) so extra tabs and repeat visits reuse the same
+// snapshot instead of each paying for a full pool + price refresh.
+const readCachePayload = (): CachedPoolStatsPayload | null => {
   try {
-    const raw = sessionStorage.getItem(POOL_STATS_CACHE_KEY);
+    const raw = localStorage.getItem(POOL_STATS_CACHE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as CachedPoolStatsPayload | PoolStats;
-    if ('stats' in parsed && parsed.stats) {
-      return parsed.stats;
-    }
-    return parsed as PoolStats;
+    return JSON.parse(raw) as CachedPoolStatsPayload;
   } catch {
     return null;
   }
 };
 
+export const readCachedPoolStats = (): PoolStats | null => readCachePayload()?.stats ?? null;
+
 export const isPoolStatsCacheFresh = (): boolean => {
-  try {
-    const raw = sessionStorage.getItem(POOL_STATS_CACHE_KEY);
-    if (!raw) return false;
-    const parsed = JSON.parse(raw) as CachedPoolStatsPayload;
-    if (!parsed?.cachedAt) return false;
-    return Date.now() - parsed.cachedAt < POOL_STATS_CACHE_TTL_MS;
-  } catch {
-    return false;
-  }
+  const payload = readCachePayload();
+  if (!payload?.cachedAt) return false;
+  return Date.now() - payload.cachedAt < POOL_STATS_CACHE_TTL_MS;
 };
 
 export const writeCachedPoolStats = (stats: PoolStats) => {
   try {
     const payload: CachedPoolStatsPayload = { stats, cachedAt: Date.now() };
-    sessionStorage.setItem(POOL_STATS_CACHE_KEY, JSON.stringify(payload));
+    localStorage.setItem(POOL_STATS_CACHE_KEY, JSON.stringify(payload));
   } catch {
-    // sessionStorage may be unavailable
+    // Storage may be unavailable (private mode / quota).
   }
 };
 
@@ -173,174 +153,58 @@ const getPrices = async (
   return prices;
 };
 
-const decodeU64 = (data: Buffer, offset: number) => ({
-  value: data.readBigUInt64LE(offset),
-  nextOffset: offset + 8,
-});
-
-const decodePublicKey = (data: Buffer, offset: number) => ({
-  value: new PublicKey(data.subarray(offset, offset + 32)).toString(),
-  nextOffset: offset + 32,
-});
-
-const decodeSwapEvent = (data: Buffer): DecodedSwapEvent | null => {
-  if (
-    data.length < 154 ||
-    !data.subarray(0, SWAP_EVENT_DISCRIMINATOR.length).equals(SWAP_EVENT_DISCRIMINATOR)
-  ) {
-    return null;
-  }
-
-  let offset = 8;
-  offset += 32; // pool_id
-  offset += 8; // input_vault_before
-  offset += 8; // output_vault_before
-
-  const inputAmount = decodeU64(data, offset);
-  offset = inputAmount.nextOffset;
-  offset += 8; // output_amount
-  offset += 8; // input_transfer_fee
-  offset += 8; // output_transfer_fee
-  offset += 1; // base_input
-
-  const inputMint = decodePublicKey(data, offset);
-
-  return {
-    inputAmount: inputAmount.value.toString(),
-    inputMint: inputMint.value,
-  };
-};
-
-const getSwapEventsFromTransaction = (transaction: ParsedTransactionWithMeta | null) => {
-  const logs = transaction?.meta?.logMessages ?? [];
-  const events: DecodedSwapEvent[] = [];
-
-  logs.forEach((log) => {
-    const encodedData = log.startsWith('Program data: ')
-      ? log.slice('Program data: '.length)
-      : null;
-
-    if (!encodedData) {
-      return;
-    }
-
-    try {
-      const event = decodeSwapEvent(Buffer.from(encodedData, 'base64'));
-      if (event) {
-        events.push(event);
-      }
-    } catch {
-      // Non-Kedolik program data logs can share the same prefix.
-    }
-  });
-
-  return events;
-};
-
-const fetchRecentProgramTransactions = async (connection: Connection) => {
-  const cutoff = Math.floor(Date.now() / 1000) - DAY_SECONDS;
-  const signatures: string[] = [];
-  let before: string | undefined;
-  let reached24hBoundary = false;
-
-  while (!reached24hBoundary) {
-    const options: SignaturesForAddressOptions = {
-      limit: SIGNATURE_PAGE_SIZE,
-      before,
-    };
-    const batch = await connection.getSignaturesForAddress(PROGRAM_ID, options, 'confirmed');
-
-    if (batch.length === 0) {
-      reached24hBoundary = true;
-      break;
-    }
-
-    for (const item of batch) {
-      if (item.blockTime && item.blockTime < cutoff) {
-        reached24hBoundary = true;
-        break;
-      }
-
-      if (!item.err && item.blockTime && item.blockTime >= cutoff) {
-        signatures.push(item.signature);
-      }
-    }
-
-    if (reached24hBoundary || batch.length < SIGNATURE_PAGE_SIZE) {
-      reached24hBoundary = true;
-      break;
-    }
-
-    before = batch[batch.length - 1].signature;
-  }
-
-  const transactions: Array<ParsedTransactionWithMeta | null> = [];
-
-  for (let index = 0; index < signatures.length; index += TRANSACTION_BATCH_SIZE) {
-    const batch = signatures.slice(index, index + TRANSACTION_BATCH_SIZE);
-    const parsed = await connection.getParsedTransactions(batch, {
-      commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
-    });
-    transactions.push(...parsed);
-  }
-
-  return {
-    transactions,
-    scannedTransactions: signatures.length,
-    reached24hBoundary,
-  };
-};
-
-const fetchVolume24h = async (
-  connection: Connection,
+const priceRawTotals = (
+  rawByMint: Record<string, string>,
   prices: Map<string, number>,
   decimalsByMint: Map<string, number>
 ) => {
-  const { transactions, scannedTransactions, reached24hBoundary } =
-    await fetchRecentProgramTransactions(connection);
-  let volume24hUsd = 0;
-  let directVolume24hUsd = 0;
-  let aggregatorVolume24hUsd = 0;
-  let swapEvents24h = 0;
-  let unpricedVolumeEvents = 0;
+  let volumeUsd = 0;
+  let unpricedMints = 0;
 
-  transactions.forEach((transaction) => {
-    const events = getSwapEventsFromTransaction(transaction);
-    let transactionVolumeUsd = 0;
-    let transactionUnpricedEvents = 0;
+  Object.entries(rawByMint).forEach(([mint, rawAmount]) => {
+    const decimals = decimalsByMint.get(mint);
+    const price = prices.get(mint) ?? 0;
+    const usd = rawToUiAmount(rawAmount, decimals) * price;
 
-    events.forEach((event) => {
-      swapEvents24h += 1;
-      const decimals = decimalsByMint.get(event.inputMint);
-      const price = prices.get(event.inputMint) ?? 0;
-      const eventVolumeUsd = rawToUiAmount(event.inputAmount, decimals) * price;
-
-      if (eventVolumeUsd > 0) {
-        transactionVolumeUsd += eventVolumeUsd;
-      } else {
-        transactionUnpricedEvents += 1;
-      }
-    });
-
-    volume24hUsd += transactionVolumeUsd;
-    unpricedVolumeEvents += transactionUnpricedEvents;
-
-    if (events.length > 1) {
-      aggregatorVolume24hUsd += transactionVolumeUsd;
+    if (usd > 0) {
+      volumeUsd += usd;
     } else {
-      directVolume24hUsd += transactionVolumeUsd;
+      unpricedMints += 1;
     }
   });
 
+  return { volumeUsd, unpricedMints };
+};
+
+const fetchVolume24h = async (
+  prices: Map<string, number>,
+  decimalsByMint: Map<string, number>
+) => {
+  const remote = await fetchSwapVolumeByMint();
+
+  if (!remote) {
+    return {
+      volume24hUsd: 0,
+      directVolume24hUsd: 0,
+      aggregatorVolume24hUsd: 0,
+      swapEvents24h: 0,
+      scannedTransactions: 0,
+      reached24hBoundary: false,
+      unpricedVolumeEvents: 0,
+    };
+  }
+
+  const total = priceRawTotals(remote.rawInputByMint, prices, decimalsByMint);
+  const aggregator = priceRawTotals(remote.aggregatorRawInputByMint, prices, decimalsByMint);
+
   return {
-    volume24hUsd,
-    directVolume24hUsd,
-    aggregatorVolume24hUsd,
-    swapEvents24h,
-    scannedTransactions,
-    reached24hBoundary,
-    unpricedVolumeEvents,
+    volume24hUsd: total.volumeUsd,
+    directVolume24hUsd: Math.max(0, total.volumeUsd - aggregator.volumeUsd),
+    aggregatorVolume24hUsd: aggregator.volumeUsd,
+    swapEvents24h: remote.swapEvents24h,
+    scannedTransactions: remote.scannedTransactions,
+    reached24hBoundary: remote.reached24hBoundary,
+    unpricedVolumeEvents: total.unpricedMints,
   };
 };
 
@@ -399,7 +263,7 @@ export const fetchPoolStats = async (
     })
   );
 
-  const volume = await fetchVolume24h(connection, prices, decimalsByMint).catch(() => ({
+  const volume = await fetchVolume24h(prices, decimalsByMint).catch(() => ({
     volume24hUsd: 0,
     directVolume24hUsd: 0,
     aggregatorVolume24hUsd: 0,
