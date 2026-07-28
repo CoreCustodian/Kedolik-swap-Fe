@@ -5,7 +5,7 @@ import { fetchAllBalances, TokenBalance } from '../utils/balances';
 import { fetchPools, getLpMint } from '../utils/amm';
 import { getLocalTokenLogo } from '../config/tokens';
 import { getExplorerUrl, getExplorerAccountUrl } from '../config/addresses';
-import { getCachedBalance, clearBalanceCache, debounce } from '../utils/balanceCache';
+import { batchGetBalances, clearBalanceCache, debounce } from '../utils/balanceCache';
 import { PublicKey } from '@solana/web3.js';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 
@@ -138,54 +138,32 @@ const Profile = () => {
           token1Mint: string;
         }> = [];
         
-        // Batch fetch LP balances using cached balance fetcher
-        // This significantly reduces RPC calls
-        const balancePromises = pools.map(async (pool) => {
-          try {
-            const lpMint = getLpMint(pool.address);
-            // Use cached balance fetcher (10s cache, prevents duplicate requests)
-            const lpBalance = await getCachedBalance(connection, lpMint, publicKey);
-            
-            if (lpBalance > 0) {
-              const token0 = tokens.find(t => t.mint.equals(pool.token0Mint));
-              const token1 = tokens.find(t => t.mint.equals(pool.token1Mint));
-              
-              const token0Info = getTokenByMint(pool.token0Mint);
-              const token1Info = getTokenByMint(pool.token1Mint);
-              
-              lpBalances.push({
-                poolAddress: pool.address.toString(),
-                lpMint: lpMint.toString(),
-                token0Symbol: token0?.symbol || 'Unknown',
-                token1Symbol: token1?.symbol || 'Unknown',
-                lpBalance,
-                token0Mint: pool.token0Mint.toString(),
-                token1Mint: pool.token1Mint.toString(),
-              });
-              
-              console.log(`✅ Profile: Found LP position:`, {
-                pool: `${token0?.symbol || 'Unknown'}/${token1?.symbol || 'Unknown'}`,
-                poolAddress: pool.address.toString(),
-                lpMint: lpMint.toString(),
-                lpBalance: `${lpBalance.toFixed(6)} LP tokens`,
-                token0: {
-                  symbol: token0?.symbol || 'Unknown',
-                  mint: pool.token0Mint.toString(),
-                  logoURI: token0Info?.logoURI || getLocalTokenLogo(pool.token0Mint),
-                },
-                token1: {
-                  symbol: token1?.symbol || 'Unknown',
-                  mint: pool.token1Mint.toString(),
-                  logoURI: token1Info?.logoURI || getLocalTokenLogo(pool.token1Mint),
-                },
-              });
-            }
-          } catch (error) {
-            // Account might not exist - this is expected, don't log to avoid spam
-          }
+        const poolEntries = pools.map((pool) => ({ pool, lpMint: getLpMint(pool.address) }));
+        const batchedBalances = await batchGetBalances(
+          connection,
+          poolEntries.map(({ lpMint }) => ({ mint: lpMint, wallet: publicKey })),
+        );
+        const walletKey = publicKey.toString();
+
+        poolEntries.forEach(({ pool, lpMint }) => {
+          const lpBalance =
+            batchedBalances.get(`${lpMint.toString()}-${walletKey}`) ?? 0;
+          if (lpBalance <= 0) return;
+
+          const token0 = tokens.find(t => t.mint.equals(pool.token0Mint));
+          const token1 = tokens.find(t => t.mint.equals(pool.token1Mint));
+
+          lpBalances.push({
+            poolAddress: pool.address.toString(),
+            lpMint: lpMint.toString(),
+            token0Symbol: token0?.symbol || 'Unknown',
+            token1Symbol: token1?.symbol || 'Unknown',
+            lpBalance,
+            token0Mint: pool.token0Mint.toString(),
+            token1Mint: pool.token1Mint.toString(),
+          });
         });
-        
-        await Promise.all(balancePromises);
+
         setLpTokens(lpBalances);
         console.log(`✅ Profile: Loaded ${lpBalances.length} LP positions`);
       } catch (error) {

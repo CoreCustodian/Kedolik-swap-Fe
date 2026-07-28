@@ -8,6 +8,9 @@
     },
     "api/pool-swap-volume.ts": {
       "maxDuration": 60
+    },
+    "api/refresh-pool-swap-volume.ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

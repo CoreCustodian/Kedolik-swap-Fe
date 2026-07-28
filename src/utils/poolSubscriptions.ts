@@ -1,9 +1,14 @@
 import { Connection } from '@solana/web3.js';
+import bs58 from 'bs58';
 import { PROGRAM_ID } from '../config/addresses';
 import { hasWebsocketEndpoint } from '../config/rpc';
 import { clearPoolCache } from './amm';
 import { dispatchPoolsInvalidation } from './refreshEvents';
 import { onPageVisibilityChange } from './visibilityControl';
+
+const POOL_STATE_DISCRIMINATOR = bs58.encode(
+  Uint8Array.from([247, 237, 227, 245, 215, 195, 222, 70]),
+);
 
 /**
  * One `programSubscribe` covers every pool: swaps, deposits and withdrawals all
@@ -50,7 +55,12 @@ export const subscribePoolUpdates = (connection: Connection): (() => void) => {
       subscriptionId = connection.onProgramAccountChange(
         PROGRAM_ID,
         () => schedule(),
-        'confirmed'
+        {
+          commitment: 'confirmed',
+          // Ignore config and other program-owned accounts. Only pool state
+          // mutations should invalidate the pool list.
+          filters: [{ memcmp: { offset: 0, bytes: POOL_STATE_DISCRIMINATOR } }],
+        },
       );
     } catch (error) {
       console.warn('Pool subscription failed, falling back to cache TTL:', error);

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { getTokenAccounts, getSolBalance, getTransactionHistory } from '../utils/solana';
+import { getTokenAccounts, getSolBalance } from '../utils/solana';
 import { getTokenPrices, getTokenMetadata } from '../utils/prices';
 import { SOL_MINT } from '../config/addresses';
 import { onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
@@ -42,8 +42,6 @@ interface UserContextType {
 }
 
 const MIN_REFRESH_INTERVAL_MS = 20_000;
-const TX_HISTORY_TTL_MS = 2 * 60 * 1000;
-
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export const useUser = () => {
@@ -62,7 +60,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const hasLoadedRef = useRef(false);
   const lastFetchAtRef = useRef(0);
   const inflightRef = useRef<Promise<void> | null>(null);
-  const txCacheRef = useRef<{ transactions: Transaction[]; fetchedAt: number } | null>(null);
 
   const fetchUserData = useCallback(async (force = false) => {
     if (!publicKey || !connected) {
@@ -147,37 +144,15 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         return sum + parseFloat(asset.valueUsd);
       }, 0);
       
-      // 6. Get transaction history (directly from blockchain!)
-      // getSignaturesForAddress is one of the priciest calls, so it gets its own
-      // longer TTL rather than riding along with every balance refresh.
-      const txCache = txCacheRef.current;
-      let recentTransactions: Transaction[];
-
-      if (txCache && Date.now() - txCache.fetchedAt < TX_HISTORY_TTL_MS) {
-        recentTransactions = txCache.transactions;
-      } else {
-        const signatures = await getTransactionHistory(connection, publicKey, 20);
-        recentTransactions = signatures.map((sig) => ({
-          id: sig.signature,
-          type: 'swap' as const,
-          tokenIn: 'SOL',
-          tokenOut: 'USDC',
-          amountIn: '0.0',
-          amountOut: '0.0',
-          timestamp: (sig.blockTime || 0) * 1000,
-          signature: sig.signature,
-          status: sig.err ? ('failed' as const) : ('success' as const),
-        }));
-        txCacheRef.current = { transactions: recentTransactions, fetchedAt: Date.now() };
-      }
-      
-      // 7. Set user data
+      // Transaction history is intentionally not fetched by this global provider.
+      // The Profile page loads it on demand; doing it here charged every connected
+      // visitor for getSignaturesForAddress regardless of the route they viewed.
       setUserData({
         totalValue: totalValue.toFixed(2),
         totalPnL: 0,
         pnl24h: 0,
         assets: assets.filter(a => parseFloat(a.valueUsd) > 0.01),
-        recentTransactions: recentTransactions.slice(0, 10)
+        recentTransactions: []
       });
       hasLoadedRef.current = true;
       
@@ -203,7 +178,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     hasLoadedRef.current = false;
     lastFetchAtRef.current = 0;
-    txCacheRef.current = null;
     void fetchUserData(true);
   }, [publicKey, connected, connection, fetchUserData]);
 
@@ -226,7 +200,6 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const refreshUserData = async () => {
     hasLoadedRef.current = false;
     lastFetchAtRef.current = 0;
-    txCacheRef.current = null;
     await fetchUserData(true);
   };
 

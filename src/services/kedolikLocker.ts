@@ -17,6 +17,7 @@ import {
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import bs58 from 'bs58';
 import {
   KEDOLIK_STAKE_LOCK_PROGRAM_ID,
 } from '../config/kedolikStakeLockV1';
@@ -367,13 +368,17 @@ const fetchTokenLockState = async (connection: Connection, lockAddress: PublicKe
 };
 
 const fetchTokenLockAccounts = async (connection: Connection) =>
-  (await connection.getProgramAccounts(KEDOLIK_STAKE_LOCK_PROGRAM_ID, {
+  connection.getProgramAccounts(KEDOLIK_STAKE_LOCK_PROGRAM_ID, {
     commitment: 'confirmed',
-  })).filter(({ account }) =>
-    Buffer.from(account.data)
-      .subarray(0, TOKEN_LOCK_DISCRIMINATOR.length)
-      .equals(TOKEN_LOCK_DISCRIMINATOR)
-  );
+    filters: [
+      {
+        memcmp: {
+          offset: 0,
+          bytes: bs58.encode(TOKEN_LOCK_DISCRIMINATOR),
+        },
+      },
+    ],
+  });
 
 const sendAndConfirmLockerTransaction = async (
   connection: Connection,

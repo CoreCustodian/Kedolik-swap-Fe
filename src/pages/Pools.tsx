@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getPoolCreationFee } from '../utils/amm';
-import { getCachedBalance, debounce } from '../utils/balanceCache';
+import { batchGetBalances, getCachedBalance, debounce } from '../utils/balanceCache';
 import { dispatchBalanceInvalidation, onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
 import { subscribePoolUpdates } from '../utils/poolSubscriptions';
 import { isPageVisible } from '../utils/visibilityControl';
@@ -127,25 +127,24 @@ const Pools = () => {
     // Debounce to prevent excessive calls when pools array updates
     const fetchUserLpBalances = debounce(async () => {
       const balances = new Map<string, number>();
-      
-      // Batch fetch LP balances using cached balance fetcher
-      // This reduces RPC calls significantly
-      const balancePromises = pools.map(async (pool) => {
-        try {
-          const lpMint = getLpMint(pool.address);
-          // Use cached balance fetcher (10s cache, prevents duplicate requests)
-          const balance = await getCachedBalance(connection, lpMint, publicKey);
-          
-          if (balance > 0) {
-            balances.set(pool.address.toString(), balance);
-          }
-        } catch (error) {
-          // User doesn't have LP tokens for this pool - this is expected
-          // Don't log to avoid console spam
+
+      const poolEntries = pools.map((pool) => ({
+        pool,
+        lpMint: getLpMint(pool.address),
+      }));
+      const batched = await batchGetBalances(
+        connection,
+        poolEntries.map(({ lpMint }) => ({ mint: lpMint, wallet: publicKey })),
+      );
+      const walletKey = publicKey.toString();
+
+      poolEntries.forEach(({ pool, lpMint }) => {
+        const balance = batched.get(`${lpMint.toString()}-${walletKey}`) ?? 0;
+        if (balance > 0) {
+          balances.set(pool.address.toString(), balance);
         }
       });
-      
-      await Promise.all(balancePromises);
+
       setUserLpBalances(balances);
     }, 500); // 500ms debounce
     
@@ -231,7 +230,9 @@ const Pools = () => {
   }, [connection, pools.length]);
 
   const totalTVL = poolStats?.totalTvlUsd ?? 0;
-  const dexVolume24h = poolStats?.volume24hUsd ?? 0;
+  // Aggregator trades are added from the dedicated trade store below. Use only
+  // direct on-chain volume here so routed trades are not counted twice.
+  const dexVolume24h = poolStats?.directVolume24hUsd ?? 0;
   const dexSwaps24h = poolStats?.swapEvents24h ?? 0;
   const aggregatorVolume24h = aggregatorVolume?.volume24hUsd ?? 0;
   const aggregatorSwaps24h = aggregatorVolume?.tradeCount24h ?? 0;

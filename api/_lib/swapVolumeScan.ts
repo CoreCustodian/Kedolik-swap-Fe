@@ -163,12 +163,28 @@ const scanSwapVolume = async (): Promise<SwapVolumeByMint> => {
 
 let inflight: Promise<SwapVolumeByMint> | null = null;
 
+const emptySwapVolume = (): SwapVolumeByMint => ({
+  rawInputByMint: {},
+  aggregatorRawInputByMint: {},
+  swapEvents24h: 0,
+  aggregatorSwapEvents24h: 0,
+  scannedTransactions: 0,
+  reached24hBoundary: false,
+  computedAt: 0,
+});
+
 export const getSwapVolume24h = async (force = false): Promise<SwapVolumeByMint> => {
+  const cached = await readJsonBlob<SwapVolumeByMint>(BLOB_PATHNAME);
+
+  // Public page requests are cache-only. Previously, every stale/missed Blob read
+  // started a chain scan, so cold starts and missing Blob configuration could turn
+  // traffic directly into getSignaturesForAddress quota consumption.
   if (!force) {
-    const cached = await readJsonBlob<SwapVolumeByMint>(BLOB_PATHNAME);
-    if (cached && Date.now() - cached.computedAt < SWAP_VOLUME_CACHE_TTL_MS) {
-      return cached;
-    }
+    return cached ?? emptySwapVolume();
+  }
+
+  if (cached && Date.now() - cached.computedAt < SWAP_VOLUME_CACHE_TTL_MS) {
+    return cached;
   }
 
   // Collapse concurrent cold requests on the same warm lambda into one scan.

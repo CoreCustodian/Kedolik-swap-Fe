@@ -1,7 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { WalletProvider } from './contexts/WalletProvider';
-import { UserProvider } from './contexts/UserContext';
 import { ConfigProvider } from './contexts/ConfigContext';
 import Navbar from './components/Navbar';
 import Home from './pages/Home';
@@ -18,8 +17,7 @@ import Footer from './components/Footer';
 function App() {
   return (
     <WalletProvider>
-      <UserProvider>
-        <ConfigProvider>
+      <ConfigProvider>
           <Router>
           <div className="min-h-screen bg-gradient-dark">
             <Navbar />
@@ -65,8 +63,7 @@ function App() {
             }}
           />
         </Router>
-        </ConfigProvider>
-      </UserProvider>
+      </ConfigProvider>
     </WalletProvider>
   );
 }
