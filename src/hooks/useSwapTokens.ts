@@ -16,6 +16,72 @@ const TRENDING_CACHE_MS = 60 * 60 * 1000;
 
 let aggregatorCache: { tokens: TokenInfo[]; timestamp: number } | null = null;
 
+// Tokens the user has actually interacted with (selected, looked up, or swapped
+// into) are persisted so they stay resolvable after a page refresh. Without this
+// a token that isn't in the default/trending lists would show as a truncated
+// address and vanish from the picker once the in-memory state is wiped.
+const REMEMBERED_TOKENS_KEY = 'kedolik-remembered-tokens';
+const MAX_PERSISTED_TOKENS = 100;
+
+interface StoredTokenInfo {
+  mint: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+  logoURI?: string;
+}
+
+const loadPersistedTokens = (): TokenInfo[] => {
+  try {
+    const raw = localStorage.getItem(REMEMBERED_TOKENS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as StoredTokenInfo[];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((entry) => entry && typeof entry.mint === 'string')
+      .map((entry) => ({
+        mint: new PublicKey(entry.mint),
+        symbol: entry.symbol,
+        name: entry.name,
+        decimals: entry.decimals,
+        logoURI: entry.logoURI,
+      }));
+  } catch {
+    return [];
+  }
+};
+
+// Read-modify-write so we only ever persist user-driven single tokens, never the
+// bulk trending list (which reloads on its own and would bloat localStorage).
+const addPersistedToken = (token: TokenInfo): void => {
+  try {
+    // Don't persist unresolved placeholders — they'd just show junk after reload.
+    if (!token.symbol || token.name === 'Loading token...') return;
+    const mintStr = token.mint.toString();
+    const existing = loadPersistedTokens();
+    if (existing.some((entry) => entry.mint.toString() === mintStr)) return;
+    const next: StoredTokenInfo[] = [
+      ...existing.map((entry) => ({
+        mint: entry.mint.toString(),
+        symbol: entry.symbol,
+        name: entry.name,
+        decimals: entry.decimals,
+        logoURI: entry.logoURI,
+      })),
+      {
+        mint: mintStr,
+        symbol: token.symbol,
+        name: token.name,
+        decimals: token.decimals,
+        logoURI: token.logoURI,
+      },
+    ].slice(-MAX_PERSISTED_TOKENS);
+    localStorage.setItem(REMEMBERED_TOKENS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore quota / private mode errors
+  }
+};
+
 /**
  * Swap token list: Kedolik remote config + Jupiter + OKX aggregator tokens.
  */
@@ -24,9 +90,13 @@ export function useSwapTokens() {
   const remote = useRemoteTokens('swap');
   const [aggregatorTokens, setAggregatorTokens] = useState<TokenInfo[]>([]);
   const [isLoadingAggregators, setIsLoadingAggregators] = useState(false);
-  const [rememberedTokens, setRememberedTokens] = useState<TokenInfo[]>([]);
+  const [rememberedTokens, setRememberedTokens] = useState<TokenInfo[]>(() =>
+    loadPersistedTokens()
+  );
 
   const rememberToken = useCallback((token: TokenInfo) => {
+    // User-driven addition — persist it so it survives a refresh.
+    addPersistedToken(token);
     setRememberedTokens((prev) => {
       if (prev.some((entry) => entry.mint.equals(token.mint))) return prev;
       return [...prev, token];

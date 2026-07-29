@@ -19,7 +19,7 @@ import {
   WSOL_MINT,
   isNativeSOL,
 } from '../utils/amm';
-import { formatTokenBalance, debounce, batchGetBalances } from '../utils/balanceCache';
+import { formatTokenBalance, debounce, batchGetBalances, clearBalanceCache } from '../utils/balanceCache';
 import { dispatchSwapSuccess } from '../utils/refreshEvents';
 import { subscribeWalletBalanceUpdates } from '../utils/walletBalanceSubscriptions';
 import { KEDOLOG_CONFIG } from '../config/fees';
@@ -396,6 +396,43 @@ const Swap = () => {
   
   const removeToast = (id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  // After a swap the RPC can lag several seconds behind confirmation (especially
+  // for a freshly created destination token account), so a single refresh often
+  // shows stale balances until the user reloads. Poll a few times (cache-bypassed)
+  // until the destination balance reflects the incoming tokens.
+  const refreshBalancesAfterSwap = (
+    fromMint: PublicKey,
+    toMint: PublicKey,
+    previousToBalance: number
+  ) => {
+    if (!publicKey) return;
+    const wallet = publicKey;
+    let attempts = 0;
+    const maxAttempts = 8;
+
+    const poll = async () => {
+      attempts += 1;
+      try {
+        clearBalanceCache(wallet);
+        const [fromBal, toBal] = await Promise.all([
+          getTokenBalance(connection, fromMint, wallet),
+          getTokenBalance(connection, toMint, wallet),
+        ]);
+        setFromBalance(fromBal);
+        setToBalance(toBal);
+        // Stop early once the destination balance reflects the swap.
+        if (toBal !== previousToBalance) return;
+      } catch (error) {
+        console.warn('Post-swap balance refresh attempt failed:', error);
+      }
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 1500);
+      }
+    };
+
+    void poll();
   };
   
   // Fetch token balances (cancellable — avoids stale results when switching tokens/direction)
@@ -1498,29 +1535,20 @@ const Swap = () => {
       // Clear caches and trigger refresh after successful swap
       console.log('🔄 Clearing cache and triggering pool refresh after successful swap');
       clearPoolCache(); // Clear cache to force fresh fetch
+      const previousToBalance = toBalance;
+      // Keep the swapped tokens resolvable + easy to find after a refresh.
+      rememberToken(fromToken);
+      rememberToken(toToken);
       if (publicKey) dispatchSwapSuccess(publicKey.toString());
       setPoolRefreshTrigger(prev => prev + 1);
-      
-      // Refresh balances and pool reserves after successful swap
+
+      // Poll balances until the RPC catches up to the confirmed swap.
+      refreshBalancesAfterSwap(fromToken.mint, toToken.mint, previousToBalance);
+
+      // Refresh pool reserves once the transaction finalizes.
       setTimeout(() => {
-        console.log('⏱️ Delayed refresh - updating balances and pool reserves');
-        
-        // Trigger balance refresh by re-fetching
-        const refreshBalances = async () => {
-          if (!publicKey) return;
-          
-          // Fetch balances (handles both native SOL and SPL tokens)
-          const fromBal = await getTokenBalance(connection, fromToken.mint, publicKey);
-          setFromBalance(fromBal);
-          
-          const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
-          setToBalance(toBal);
-        };
-        refreshBalances();
-        
-        // Also trigger another pool refresh to ensure we have latest data
         setPoolRefreshTrigger(prev => prev + 1);
-      }, 2000); // Wait 2 seconds for transaction to finalize
+      }, 2000);
       
       // Mark transaction as complete after a delay to prevent rapid re-clicking
       // Longer delay for multi-hop to ensure state updates
@@ -1561,18 +1589,15 @@ const Swap = () => {
         
         // Refresh data
         clearPoolCache();
+        const previousToBalance = toBalance;
+        rememberToken(fromToken);
+        rememberToken(toToken);
         if (publicKey) dispatchSwapSuccess(publicKey.toString());
         setPoolRefreshTrigger(prev => prev + 1);
-        
+
+        refreshBalancesAfterSwap(fromToken.mint, toToken.mint, previousToBalance);
+
         setTimeout(() => {
-          const refreshBalances = async () => {
-            if (!publicKey) return;
-            const fromBal = await getTokenBalance(connection, fromToken.mint, publicKey);
-            setFromBalance(fromBal);
-            const toBal = await getTokenBalance(connection, toToken.mint, publicKey);
-            setToBalance(toBal);
-          };
-          refreshBalances();
           setPoolRefreshTrigger(prev => prev + 1);
         }, 2000);
         
