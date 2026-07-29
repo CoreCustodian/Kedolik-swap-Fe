@@ -138,6 +138,9 @@ const Swap = () => {
   const toMintRef = useRef(toToken.mint.toString());
   const fromTokenRef = useRef(fromToken);
   const toTokenRef = useRef(toToken);
+  // Mints we've already tried (and failed) to resolve, so we don't re-run the
+  // aggregator lookup on every render — that caused constant flicker.
+  const resolveAttemptsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     fromMintRef.current = fromToken.mint.toString();
@@ -271,13 +274,20 @@ const Swap = () => {
     if (!isInitializedRef.current || !aggregatorsEnabled) return;
 
     let cancelled = false;
+    const isResolved = (token: TokenInfo): boolean => token.name !== 'Loading token...';
+
     const resolveUnknownMints = async () => {
       const fromMint = fromMintRef.current;
       const toMint = toMintRef.current;
-      const needsFrom = !resolveTokenByMintString(fromMint);
-      const needsTo = !resolveTokenByMintString(toMint);
+      const attempts = resolveAttemptsRef.current;
+      // Only look a mint up if the picker can't resolve it AND we haven't already tried.
+      const needsFrom = !resolveTokenByMintString(fromMint) && !attempts.has(fromMint);
+      const needsTo = !resolveTokenByMintString(toMint) && !attempts.has(toMint);
 
       if (!needsFrom && !needsTo) return;
+
+      if (needsFrom) attempts.add(fromMint);
+      if (needsTo) attempts.add(toMint);
 
       const [fromLookup, toLookup] = await Promise.all([
         needsFrom ? lookupTokenByMint(fromMint) : Promise.resolve(null),
@@ -285,8 +295,14 @@ const Swap = () => {
       ]);
 
       if (cancelled) return;
-      if (fromLookup) setFromToken(fromLookup);
-      if (toLookup) setToToken(toLookup);
+      // Only upgrade to a genuinely resolved token; never swap in a fresh
+      // placeholder (a new object identity would re-trigger effects and flicker).
+      if (fromLookup && isResolved(fromLookup) && fromMintRef.current === fromMint) {
+        setFromToken(fromLookup);
+      }
+      if (toLookup && isResolved(toLookup) && toMintRef.current === toMint) {
+        setToToken(toLookup);
+      }
     };
 
     resolveUnknownMints();

@@ -1,10 +1,12 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { getAssociatedTokenAddressSync, unpackAccount } from '@solana/spl-token';
+import { getAssociatedTokenAddressSync, unpackAccount, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import {
   getCachedMintDecimals,
+  getCachedMintProgram,
   getTokenBalance,
   isNativeSOL,
   primeMintDecimals,
+  primeMintProgram,
 } from './amm';
 
 /**
@@ -160,25 +162,32 @@ export const batchGetBalances = async (
     return results;
   }
 
-  const ataEntries = splPending.map((entry) => {
-    const ata = getAssociatedTokenAddressSync(entry.mint, entry.wallet);
-    return { ...entry, ata };
-  });
-
-  // Decimals are immutable, so only look up mints we've never seen this session.
+  // Decimals + owning token program are immutable, so only look up mints we've
+  // never seen this session. We need the program id to derive the right ATA for
+  // Token-2022 mints (otherwise their balance always reads 0).
   const uniqueMints = [...new Map(splPending.map((e) => [e.mint.toString(), e.mint])).values()];
   const unknownMints = uniqueMints.filter(
-    (mint) => getCachedMintDecimals(mint.toString()) === undefined,
+    (mint) =>
+      getCachedMintDecimals(mint.toString()) === undefined ||
+      getCachedMintProgram(mint.toString()) === undefined,
   );
 
   for (let i = 0; i < unknownMints.length; i += 100) {
     const chunk = unknownMints.slice(i, i + 100);
     const infos = await connection.getMultipleAccountsInfo(chunk, 'confirmed');
     chunk.forEach((mint, index) => {
-      const data = infos[index]?.data;
+      const info = infos[index];
+      const data = info?.data;
       primeMintDecimals(mint.toString(), data && data.length >= 45 ? data[44] : 9);
+      primeMintProgram(mint.toString(), info?.owner ?? TOKEN_PROGRAM_ID);
     });
   }
+
+  const ataEntries = splPending.map((entry) => {
+    const programId = getCachedMintProgram(entry.mint.toString()) ?? TOKEN_PROGRAM_ID;
+    const ata = getAssociatedTokenAddressSync(entry.mint, entry.wallet, true, programId);
+    return { ...entry, ata, programId };
+  });
 
   for (let i = 0; i < ataEntries.length; i += 100) {
     const chunk = ataEntries.slice(i, i + 100);
@@ -192,7 +201,7 @@ export const batchGetBalances = async (
       let balance = 0;
       if (account?.data) {
         try {
-          const unpacked = unpackAccount(entry.ata, account);
+          const unpacked = unpackAccount(entry.ata, account, account.owner);
           const decimals = getCachedMintDecimals(entry.mint.toString()) ?? 9;
           balance = Number(unpacked.amount) / Math.pow(10, decimals);
         } catch {

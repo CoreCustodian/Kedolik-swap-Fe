@@ -31,6 +31,10 @@ interface StoredTokenInfo {
   logoURI?: string;
 }
 
+// A placeholder is a token we haven't resolved real metadata for yet.
+const isPlaceholderToken = (token: TokenInfo): boolean =>
+  !token || !token.symbol || token.name === 'Loading token...';
+
 const loadPersistedTokens = (): TokenInfo[] => {
   try {
     const raw = localStorage.getItem(REMEMBERED_TOKENS_KEY);
@@ -56,7 +60,7 @@ const loadPersistedTokens = (): TokenInfo[] => {
 const addPersistedToken = (token: TokenInfo): void => {
   try {
     // Don't persist unresolved placeholders — they'd just show junk after reload.
-    if (!token.symbol || token.name === 'Loading token...') return;
+    if (isPlaceholderToken(token)) return;
     const mintStr = token.mint.toString();
     const existing = loadPersistedTokens();
     if (existing.some((entry) => entry.mint.toString() === mintStr)) return;
@@ -95,6 +99,9 @@ export function useSwapTokens() {
   );
 
   const rememberToken = useCallback((token: TokenInfo) => {
+    // Never remember an unresolved placeholder — it would shadow the real token
+    // once the aggregator/remote lists load and leave it stuck as "Loading token…".
+    if (isPlaceholderToken(token)) return;
     // User-driven addition — persist it so it survives a refresh.
     addPersistedToken(token);
     setRememberedTokens((prev) => {
@@ -108,6 +115,7 @@ export function useSwapTokens() {
       const byMint = new Map(prev.map((token) => [token.mint.toString(), token]));
       let changed = false;
       tokensToRemember.forEach((token) => {
+        if (isPlaceholderToken(token)) return;
         const key = token.mint.toString();
         if (!byMint.has(key)) {
           byMint.set(key, token);

@@ -18,6 +18,7 @@ import {
   TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddress,
+  getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createSyncNativeInstruction,
   createCloseAccountInstruction,
@@ -249,29 +250,58 @@ export const isNativeSOL = (mint: PublicKey): boolean => {
   return mint.equals(WSOL_MINT);
 };
 
-// Mint decimals never change, so this cache is permanent for the session.
+// Mint decimals + owning token program never change, so these caches are
+// permanent for the session. The program id matters because Token-2022 mints
+// derive their associated token accounts under a different program — deriving the
+// ATA with the classic program returns an address that doesn't exist, which made
+// balances of Token-2022 tokens always read as 0.
 const mintDecimalsCache = new Map<string, number>();
+const mintProgramCache = new Map<string, PublicKey>();
+
+const readMintInfo = async (
+  connection: Connection,
+  mint: PublicKey
+): Promise<{ decimals: number; programId: PublicKey }> => {
+  const key = mint.toString();
+  const info = await connection.getAccountInfo(mint, 'confirmed');
+  const decimals = info?.data && info.data.length >= 45 ? info.data.readUInt8(44) : 9;
+  const programId = info?.owner ?? TOKEN_PROGRAM_ID;
+  mintDecimalsCache.set(key, decimals);
+  mintProgramCache.set(key, programId);
+  return { decimals, programId };
+};
 
 export const getMintDecimals = async (
   connection: Connection,
   mint: PublicKey
 ): Promise<number> => {
-  const key = mint.toString();
-  const cached = mintDecimalsCache.get(key);
+  const cached = mintDecimalsCache.get(mint.toString());
   if (cached !== undefined) return cached;
+  return (await readMintInfo(connection, mint)).decimals;
+};
 
-  const info = await connection.getAccountInfo(mint, 'confirmed');
-  const decimals = info?.data && info.data.length >= 45 ? info.data.readUInt8(44) : 9;
-  mintDecimalsCache.set(key, decimals);
-  return decimals;
+export const getMintProgram = async (
+  connection: Connection,
+  mint: PublicKey
+): Promise<PublicKey> => {
+  const cached = mintProgramCache.get(mint.toString());
+  if (cached !== undefined) return cached;
+  return (await readMintInfo(connection, mint)).programId;
 };
 
 export const primeMintDecimals = (mint: string, decimals: number): void => {
   mintDecimalsCache.set(mint, decimals);
 };
 
+export const primeMintProgram = (mint: string, programId: PublicKey): void => {
+  mintProgramCache.set(mint, programId);
+};
+
 export const getCachedMintDecimals = (mint: string): number | undefined =>
   mintDecimalsCache.get(mint);
+
+export const getCachedMintProgram = (mint: string): PublicKey | undefined =>
+  mintProgramCache.get(mint);
 
 /**
  * Creates instructions to wrap native SOL to WSOL
@@ -416,14 +446,17 @@ export const getTokenBalance = async (
     // Single getAccountInfo on the ATA. getTokenAccountBalance throws when the account
     // is missing, and the old getParsedTokenAccountsByOwner fallback made every
     // not-yet-held token cost two calls (the second one expensive).
-    const tokenAccount = await getAssociatedTokenAddress(mint, owner);
+    // Derive the ATA with the mint's actual owning program so Token-2022 balances
+    // resolve correctly instead of always reading 0.
+    const tokenProgram = await getMintProgram(connection, mint);
+    const tokenAccount = getAssociatedTokenAddressSync(mint, owner, true, tokenProgram);
     const accountInfo = await connection.getAccountInfo(tokenAccount, 'confirmed');
 
     if (!accountInfo) {
       return 0;
     }
 
-    const unpacked = unpackAccount(tokenAccount, accountInfo);
+    const unpacked = unpackAccount(tokenAccount, accountInfo, accountInfo.owner);
     const decimals = await getMintDecimals(connection, mint);
     return Number(unpacked.amount) / Math.pow(10, decimals);
   } catch (error) {
