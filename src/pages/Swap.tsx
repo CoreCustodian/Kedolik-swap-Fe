@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
+import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
 import { TokenInfo } from '../config/tokens';
@@ -91,6 +92,7 @@ const Swap = () => {
   // WalletContextState.sendTransaction routes through the wallet's
   // signAndSendTransaction provider method (required by Phantom's Lighthouse guard).
   const wallet = walletCtx;
+  const { setVisible: setWalletModalVisible } = useWalletModal();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
@@ -2490,22 +2492,25 @@ const Swap = () => {
 
             {/* Swap Action Button */}
             <button 
-              onClick={handleSwap}
+              onClick={connected ? handleSwap : () => setWalletModalVisible(true)}
               disabled={
                 !swapEnabled ||
                 maintenanceMode ||
-                !connected || 
-                (!poolReserves && !swapRoute && !isAggregatorProvider(swapProvider)) || 
-                (swapProvider === 'jupiter' && !jupiterOrder) ||
-                (swapProvider === 'okx' && !okxSwap) ||
-                !fromAmount || 
-                !toAmount || 
-                isLoadingQuote || 
-                isLoadingAggregatorQuote ||
-                isLoadingKedologFee ||
-                isTransactionInProgress ||
-                (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001) ||
-                (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee === null && isLoadingKedologFee)
+                // When disconnected the button acts as "Connect Wallet" and must stay
+                // tappable; only apply the swap-readiness checks once connected.
+                (connected && (
+                  (!poolReserves && !swapRoute && !isAggregatorProvider(swapProvider)) || 
+                  (swapProvider === 'jupiter' && !jupiterOrder) ||
+                  (swapProvider === 'okx' && !okxSwap) ||
+                  !fromAmount || 
+                  !toAmount || 
+                  isLoadingQuote || 
+                  isLoadingAggregatorQuote ||
+                  isLoadingKedologFee ||
+                  isTransactionInProgress ||
+                  (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee !== null && estimatedKedologFee.kedologFee < 0.001) ||
+                  (useKedologDiscount && swapProvider === 'kedolik' && estimatedKedologFee === null && isLoadingKedologFee)
+                ))
               }
               className="w-full btn-primary mt-6 text-base sm:text-lg py-3 sm:py-4 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:hover:brightness-100 flex items-center justify-center gap-2"
             >

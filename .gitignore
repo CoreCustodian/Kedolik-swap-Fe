@@ -14,9 +14,6 @@ dist-ssr
 .codex-screenshots/
 
 # Environment variables
-.env
-.env.local
-.env.production
 
 # Local wallet keypairs — never commit
 keypair.json
@@ -24,7 +21,6 @@ keypair.json
 kedolik-fee-keypair.json
 
 # Editor directories and files
-.vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
@@ -35,3 +31,4 @@ kedolik-fee-keypair.json
 *.sw?
 
 .vercel
+config.bat
