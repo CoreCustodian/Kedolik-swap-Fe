@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
 import { TokenInfo } from '../config/tokens';
@@ -85,9 +85,12 @@ const MAX_DEX_PRICE_IMPACT_PERCENT = (() => {
 })();
 
 const Swap = () => {
-  const { connected, publicKey } = useWallet();
+  const walletCtx = useWallet();
+  const { connected, publicKey } = walletCtx;
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
+  // WalletContextState.sendTransaction routes through the wallet's
+  // signAndSendTransaction provider method (required by Phantom's Lighthouse guard).
+  const wallet = walletCtx;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   
@@ -998,7 +1001,7 @@ const Swap = () => {
   // Calculate KEDOLOG fee estimate
   useEffect(() => {
     const calculateFee = async () => {
-      if (!fromAmount || !wallet || !useKedologDiscount) {
+      if (!fromAmount || !publicKey || !useKedologDiscount) {
         setEstimatedKedologFee(null);
         setIsLoadingKedologFee(false);
         return;
@@ -1436,7 +1439,7 @@ const Swap = () => {
         );
         signature = result.signature;
         outputAmount = fromSmallestUnit(
-          result.execute.outputAmountResult || result.order.outAmount,
+          result.order.outAmount,
           toToken.decimals
         );
         const feeEstimate = estimateIntegratorFee(

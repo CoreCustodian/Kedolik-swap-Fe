@@ -1,4 +1,4 @@
-import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   createKedolikStakingService,
@@ -13,11 +13,11 @@ const STAKING_CACHE_MS = 60_000;
 
 export const useKedolikStaking = () => {
   const { connection } = useConnection();
-  const { publicKey } = useWallet();
-  const anchorWallet = useAnchorWallet();
+  const walletCtx = useWallet();
+  const { publicKey } = walletCtx;
   const stakingService = useMemo(
-    () => createKedolikStakingService(connection, anchorWallet ?? null),
-    [anchorWallet, connection],
+    () => createKedolikStakingService(connection, walletCtx ?? null),
+    [walletCtx, connection],
   );
   const [quarries, setQuarries] = useState<KedolikStakingQuarrySummary[]>([]);
   const [isLoading, setIsLoading] = useState(false);

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { fetchPools, PoolInfo, addLiquidity, removeLiquidity, createPool, getLpMint, getPoolCreationFee } from '../utils/amm';
 import { batchGetBalances, getCachedBalance, debounce } from '../utils/balanceCache';
 import { dispatchBalanceInvalidation, onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
@@ -25,7 +25,7 @@ const hasActivePoolLiquidity = (pool: PoolInfo) =>
 const Pools = () => {
   const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
+  const wallet = useWallet();
   
   // Remote config hooks
   const { tokens, isLoading: isLoadingTokens, getTokenByMint } = useRemoteTokens('pools');
@@ -700,7 +700,7 @@ const CreatePoolModal = ({
 }) => {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
-  const wallet = useAnchorWallet();
+  const wallet = useWallet();
   
   // Get default tokens from remote config
   const defaultToken0 = tokens.find(t => t.symbol === 'SOL') || tokens[0];
@@ -731,7 +731,7 @@ const CreatePoolModal = ({
   // Fetch pool creation fee from contract
   useEffect(() => {
     const fetchFee = async () => {
-      if (!wallet) return;
+      if (!publicKey) return;
       
       try {
         const fee = await getPoolCreationFee(connection, wallet);
@@ -1133,7 +1133,7 @@ const AddLiquidityModal = ({
 }) => {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
-  const wallet = useAnchorWallet();
+  const wallet = useWallet();
   
   const [amount0, setAmount0] = useState('');
   const [amount1, setAmount1] = useState('');
@@ -1395,7 +1395,7 @@ const RemoveLiquidityModal = ({
 }) => {
   const { connection } = useConnection();
   const { publicKey } = useWallet();
-  const wallet = useAnchorWallet();
+  const wallet = useWallet();
   
   const [lpAmount, setLpAmount] = useState('');
   const [lpBalance, setLpBalance] = useState(0);

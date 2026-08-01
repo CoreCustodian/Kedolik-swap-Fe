@@ -1,4 +1,3 @@
-import type { AnchorWallet } from '@solana/wallet-adapter-react';
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -10,11 +9,11 @@ import {
   Connection,
   PublicKey,
   SYSVAR_RENT_PUBKEY,
-  SendTransactionError,
   SystemProgram,
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import { sendViaWallet, SendCapableWallet } from '../utils/txSender';
 import {
   KEDOLIK_STAKE_LOCK_ADMIN_CONFIG,
   KEDOLIK_STAKE_LOCK_CURRENT_ADMIN,
@@ -292,12 +291,18 @@ export const getKedolikStakingErrorMessage = (
   return message || fallback;
 };
 
-const assertWallet = (wallet?: AnchorWallet | null): AnchorWallet => {
+const assertWallet = (
+  wallet?: SendCapableWallet | null,
+): SendCapableWallet & { publicKey: PublicKey } => {
   if (!wallet?.publicKey) {
     throw new Error('Connect a wallet before submitting staking transactions.');
   }
 
-  return wallet;
+  if (typeof wallet.sendTransaction !== 'function') {
+    throw new Error('Connected wallet does not support signAndSendTransaction.');
+  }
+
+  return wallet as SendCapableWallet & { publicKey: PublicKey };
 };
 
 const assertU64String = (value: string, label: string) => {
@@ -374,29 +379,16 @@ const ensureAta = async (
 
 const sendAndConfirmStakingTransaction = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   transaction: Transaction
 ) => {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
   transaction.recentBlockhash = blockhash;
-  transaction.feePayer = wallet.publicKey;
+  transaction.feePayer = wallet.publicKey ?? undefined;
 
-  const signedTransaction = await wallet.signTransaction(transaction);
-  let signature: string;
-
-  try {
-    signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
-  } catch (error) {
-    if (error instanceof SendTransactionError) {
-      const logs = await error.getLogs(connection).catch(() => null);
-      throw new Error(logs?.length ? `${error.message}\n${logs.join('\n')}` : error.message);
-    }
-
-    throw error;
-  }
+  // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
+  // Phantom can inject its Lighthouse guard instructions.
+  const signature = await sendViaWallet(wallet, connection, transaction);
 
   const confirmation = await confirmTransactionWithBlockhash(
     connection,
@@ -1615,7 +1607,7 @@ const buildClosePositionInstruction = (user: PublicKey, pool: PublicKey, positio
 
 export const initializeKedolikStakeLockAdminConfig = async (
   connection: Connection,
-  wallet: AnchorWallet
+  wallet: SendCapableWallet
 ) => {
   const signerWallet = assertWallet(wallet);
   const transaction = new Transaction().add(
@@ -1627,7 +1619,7 @@ export const initializeKedolikStakeLockAdminConfig = async (
 
 export const transferKedolikStakingAdmin = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   newAuthority: string
 ) => {
   const signerWallet = assertWallet(wallet);
@@ -1655,7 +1647,7 @@ export const transferKedolikStakingAdmin = async (
 
 export const initializeKedolikStakingPool = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   input: CreateKedolikStakingPoolInput
 ) => {
   const signerWallet = assertWallet(wallet);
@@ -1741,7 +1733,7 @@ export const initializeKedolikStakingPool = async (
 
 export const createKedolikStakingPool = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   input: CreateKedolikStakingPoolInput
 ) => {
   const signerWallet = assertWallet(wallet);
@@ -1850,7 +1842,7 @@ export const createKedolikStakingPool = async (
 
 export const fundKedolikStakingRewards = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   poolAddress: string,
   amountRaw: string
 ) => {
@@ -1902,7 +1894,7 @@ export const fundKedolikStakingRewards = async (
 
 export const setKedolikStakingRewardRate = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   poolAddress: string,
   rewardRatePerSecondRaw: string,
   rewardDurationSeconds?: number
@@ -1937,7 +1929,7 @@ export const setKedolikStakingRewardRate = async (
 
 export const reclaimKedolikStakingUnclaimedRewards = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   poolAddress: string
 ) => {
   const signerWallet = assertWallet(wallet);
@@ -1999,7 +1991,7 @@ export const reclaimKedolikStakingUnclaimedRewards = async (
 
 export const createKedolikStakingService = (
   connection: Connection,
-  wallet?: AnchorWallet | null
+  wallet?: SendCapableWallet | null
 ): KedolikStakingService => ({
   cluster: KEDOLIK_STAKE_LOCK_V1.cluster,
   kedolikStakingProgramId: KEDOLIK_STAKE_LOCK_V1.programId,
@@ -2177,7 +2169,7 @@ export const createKedolikStakingService = (
 
 export const closeKedolikStakePosition = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   poolAddress: string
 ) => {
   const signerWallet = assertWallet(wallet);

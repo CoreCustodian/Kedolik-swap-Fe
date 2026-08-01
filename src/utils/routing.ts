@@ -2,6 +2,7 @@ import { Connection, PublicKey, Transaction, SystemProgram } from '@solana/web3.
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
 import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction, PROGRAM_ID } from './amm';
 import { KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
+import { sendViaWallet } from './txSender';
 import * as anchor from '@coral-xyz/anchor';
 
 export interface SwapRoute {
@@ -464,16 +465,10 @@ export const executeMultiHopSwap = async (
     // Add a small delay to ensure blockhash is fully propagated
     await new Promise(resolve => setTimeout(resolve, 100));
     
-    // Sign and send transaction
-    console.log('✍️ Signing transaction...');
-    const signedTransaction = await wallet.signTransaction(transaction);
-    
-    console.log('📤 Sending transaction...');
-    signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 0, // Don't retry - we handle this ourselves
-    });
+    // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
+    // Phantom can inject its Lighthouse guard instructions.
+    console.log('📤 Signing + sending transaction via wallet...');
+    signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 0 });
     
     console.log('✅ Transaction sent:', signature);
     const { getExplorerUrl } = await import('../config/addresses');

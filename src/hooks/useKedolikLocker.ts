@@ -1,4 +1,4 @@
-import { useAnchorWallet, useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   createLockerVestingEscrow,
@@ -22,8 +22,8 @@ interface UseKedolikLockerOptions {
 
 export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {}) => {
   const { connection } = useConnection();
-  const { publicKey } = useWallet();
-  const anchorWallet = useAnchorWallet();
+  const walletCtx = useWallet();
+  const { publicKey } = walletCtx;
   const [escrows, setEscrows] = useState<LockerEscrowSummary[]>([]);
   const [isLoadingEscrows, setIsLoadingEscrows] = useState(false);
   const [escrowsError, setEscrowsError] = useState<string | null>(null);
@@ -80,63 +80,63 @@ export const useKedolikLocker = ({ enabled = true }: UseKedolikLockerOptions = {
 
   const claim = useCallback(
     async (escrowAddress: string) => {
-      if (!anchorWallet) {
+      if (!walletCtx.publicKey) {
         throw new Error('Connect a wallet before claiming locker escrow tokens.');
       }
 
-      return claimLockerEscrow(connection, anchorWallet, escrowAddress);
+      return claimLockerEscrow(connection, walletCtx, escrowAddress);
     },
-    [anchorWallet, connection],
+    [walletCtx, connection],
   );
 
   const cancel = useCallback(
     async (escrowAddress: string) => {
-      if (!anchorWallet) {
+      if (!walletCtx.publicKey) {
         throw new Error('Connect a wallet before cancelling a locker escrow.');
       }
 
-      return cancelLockerEscrow(connection, anchorWallet, escrowAddress);
+      return cancelLockerEscrow(connection, walletCtx, escrowAddress);
     },
-    [anchorWallet, connection],
+    [walletCtx, connection],
   );
 
   const close = useCallback(
     async (escrowAddress: string) => {
-      if (!anchorWallet) {
+      if (!walletCtx.publicKey) {
         throw new Error('Connect a wallet before closing a locker escrow.');
       }
 
-      return closeLockerEscrow(connection, anchorWallet, escrowAddress);
+      return closeLockerEscrow(connection, walletCtx, escrowAddress);
     },
-    [anchorWallet, connection],
+    [walletCtx, connection],
   );
 
   const updateRecipient = useCallback(
     async (escrowAddress: string, newRecipient: string, newRecipientEmail?: string) => {
-      if (!anchorWallet) {
+      if (!walletCtx.publicKey) {
         throw new Error('Connect a wallet before updating the locker recipient.');
       }
 
       return updateLockerEscrowRecipient(
         connection,
-        anchorWallet,
+        walletCtx,
         escrowAddress,
         newRecipient,
         newRecipientEmail,
       );
     },
-    [anchorWallet, connection],
+    [walletCtx, connection],
   );
 
   const create = useCallback(
     async (input: Parameters<typeof createLockerVestingEscrow>[2]) => {
-      if (!anchorWallet) {
+      if (!walletCtx.publicKey) {
         throw new Error('Connect a wallet before creating a locker escrow.');
       }
 
-      return createLockerVestingEscrow(connection, anchorWallet, input);
+      return createLockerVestingEscrow(connection, walletCtx, input);
     },
-    [anchorWallet, connection],
+    [walletCtx, connection],
   );
 
   return {

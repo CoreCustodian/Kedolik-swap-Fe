@@ -7,8 +7,8 @@ import {
   Transaction,
   VersionedTransaction,
 } from '@solana/web3.js';
-import type { AnchorWallet } from '@solana/wallet-adapter-react';
 import bs58 from 'bs58';
+import { sendViaWallet, SendCapableWallet } from './txSender';
 import { SOL_MINT } from '../config/addresses';
 import {
   getOkxApiBase,
@@ -297,7 +297,7 @@ const deserializeOkxTransaction = async (
 
 export const executeOkxSwap = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   swap: OkxSwapResponse
 ): Promise<string> => {
   const callData = swap.tx?.data;
@@ -306,21 +306,10 @@ export const executeOkxSwap = async (
   }
 
   const transaction = await deserializeOkxTransaction(connection, callData);
-  let signature: string;
 
-  if (transaction instanceof VersionedTransaction) {
-    const signed = await wallet.signTransaction(transaction);
-    signature = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
-  } else {
-    const signed = await wallet.signTransaction(transaction);
-    signature = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
-  }
+  // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
+  // Phantom can inject its Lighthouse guard instructions.
+  const signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 3 });
 
   await connection.confirmTransaction(signature, 'confirmed');
   return signature;

@@ -1,4 +1,3 @@
-import type { AnchorWallet } from '@solana/wallet-adapter-react';
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   AccountLayout,
@@ -12,11 +11,11 @@ import {
   Connection,
   PublicKey,
   SYSVAR_RENT_PUBKEY,
-  SendTransactionError,
   SystemProgram,
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
+import { sendViaWallet, SendCapableWallet } from '../utils/txSender';
 import bs58 from 'bs58';
 import {
   KEDOLIK_STAKE_LOCK_PROGRAM_ID,
@@ -114,12 +113,18 @@ const toPublicKey = (value: string) => {
   }
 };
 
-const assertWallet = (wallet?: AnchorWallet): AnchorWallet => {
+const assertWallet = (
+  wallet?: SendCapableWallet | null,
+): SendCapableWallet & { publicKey: PublicKey } => {
   if (!wallet?.publicKey) {
     throw new Error('Connect a wallet before submitting locker transactions.');
   }
 
-  return wallet;
+  if (typeof wallet.sendTransaction !== 'function') {
+    throw new Error('Connected wallet does not support signAndSendTransaction.');
+  }
+
+  return wallet as SendCapableWallet & { publicKey: PublicKey };
 };
 
 const writeU64 = (value: bigint) => {
@@ -382,29 +387,16 @@ const fetchTokenLockAccounts = async (connection: Connection) =>
 
 const sendAndConfirmLockerTransaction = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   transaction: Transaction
 ) => {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
   transaction.recentBlockhash = blockhash;
-  transaction.feePayer = wallet.publicKey;
+  transaction.feePayer = wallet.publicKey ?? undefined;
 
-  const signedTransaction = await wallet.signTransaction(transaction);
-  let signature: string;
-
-  try {
-    signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-    });
-  } catch (error) {
-    if (error instanceof SendTransactionError) {
-      const logs = await error.getLogs(connection).catch(() => null);
-      throw new Error(logs?.length ? `${error.message}\n${logs.join('\n')}` : error.message);
-    }
-
-    throw error;
-  }
+  // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
+  // Phantom can inject its Lighthouse guard instructions.
+  const signature = await sendViaWallet(wallet, connection, transaction);
 
   const confirmation = await confirmTransactionWithBlockhash(
     connection,
@@ -517,7 +509,7 @@ const buildUnlockInstruction = (
 
 export const claimLockerEscrow = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   escrowAddress: string
 ): Promise<string> => {
   const signerWallet = assertWallet(wallet);
@@ -563,7 +555,7 @@ export const claimLockerEscrow = async (
 
 export const cancelLockerEscrow = async (
   _connection: Connection,
-  _wallet: AnchorWallet,
+  _wallet: SendCapableWallet,
   _escrowAddress: string
 ): Promise<string> => {
   throw new Error('Stake Lock V1 does not expose a cancel lock action.');
@@ -571,7 +563,7 @@ export const cancelLockerEscrow = async (
 
 export const closeLockerEscrow = async (
   _connection: Connection,
-  _wallet: AnchorWallet,
+  _wallet: SendCapableWallet,
   _escrowAddress: string
 ): Promise<string> => {
   throw new Error('Stake Lock V1 closes the lock account during unlock.');
@@ -579,7 +571,7 @@ export const closeLockerEscrow = async (
 
 export const updateLockerEscrowRecipient = async (
   _connection: Connection,
-  _wallet: AnchorWallet,
+  _wallet: SendCapableWallet,
   _escrowAddress: string,
   _newRecipient: string,
   _newRecipientEmail?: string
@@ -589,7 +581,7 @@ export const updateLockerEscrowRecipient = async (
 
 export const createLockerVestingEscrow = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   input: CreateVestingEscrowInput
 ): Promise<{ signature: string; escrowAddress: string; baseAddress: string }> => {
   const signerWallet = assertWallet(wallet);

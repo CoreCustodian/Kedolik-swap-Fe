@@ -5,7 +5,6 @@ import {
   SYSVAR_RENT_PUBKEY,
   Transaction,
   TransactionInstruction,
-  Keypair,
 } from '@solana/web3.js';
 import {
   Program,
@@ -20,9 +19,9 @@ import {
   getAssociatedTokenAddress,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
+  createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
   createCloseAccountInstruction,
-  createInitializeAccount3Instruction,
   NATIVE_MINT,
   unpackAccount,
 } from '@solana/spl-token';
@@ -32,6 +31,7 @@ import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddre
 import * as ADDRESSES from '../config/addresses';
 import { getConnectionConfig, hasWebsocketEndpoint, RPC_HTTP_ENDPOINT } from '../config/rpc';
 import { confirmTransactionWithBlockhash, smartConfirmTransaction } from './transactionConfirmation';
+import { sendViaWallet } from './txSender';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
 const IDL = IDLJson as unknown as Idl;
@@ -406,12 +406,8 @@ export const unwrapSOL = async (
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
 
-    // Sign and send
-    const signedTransaction = await wallet.signTransaction(transaction);
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'processed',
-    });
+    // Sign + send via the wallet (signAndSendTransaction) so Phantom can add guards.
+    const signature = await sendViaWallet(wallet, connection, transaction);
 
     // Confirm (using polling for Alchemy RPC compatibility)
     await confirmTransactionWithBlockhash(connection, {
@@ -1146,18 +1142,18 @@ export const swapBaseInput = async (
       walletPublicKey
     );
 
-    // For WSOL output, we'll create a temporary account and close it in the same transaction
-    // This allows us to receive native SOL in ONE transaction!
+    // For WSOL output we use the deterministic WSOL associated token account and
+    // close it in the same transaction to unwrap back to native SOL. This avoids
+    // an ephemeral Keypair signer, which Phantom's Lighthouse guard cannot support
+    // (it rewrites the message and would invalidate a pre-signature).
     let userOutputAccount: PublicKey;
     let needsCreateOutputAccount = false;
-    let tempWsolKeypair: Keypair | null = null;
 
     if (needsUnwrapOutput) {
-      // Create a temporary WSOL account that we'll close immediately
-      tempWsolKeypair = Keypair.generate();
-      userOutputAccount = tempWsolKeypair.publicKey;
+      userOutputAccount = await getAssociatedTokenAddress(WSOL_MINT, walletPublicKey);
+      // Always (idempotently) ensure the WSOL ATA exists before the swap writes to it.
       needsCreateOutputAccount = true;
-      console.log('🔑 Using temporary WSOL account for unwrap:', tempWsolKeypair.publicKey.toString());
+      console.log('🔑 Using WSOL ATA for unwrap:', userOutputAccount.toString());
     } else {
       // For regular tokens, get the ATA address
       userOutputAccount = await getAssociatedTokenAddress(
@@ -1216,37 +1212,20 @@ export const swapBaseInput = async (
 
     // Build the transaction
     const transaction = new Transaction();
-    const signers: Keypair[] = [];
 
     // Step 0: Create output account if needed
     if (needsCreateOutputAccount) {
-      if (tempWsolKeypair) {
-        // For WSOL unwrap, create a temporary account
-        console.log('🔨 Creating temporary WSOL account...');
-
-        // Calculate rent exemption for token account
-        const rentExemption = await connection.getMinimumBalanceForRentExemption(165); // Token account size
-
-        // Create the temporary account
-        const createAccountIx = SystemProgram.createAccount({
-          fromPubkey: walletPublicKey,
-          newAccountPubkey: tempWsolKeypair.publicKey,
-          lamports: rentExemption,
-          space: 165,
-          programId: TOKEN_PROGRAM_ID,
-        });
-
-        // Initialize the token account
-        const initAccountIx = createInitializeAccount3Instruction(
-          tempWsolKeypair.publicKey,
-          outputMint,
-          walletPublicKey
+      if (needsUnwrapOutput) {
+        // Idempotent create so a pre-existing WSOL ATA doesn't cause a failure.
+        console.log('🔨 Ensuring WSOL ATA exists for unwrap...');
+        transaction.add(
+          createAssociatedTokenAccountIdempotentInstruction(
+            walletPublicKey,   // payer
+            userOutputAccount, // ata
+            walletPublicKey,   // owner
+            WSOL_MINT          // mint
+          )
         );
-
-        transaction.add(createAccountIx, initAccountIx);
-
-        // Add the temp keypair as a signer
-        signers.push(tempWsolKeypair);
       } else {
         // For regular tokens, create an ATA (Associated Token Account)
         console.log('🔨 Creating Associated Token Account for output token...');
@@ -1294,11 +1273,11 @@ export const swapBaseInput = async (
 
     transaction.add(swapInstruction);
 
-    // Step 3: If output is SOL using temp account, close it to unwrap
-    if (needsUnwrapOutput && tempWsolKeypair) {
-      console.log('🌊 Adding unwrap SOL instruction (close temp account)...');
+    // Step 3: If output is SOL, close the WSOL ATA to unwrap back to native SOL
+    if (needsUnwrapOutput) {
+      console.log('🌊 Adding unwrap SOL instruction (close WSOL ATA)...');
       const unwrapInstruction = createCloseAccountInstruction(
-        tempWsolKeypair.publicKey,
+        userOutputAccount,
         walletPublicKey, // Send SOL to user's wallet
         walletPublicKey  // Authority
       );
@@ -1314,23 +1293,10 @@ export const swapBaseInput = async (
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
 
-    console.log('✍️ Signing transaction...');
-
-    // If we have additional signers (temp account), we need to sign them first
-    if (signers.length > 0) {
-      console.log(`🔑 Pre-signing with ${signers.length} additional signer(s)...`);
-      transaction.partialSign(...signers);
-    }
-
-    // Then sign with wallet
-    const signedTransaction = await wallet.signTransaction(transaction);
-
-    console.log('📤 Sending transaction...');
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'confirmed',
-      maxRetries: 3,
-    });
+    // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
+    // Phantom can inject its Lighthouse guard instructions.
+    console.log('📤 Signing + sending transaction via wallet...');
+    const signature = await sendViaWallet(wallet, connection, transaction);
 
     console.log(`🔗 Transaction sent: ${signature}`);
 
@@ -1894,19 +1860,13 @@ export const swapWithKedologDiscount = async (
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
 
-    // Sign and send transaction
-    console.log('✍️ Signing transaction...');
-    const signedTransaction = await wallet.signTransaction(transaction);
-
-    console.log('📤 Sending transaction...');
+    // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
+    // Phantom can inject its Lighthouse guard instructions.
+    console.log('📤 Signing + sending transaction via wallet...');
     let signature: string;
 
     try {
-      signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'processed',
-        maxRetries: 3,
-      });
+      signature = await sendViaWallet(wallet, connection, transaction);
       console.log(`🔗 Transaction sent: ${signature}`);
     } catch (sendError: any) {
       console.error('❌ Error sending transaction:', sendError);
@@ -2585,15 +2545,8 @@ export const addLiquidity = async (
       throw simError;
     }
 
-    console.log('✍️ Signing transaction...');
-    const signedTransaction = await wallet.signTransaction(transaction);
-
-    console.log('📤 Sending transaction immediately...');
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'processed',
-      maxRetries: 5, // Increased retries for better reliability
-    });
+    console.log('📤 Signing + sending transaction via wallet...');
+    const signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 5 });
 
     console.log(`🔗 Transaction sent: ${signature}`);
 
@@ -2822,17 +2775,9 @@ export const removeLiquidity = async (
 
     console.log(`✅ Got blockhash: ${blockhash.slice(0, 8)}... (valid until block ${lastValidBlockHeight})`);
 
-    // Sign transaction immediately
-    console.log('✍️ Signing transaction...');
-    const signedTransaction = await wallet.signTransaction(transaction);
-
-    // Send transaction with proper options
-    console.log('📤 Sending transaction...');
-    const signature = await connection.sendRawTransaction(signedTransaction.serialize(), {
-      skipPreflight: false,
-      preflightCommitment: 'processed',
-      maxRetries: 5, // Retry if blockhash expires
-    });
+    // Sign + send via the wallet (signAndSendTransaction) so Phantom can add guards.
+    console.log('📤 Signing + sending transaction via wallet...');
+    const signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 5 });
 
     console.log(`🔗 Transaction sent: ${signature}`);
 
@@ -3545,66 +3490,7 @@ export const createPool = async (
       throw new Error(`Transaction is invalid: ${preSignError?.message || 'Serialization failed'}`);
     }
     
-    let signedTx;
-    try {
-      // Some wallet adapters need the transaction to be a fresh copy
-      // Create a new transaction instance to avoid any potential issues
-      const transactionForSigning = Transaction.from(transaction.serialize({
-        requireAllSignatures: false,
-        verifySignatures: false,
-      }));
-      transactionForSigning.recentBlockhash = transaction.recentBlockhash!;
-      transactionForSigning.feePayer = transaction.feePayer!;
-      
-      console.log('🔐 Attempting to sign transaction with wallet...');
-      signedTx = await wallet.signTransaction(transactionForSigning);
-      console.log('✅ Transaction signed successfully');
-    } catch (signError: any) {
-      console.error('❌ Wallet signing error details:', {
-        error: signError,
-        message: signError?.message,
-        name: signError?.name,
-        stack: signError?.stack,
-        // Check if it's a specific wallet error
-        code: signError?.code,
-        cause: signError?.cause,
-        // Try to get inner error
-        innerError: (signError as any)?.error,
-        originalError: (signError as any)?.originalError,
-      });
-      
-      // Try to get more details from the error
-      if (signError?.message) {
-        const errorMsg = signError.message.toLowerCase();
-        if (errorMsg.includes('user rejected') || errorMsg.includes('user declined')) {
-          throw new Error('Transaction was rejected by user');
-        } else if (errorMsg.includes('insufficient')) {
-          throw new Error('Insufficient balance for transaction fees');
-        } else if (errorMsg.includes('unexpected error')) {
-          // Try to get more details from the wallet adapter
-          console.error('⚠️ Generic "Unexpected error" from wallet adapter');
-          console.error('💡 This might be due to:');
-          console.error('   1. Transaction size too large');
-          console.error('   2. Wallet adapter issue');
-          console.error('   3. Network connectivity issue');
-          console.error('   4. Wallet not properly connected');
-          
-          // Check wallet connection
-          if (wallet && typeof wallet.publicKey === 'function') {
-            try {
-              const pubkey = wallet.publicKey;
-              console.log('🔍 Wallet public key:', pubkey?.toString());
-            } catch (e) {
-              console.error('❌ Cannot get wallet public key:', e);
-            }
-          }
-        }
-      }
-      
-      throw signError;
-    }
-
-    // Send transaction with proper error handling
+    // The transaction is handed to the wallet unsigned below (signAndSendTransaction).
     let signature: string;
 
     try {
@@ -3694,12 +3580,8 @@ export const createPool = async (
         console.warn('⚠️ Simulation failed, but continuing to send transaction...');
       }
 
-      console.log('📤 Sending transaction...');
-      signature = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'processed',
-        maxRetries: 5,
-      });
+      console.log('📤 Signing + sending transaction via wallet...');
+      signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 5 });
 
       console.log(`🔗 Transaction sent: ${signature}`);
     } catch (sendError: any) {

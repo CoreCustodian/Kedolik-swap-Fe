@@ -1,4 +1,4 @@
-import { useWallet, useConnection, useAnchorWallet } from '@solana/wallet-adapter-react';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { useState, useEffect, useRef } from 'react';
 import { fetchAllBalances, TokenBalance } from '../utils/balances';
@@ -10,9 +10,10 @@ import { PublicKey } from '@solana/web3.js';
 import { useRemoteTokens } from '../hooks/useRemoteTokens';
 
 const Profile = () => {
-  const { connected, publicKey, disconnect } = useWallet();
+  const walletCtx = useWallet();
+  const { connected, publicKey, disconnect } = walletCtx;
   const { connection } = useConnection();
-  const wallet = useAnchorWallet();
+  const wallet = walletCtx;
   const { setVisible: setWalletModalVisible } = useWalletModal();
   const {
     tokens,

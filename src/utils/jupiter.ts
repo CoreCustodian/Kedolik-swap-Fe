@@ -2,8 +2,8 @@
 // Docs: https://dev.jup.ag/docs/swap
 
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js';
-import type { AnchorWallet } from '@solana/wallet-adapter-react';
 import { TokenInfo } from '../config/tokens';
+import { sendViaWallet, SendCapableWallet } from './txSender';
 import {
   getJupiterReferralAccount,
   getJupiterReferralFeeBps,
@@ -263,18 +263,21 @@ export const executeJupiterOrder = async (
  */
 export const executeJupiterSwap = async (
   connection: Connection,
-  wallet: AnchorWallet,
+  wallet: SendCapableWallet,
   inputMint: PublicKey,
   outputMint: PublicKey,
   amountIn: number,
   inputDecimals: number,
   slippagePercent: string
-): Promise<{ signature: string; order: JupiterOrderResponse; execute: JupiterExecuteResponse }> => {
+): Promise<{ signature: string; order: JupiterOrderResponse }> => {
   const amount = toSmallestUnit(amountIn, inputDecimals);
 
+  // Self-landing: hand the UNSIGNED Jupiter transaction to the wallet's
+  // signAndSendTransaction flow (so Phantom can inject its Lighthouse guards)
+  // instead of signing it here and posting it back to Jupiter's execute endpoint.
   const signAndExecute = async (
     order: JupiterOrderResponse
-  ): Promise<{ signature: string; order: JupiterOrderResponse; execute: JupiterExecuteResponse }> => {
+  ): Promise<{ signature: string; order: JupiterOrderResponse }> => {
     if (!order.transaction) {
       throw new Error('Jupiter did not return a swap transaction. Try again with a fresh quote.');
     }
@@ -282,23 +285,22 @@ export const executeJupiterSwap = async (
     const transaction = VersionedTransaction.deserialize(
       Buffer.from(order.transaction, 'base64')
     );
-    const signed = await wallet.signTransaction(transaction);
-    const signedBase64 = Buffer.from(signed.serialize()).toString('base64');
 
-    const execute = await executeJupiterOrder(signedBase64, order.requestId);
-
-    if (execute.status !== 'Success' || !execute.signature) {
-      throw new Error(execute.error || `Jupiter swap failed (code ${execute.code})`);
-    }
+    const signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 3 });
 
     try {
-      await connection.confirmTransaction(execute.signature, 'confirmed');
+      await connection.confirmTransaction(signature, 'confirmed');
     } catch {
-      // Jupiter execute already landed the tx; confirmation is best-effort
+      // Confirmation is best-effort; the tx may still land.
     }
 
-    return { signature: execute.signature, order, execute };
+    return { signature, order };
   };
+
+  if (!wallet.publicKey) {
+    throw new Error('Connect a wallet before swapping via Jupiter.');
+  }
+  const taker = wallet.publicKey.toString();
 
   const fetchOrder = (slippageBps?: number) =>
     getJupiterOrder({
@@ -306,7 +308,7 @@ export const executeJupiterSwap = async (
       outputMint: toJupiterMint(outputMint),
       amount,
       ...(slippageBps !== undefined ? { slippageBps } : {}),
-      taker: wallet.publicKey.toString(),
+      taker,
     });
 
   const initialSlippageBps = jupiterSlippageBpsFromUi(slippagePercent);

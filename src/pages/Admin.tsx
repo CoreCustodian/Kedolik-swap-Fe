@@ -728,11 +728,8 @@ export default function Admin() {
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = publicKey;
       
-      const signedTx = await wallet.signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(signedTx.serialize(), {
-        skipPreflight: false,
-        preflightCommitment: 'confirmed',
-      });
+      const { sendViaWallet } = await import('../utils/txSender');
+      const signature = await sendViaWallet(wallet, connection, transaction);
       
       showToast('Confirming transaction...', 'info');
       
@@ -991,7 +988,7 @@ export default function Admin() {
       );
 
       showToast('Initializing Stake Lock V1 staking pool...', 'info');
-      const initialized = await initializeKedolikStakingPool(connection, anchorWallet, {
+      const initialized = await initializeKedolikStakingPool(connection, wallet, {
         stakeMint: stakingPoolForm.stakeMint.trim(),
         rewardMint: stakingPoolForm.rewardMint.trim(),
         poolId,
@@ -1006,7 +1003,7 @@ export default function Admin() {
         showToast('Funding staking reward vault...', 'info');
         const fundSignature = await fundKedolikStakingRewards(
           connection,
-          anchorWallet,
+          wallet,
           initialized.pool.pool,
           rewardAmountRaw.toString()
         );
@@ -1061,7 +1058,7 @@ export default function Admin() {
         return;
       }
 
-      const signature = await fundKedolikStakingRewards(connection, anchorWallet, pool.pool, amountRaw.toString());
+      const signature = await fundKedolikStakingRewards(connection, wallet, pool.pool, amountRaw.toString());
       showToast(`Funded rewards for pool ${formatAddress(pool.pool)}`, 'success', signature);
       setFundingRecoveryPool((current) => current?.pool === pool.pool ? null : current);
       setFundingRecoveryAdminRewardBalance(null);
@@ -1115,7 +1112,7 @@ export default function Admin() {
 
       const signature = await setKedolikStakingRewardRate(
         connection,
-        anchorWallet,
+        wallet,
         pool.pool,
         nextRate.toString(),
         Math.floor(duration)
@@ -1144,7 +1141,7 @@ export default function Admin() {
 
     try {
       setStakingPoolActionLoading(`stop:${pool.pool}`);
-      const signature = await setKedolikStakingRewardRate(connection, anchorWallet, pool.pool, '0');
+      const signature = await setKedolikStakingRewardRate(connection, wallet, pool.pool, '0');
       showToast(`Rewards stopped for pool ${formatAddress(pool.pool)}`, 'success', signature);
       await refreshStakingPools();
     } catch (error: unknown) {
@@ -1181,7 +1178,7 @@ export default function Admin() {
 
     try {
       setStakingPoolActionLoading(`reclaim:${pool.pool}`);
-      const signature = await reclaimKedolikStakingUnclaimedRewards(connection, anchorWallet, pool.pool);
+      const signature = await reclaimKedolikStakingUnclaimedRewards(connection, wallet, pool.pool);
       showToast(`Reclaimed leftover rewards for pool ${formatAddress(pool.pool)}`, 'success', signature);
       await refreshStakingPools();
     } catch (error: unknown) {
@@ -1263,7 +1260,7 @@ export default function Admin() {
       setTransferringStakingAdmin(true);
       const signature = await transferKedolikStakingAdmin(
         connection,
-        anchorWallet,
+        wallet,
         newStakingAdminPublicKey.toString()
       );
       showToast('Stake Lock admin authority transferred', 'success', signature);
