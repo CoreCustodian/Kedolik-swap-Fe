@@ -1178,10 +1178,16 @@ export const swapBaseInput = async (
     let userOutputAccount!: PublicKey;
     let needsCreateOutputAccount = false;
     let tempWsolAccount: PublicKey | null = null;
+    let tempWsolInstructions: TransactionInstruction[] = [];
 
     if (needsUnwrapOutput) {
+      console.log('🔨 Creating temporary WSOL account for native SOL output...');
+      const tempWsol = await createTempWsolAccountInstructions(connection, walletPublicKey);
+      tempWsolAccount = tempWsol.wsolAccount;
+      userOutputAccount = tempWsol.wsolAccount;
+      tempWsolInstructions = tempWsol.instructions;
       needsCreateOutputAccount = true;
-      console.log('🔑 Using temporary WSOL account for native SOL output');
+      console.log('🔑 Temporary WSOL account:', userOutputAccount.toString());
     } else {
       // For regular tokens, get the ATA address
       userOutputAccount = await getAssociatedTokenAddress(
@@ -1244,12 +1250,7 @@ export const swapBaseInput = async (
     // Step 0: Create output account if needed
     if (needsCreateOutputAccount) {
       if (needsUnwrapOutput) {
-        console.log('🔨 Creating temporary WSOL account for unwrap...');
-        const tempWsol = await createTempWsolAccountInstructions(connection, walletPublicKey);
-        tempWsolAccount = tempWsol.wsolAccount;
-        userOutputAccount = tempWsol.wsolAccount;
-        transaction.add(...tempWsol.instructions);
-        console.log('🔑 Temporary WSOL account:', userOutputAccount.toString());
+        transaction.add(...tempWsolInstructions);
       } else {
         // For regular tokens, create an ATA (Associated Token Account)
         console.log('🔨 Creating Associated Token Account for output token...');
