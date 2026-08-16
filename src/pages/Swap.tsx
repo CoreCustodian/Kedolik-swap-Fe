@@ -1040,8 +1040,7 @@ const Swap = () => {
               inputTokenPrice = quoteData.amountOut / amount;
               console.log(`💰 SOL price from quote fallback: $${inputTokenPrice.toFixed(2)}`);
             } else {
-              inputTokenPrice = 150; // Conservative fallback
-              console.log(`⚠️ Using fallback SOL price: $150`);
+              inputTokenPrice = 0;
             }
           }
         } else if (fromToken.symbol === 'KEDOLOG' || fromToken.mint.equals(KEDOLOG_MINT)) {
