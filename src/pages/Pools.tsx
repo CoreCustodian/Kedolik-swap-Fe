@@ -319,10 +319,9 @@ const Pools = () => {
             </div>
           </div>
 
-          {(statsError || (poolStats && !poolStats.reached24hBoundary)) && (
+          {statsError && (
             <div className="mb-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-xs text-amber-100">
-              {statsError ||
-                `24h volume is calculated from on-chain SwapEvent logs. The scan loaded ${poolStats?.scannedTransactions ?? 0} program transaction${poolStats?.scannedTransactions === 1 ? '' : 's'} but did not reach the full 24h boundary on this RPC response.`}
+              {statsError}
             </div>
           )}
 
