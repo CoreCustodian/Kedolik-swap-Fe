@@ -19,9 +19,9 @@ import {
   getAssociatedTokenAddress,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
-  createAssociatedTokenAccountIdempotentInstruction,
   createSyncNativeInstruction,
   createCloseAccountInstruction,
+  createInitializeAccount3Instruction,
   NATIVE_MINT,
   unpackAccount,
 } from '@solana/spl-token';
@@ -360,6 +360,36 @@ export const createUnwrapSOLInstruction = async (
     owner,
     owner
   );
+};
+
+/**
+ * Temporary WSOL account owned by the user, created with createAccountWithSeed.
+ * No extra Keypair signer (Phantom Lighthouse-safe) and does not close the user's
+ * persistent WSOL ATA — closing that ATA is what triggers Phantom's "suspicious site" warning.
+ */
+export const createTempWsolAccountInstructions = async (
+  connection: Connection,
+  owner: PublicKey,
+): Promise<{ instructions: TransactionInstruction[]; wsolAccount: PublicKey }> => {
+  const seed = `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.slice(0, 32);
+  const wsolAccount = await PublicKey.createWithSeed(owner, seed, TOKEN_PROGRAM_ID);
+  const lamports = await connection.getMinimumBalanceForRentExemption(165);
+
+  return {
+    wsolAccount,
+    instructions: [
+      SystemProgram.createAccountWithSeed({
+        fromPubkey: owner,
+        newAccountPubkey: wsolAccount,
+        basePubkey: owner,
+        seed,
+        lamports,
+        space: 165,
+        programId: TOKEN_PROGRAM_ID,
+      }),
+      createInitializeAccount3Instruction(wsolAccount, WSOL_MINT, owner),
+    ],
+  };
 };
 
 /**
@@ -1142,18 +1172,16 @@ export const swapBaseInput = async (
       walletPublicKey
     );
 
-    // For WSOL output we use the deterministic WSOL associated token account and
-    // close it in the same transaction to unwrap back to native SOL. This avoids
-    // an ephemeral Keypair signer, which Phantom's Lighthouse guard cannot support
-    // (it rewrites the message and would invalidate a pre-signature).
-    let userOutputAccount: PublicKey;
+    // Token → SOL: use a temporary WSOL account (createAccountWithSeed, user-signed only)
+    // then close THAT account. Do not close the user's persistent WSOL ATA — Phantom
+    // treats that as a drain and shows "this website is suspicious".
+    let userOutputAccount!: PublicKey;
     let needsCreateOutputAccount = false;
+    let tempWsolAccount: PublicKey | null = null;
 
     if (needsUnwrapOutput) {
-      userOutputAccount = await getAssociatedTokenAddress(WSOL_MINT, walletPublicKey);
-      // Always (idempotently) ensure the WSOL ATA exists before the swap writes to it.
       needsCreateOutputAccount = true;
-      console.log('🔑 Using WSOL ATA for unwrap:', userOutputAccount.toString());
+      console.log('🔑 Using temporary WSOL account for native SOL output');
     } else {
       // For regular tokens, get the ATA address
       userOutputAccount = await getAssociatedTokenAddress(
@@ -1216,16 +1244,12 @@ export const swapBaseInput = async (
     // Step 0: Create output account if needed
     if (needsCreateOutputAccount) {
       if (needsUnwrapOutput) {
-        // Idempotent create so a pre-existing WSOL ATA doesn't cause a failure.
-        console.log('🔨 Ensuring WSOL ATA exists for unwrap...');
-        transaction.add(
-          createAssociatedTokenAccountIdempotentInstruction(
-            walletPublicKey,   // payer
-            userOutputAccount, // ata
-            walletPublicKey,   // owner
-            WSOL_MINT          // mint
-          )
-        );
+        console.log('🔨 Creating temporary WSOL account for unwrap...');
+        const tempWsol = await createTempWsolAccountInstructions(connection, walletPublicKey);
+        tempWsolAccount = tempWsol.wsolAccount;
+        userOutputAccount = tempWsol.wsolAccount;
+        transaction.add(...tempWsol.instructions);
+        console.log('🔑 Temporary WSOL account:', userOutputAccount.toString());
       } else {
         // For regular tokens, create an ATA (Associated Token Account)
         console.log('🔨 Creating Associated Token Account for output token...');
@@ -1273,13 +1297,13 @@ export const swapBaseInput = async (
 
     transaction.add(swapInstruction);
 
-    // Step 3: If output is SOL, close the WSOL ATA to unwrap back to native SOL
-    if (needsUnwrapOutput) {
-      console.log('🌊 Adding unwrap SOL instruction (close WSOL ATA)...');
+    // Step 3: If output is SOL, close the temporary WSOL account to unwrap
+    if (needsUnwrapOutput && tempWsolAccount) {
+      console.log('🌊 Adding unwrap SOL instruction (close temp WSOL account)...');
       const unwrapInstruction = createCloseAccountInstruction(
-        userOutputAccount,
-        walletPublicKey, // Send SOL to user's wallet
-        walletPublicKey  // Authority
+        tempWsolAccount,
+        walletPublicKey,
+        walletPublicKey
       );
       transaction.add(unwrapInstruction);
     }
@@ -1501,28 +1525,10 @@ export const swapWithKedologDiscount = async (
     }
 
     if (needsOutputWrap) {
-      // Use WSOL account for output
-      userOutputAccount = await getAssociatedTokenAddress(
-        NATIVE_MINT,
-        walletPublicKey,
-        false,
-        outputTokenProgram
-      );
-
-      // Create WSOL account if it doesn't exist
-      const outputAccountInfo = await connection.getAccountInfo(userOutputAccount);
-      if (!outputAccountInfo) {
-        console.log('🆕 Creating WSOL output account...');
-        transaction.add(
-          createAssociatedTokenAccountInstruction(
-            walletPublicKey,
-            userOutputAccount,
-            walletPublicKey,
-            NATIVE_MINT,
-            outputTokenProgram
-          )
-        );
-      }
+      console.log('🆕 Creating temporary WSOL account for native SOL output...');
+      const tempWsol = await createTempWsolAccountInstructions(connection, walletPublicKey);
+      userOutputAccount = tempWsol.wsolAccount;
+      transaction.add(...tempWsol.instructions);
     } else {
       userOutputAccount = await getAssociatedTokenAddress(
         outputMint,
@@ -1808,9 +1814,14 @@ export const swapWithKedologDiscount = async (
 
     // Step 3: Unwrap SOL if output is SOL
     if (needsOutputWrap) {
-      console.log('🌯 Unwrapping SOL output...');
-      const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
-      transaction.add(unwrapInstruction);
+      console.log('🌯 Unwrapping SOL output (close temp WSOL account)...');
+      transaction.add(
+        createCloseAccountInstruction(
+          userOutputAccount,
+          walletPublicKey,
+          walletPublicKey
+        )
+      );
     }
 
     // CRITICAL DEBUG: Inspect the actual transaction object

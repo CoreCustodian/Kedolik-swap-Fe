@@ -1,6 +1,6 @@
 import { Connection, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction } from '@solana/spl-token';
-import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction, PROGRAM_ID } from './amm';
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction, createCloseAccountInstruction } from '@solana/spl-token';
+import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createTempWsolAccountInstructions, PROGRAM_ID } from './amm';
 import { KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 import { sendViaWallet } from './txSender';
 import * as anchor from '@coral-xyz/anchor';
@@ -251,6 +251,14 @@ export const executeMultiHopSwap = async (
     const needsUnwrapOutput = isNativeSOL(outputMint);
     
     console.log('🌊 SOL handling:', { needsWrapInput, needsUnwrapOutput });
+
+    let tempWsolOutput: PublicKey | null = null;
+    if (needsUnwrapOutput) {
+      const tempWsol = await createTempWsolAccountInstructions(connection, walletPublicKey);
+      tempWsolOutput = tempWsol.wsolAccount;
+      transaction.add(...tempWsol.instructions);
+      console.log('🔑 Temporary WSOL output account:', tempWsolOutput.toString());
+    }
     
     // Step 1: Wrap SOL if input is native SOL
     if (needsWrapInput) {
@@ -271,13 +279,15 @@ export const executeMultiHopSwap = async (
     const tokensToCheck = route.path.slice(1); // All tokens from 2nd onwards
     
     for (const tokenMint of tokensToCheck) {
-      // For native SOL output, we STILL need the WSOL token account (swap sends to WSOL, then unwrap)
+      // Final native SOL output uses the temp WSOL account, not the user's ATA.
+      if (isNativeSOL(tokenMint) && needsUnwrapOutput) {
+        continue;
+      }
+
       const tokenAccount = await getAssociatedTokenAddress(tokenMint, walletPublicKey);
       const accountInfo = await connection.getAccountInfo(tokenAccount);
       
-      // Always add account creation instruction (idempotent - won't fail if exists)
-      // This ensures the account is properly set up for the swap in this transaction
-      const tokenName = isNativeSOL(tokenMint) ? 'WSOL' : tokenMint.toString().slice(0, 8);
+      const tokenName = tokenMint.toString().slice(0, 8);
       console.log(`  📝 Adding idempotent account creation for: ${tokenName}... (exists: ${!!accountInfo})`);
       
       const { createAssociatedTokenAccountIdempotentInstruction } = await import('@solana/spl-token');
@@ -340,7 +350,10 @@ export const executeMultiHopSwap = async (
       
       // Get user token accounts
       const userInputAccount = await getAssociatedTokenAddress(inputMint, walletPublicKey);
-      const userOutputAccount = await getAssociatedTokenAddress(outputMint, walletPublicKey);
+      const userOutputAccount =
+        isNativeSOL(outputMint) && tempWsolOutput
+          ? tempWsolOutput
+          : await getAssociatedTokenAddress(outputMint, walletPublicKey);
       
       console.log(`    User accounts: input=${userInputAccount.toString().slice(0, 8)}, output=${userOutputAccount.toString().slice(0, 8)}`);
       
@@ -447,10 +460,15 @@ export const executeMultiHopSwap = async (
     console.log(`✅ Built transaction with ${route.hops} swap instructions`);
     
     // Step 2: Unwrap SOL if output is native SOL
-    if (needsUnwrapOutput) {
-      console.log('🌊 Adding unwrap SOL instruction for output...');
-      const unwrapInstruction = await createUnwrapSOLInstruction(walletPublicKey);
-      transaction.add(unwrapInstruction);
+    if (needsUnwrapOutput && tempWsolOutput) {
+      console.log('🌊 Adding unwrap SOL instruction (close temp WSOL account)...');
+      transaction.add(
+        createCloseAccountInstruction(
+          tempWsolOutput,
+          walletPublicKey,
+          walletPublicKey
+        )
+      );
     }
     
     // Get FRESH latest blockhash - CRITICAL for avoiding "already processed" errors
