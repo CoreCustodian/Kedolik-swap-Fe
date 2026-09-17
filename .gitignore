@@ -32,3 +32,9 @@ kedolik-fee-keypair.json
 
 .vercel
 config.bat
+
+# Never commit secrets or editor auto-run tasks
+.env
+.env.local
+.env.*.local
+.vscode/
