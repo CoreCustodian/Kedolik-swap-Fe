@@ -11,7 +11,8 @@
     "check-pool-fee": "tsx scripts/check-pool-creation-fee.ts",
     "setup-jupiter-referral": "tsx scripts/setup-jupiter-referral.ts",
     "create-keypair-file": "tsx scripts/create-keypair-file.ts",
-    "test-jupiter-fee": "tsx scripts/test-jupiter-fee.ts"
+    "test-jupiter-fee": "tsx scripts/test-jupiter-fee.ts",
+    "test:swap": "node --import tsx --test tests/*regressions.test.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",

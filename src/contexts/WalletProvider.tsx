@@ -58,9 +58,9 @@ const ConnectionPatcher: FC<{ children: ReactNode }> = ({ children }) => {
   
   useEffect(() => {
     if (connection) {
-      // Patch connection.confirmTransaction to use polling for Alchemy RPC
+      // Use bounded HTTP confirmation alongside optional WebSocket notifications.
       patchConnectionConfirmTransaction(connection);
-      console.log('✅ Connection patched for Alchemy RPC compatibility');
+      console.log('✅ Transaction confirmation with HTTP fallback enabled');
     }
   }, [connection]);
   

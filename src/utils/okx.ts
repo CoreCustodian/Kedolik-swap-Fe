@@ -9,6 +9,7 @@ import {
 } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { sendViaWallet, SendCapableWallet } from './txSender';
+import { assertTransactionSucceeded, smartConfirmTransaction } from './transactionConfirmation';
 import { SOL_MINT } from '../config/addresses';
 import {
   getOkxApiBase,
@@ -311,7 +312,8 @@ export const executeOkxSwap = async (
   // Phantom can inject its Lighthouse guard instructions.
   const signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 3 });
 
-  await connection.confirmTransaction(signature, 'confirmed');
+  const confirmation = await smartConfirmTransaction(connection, signature, 'confirmed');
+  assertTransactionSucceeded(confirmation, signature);
   return signature;
 };
 

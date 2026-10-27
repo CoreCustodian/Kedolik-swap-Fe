@@ -33,8 +33,8 @@ const schedule = () => {
     missedWhilePaused = true;
     return;
   }
-  // Busy pools emit many updates in a row; one refresh per burst is enough.
-  if (debounceTimer) clearTimeout(debounceTimer);
+  // Throttle rather than debounce: continuous trading must not postpone refresh forever.
+  if (debounceTimer) return;
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
     flush();

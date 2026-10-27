@@ -30,7 +30,8 @@ import { getTokenByMint } from '../config/tokens';
 import { getFeeTiersWithAddresses, FeeConfig as BaseFeeConfig, getAmmConfigAddress, KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 import * as ADDRESSES from '../config/addresses';
 import { getConnectionConfig, hasWebsocketEndpoint, RPC_HTTP_ENDPOINT } from '../config/rpc';
-import { confirmTransactionWithBlockhash, smartConfirmTransaction } from './transactionConfirmation';
+import { assertTransactionSucceeded, confirmTransactionWithBlockhash, smartConfirmTransaction } from './transactionConfirmation';
+export { calculateSwapOutput } from './swapMath';
 import { sendViaWallet } from './txSender';
 
 // Cast the JSON to Idl type - use 'as unknown as Idl' for proper type assertion
@@ -793,7 +794,7 @@ let poolCache: { pools: PoolInfo[]; timestamp: number } | null = null;
 // With a websocket, programSubscribe invalidates this cache the moment any pool
 // changes, so the TTL is only a backstop. Without one it has to stay short.
 const POOL_CACHE_TTL = hasWebsocketEndpoint() ? 120_000 : 30_000;
-let isFetchingPools = false; // Prevent concurrent fetches
+let poolFetchPromise: Promise<PoolInfo[]> | null = null;
 
 // Fetch all pools with caching
 export const fetchPools = async (
@@ -808,18 +809,17 @@ export const fetchPools = async (
     return poolCache.pools;
   }
 
-  // Prevent concurrent fetches
-  if (isFetchingPools) {
-    console.log('⏳ Pool fetch already in progress, waiting...');
-    // Wait for ongoing fetch
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    if (poolCache) {
-      return poolCache.pools;
-    }
+  // A fresh validation must never receive stale cache from a concurrent read.
+  if (poolFetchPromise) {
+    if (!forceRefresh) return poolFetchPromise;
+    try { await poolFetchPromise; } catch { /* Make a fresh attempt below. */ }
+    return fetchPools(connection, wallet, true);
   }
+  poolFetchPromise = fetchPoolsFromRpc(connection, wallet, forceRefresh);
+  try { return await poolFetchPromise; } finally { poolFetchPromise = null; }
+};
 
-  isFetchingPools = true;
-
+const fetchPoolsFromRpc = async (connection: Connection, wallet: any, requireFresh: boolean): Promise<PoolInfo[]> => {
   try {
     console.log('🔄 Fetching pools from RPC...');
     console.log('📍 PROGRAM_ID being used:', PROGRAM_ID.toString());
@@ -899,7 +899,8 @@ export const fetchPools = async (
           }
         });
       } catch (error) {
-        console.warn('Could not batch-fetch AMM configs, using default fee rate', error);
+        if (requireFresh) throw error;
+        console.warn('Could not batch-fetch AMM configs', error);
       }
     }
 
@@ -941,7 +942,11 @@ export const fetchPools = async (
       const creatorFeesToken1 = Number(rawCreatorFeesToken1) / Math.pow(10, token1Decimals);
 
       const poolAmmConfig: PublicKey = data.ammConfig || AMM_CONFIG;
-      const tradeFeeRate = tradeFeeRates.get(poolAmmConfig.toString()) || 100;
+      const tradeFeeRate = tradeFeeRates.get(poolAmmConfig.toString());
+      if (tradeFeeRate === undefined || !Number.isFinite(tradeFeeRate)) {
+        if (requireFresh) throw new Error('Unable to read the pool trading fee. Please refresh the quote.');
+        continue; // Do not offer a quote with an invented fee rate.
+      }
 
       const token0Symbol = getTokenSymbol(data.token0Mint);
       const token1Symbol = getTokenSymbol(data.token1Mint);
@@ -1020,14 +1025,13 @@ export const fetchPools = async (
     return poolInfos;
   } catch (error) {
     console.error('Error fetching pools:', error);
+    if (requireFresh) throw error;
     // Return cached pools if available, even if expired
     if (poolCache) {
       console.warn('⚠️ Using stale cache due to fetch error');
       return poolCache.pools;
     }
     return [];
-  } finally {
-    isFetchingPools = false;
   }
 };
 
@@ -1058,34 +1062,6 @@ export const getTokenSymbol = (mint: PublicKey): string => {
 
   // For unknown tokens, return shortened address
   return mint.toString().substring(0, 8) + '...';
-};
-
-// Calculate swap output
-export const calculateSwapOutput = (
-  amountIn: number,
-  reserveIn: number,
-  reserveOut: number,
-  tradeFeeRate: number = 100 // 0.01% = 100 in parts per million (10000 = 1%, 1000000 = 100%)
-): { amountOut: number; priceImpact: number; fee: number } => {
-  if (reserveIn === 0 || reserveOut === 0) {
-    return { amountOut: 0, priceImpact: 0, fee: 0 };
-  }
-
-  // Calculate fee
-  const fee = (amountIn * tradeFeeRate) / 1000000;
-  const amountInAfterFee = amountIn - fee;
-
-  // Constant product formula: x * y = k
-  const amountOut = (amountInAfterFee * reserveOut) / (reserveIn + amountInAfterFee);
-
-  // Calculate price impact
-  const priceImpact = ((amountIn / reserveIn) / (amountOut / reserveOut) - 1) * 100;
-
-  return {
-    amountOut,
-    priceImpact: Math.abs(priceImpact),
-    fee,
-  };
 };
 
 // Swap tokens (base input) - with automatic SOL wrapping/unwrapping
@@ -1287,8 +1263,8 @@ export const swapBaseInput = async (
     // Execute transaction - get fresh blockhash right before sending
     console.log('📡 Getting fresh blockhash...');
 
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
-    console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (processed - freshest)`);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (confirmed)`);
 
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
@@ -1307,9 +1283,7 @@ export const swapBaseInput = async (
       lastValidBlockHeight,
     }, 'confirmed');
 
-    if (confirmation.value && confirmation.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-    }
+    assertTransactionSucceeded(confirmation, signature);
 
     console.log('✅ Swap successful!');
     return signature;
@@ -1853,58 +1827,23 @@ export const swapWithKedologDiscount = async (
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
 
-    // Get fresh blockhash - use 'processed' for freshest possible blockhash
+    // Match the wallet's confirmed preflight commitment.
     console.log('📡 Getting fresh blockhash...');
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('processed');
-    console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (processed - freshest)`);
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+    console.log(`🔑 Using blockhash: ${blockhash.substring(0, 8)}... (confirmed)`);
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
 
     // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
     // Phantom can inject its Lighthouse guard instructions.
     console.log('📤 Signing + sending transaction via wallet...');
-    let signature: string;
-
-    try {
-      signature = await sendViaWallet(wallet, connection, transaction);
-      console.log(`🔗 Transaction sent: ${signature}`);
-    } catch (sendError: any) {
-      console.error('❌ Error sending transaction:', sendError);
-
-      // Check if it's "already processed" error - transaction might have succeeded!
-      if (sendError.message && sendError.message.includes('already been processed')) {
-        console.log('⚠️ Transaction might have already succeeded despite error!');
-        console.log('✅ Treating as success - please check your wallet balance');
-        // Return a success indicator even though we don't have the signature
-        return 'success-already-processed';
-      }
-
-      throw sendError;
-    }
-
-    console.log('⏳ Confirming transaction...');
-    try {
-      await confirmTransactionWithBlockhash(connection, {
-        signature,
-        blockhash,
-        lastValidBlockHeight,
-      }, 'confirmed');
-
-      console.log('✅ KEDOLOG discount swap successful!');
-      console.log('💚 You saved 25% on protocol fees!');
-      return signature;
-    } catch (confirmError: any) {
-      console.error('❌ Confirmation error:', confirmError);
-
-      // Check if it's "already processed" error
-      if (confirmError.message && confirmError.message.includes('already been processed')) {
-        console.log('⚠️ Confirmation failed but transaction was already processed');
-        console.log('✅ Swap likely succeeded! Signature:', signature);
-        return signature;
-      }
-
-      throw confirmError;
-    }
+    const signature = await sendViaWallet(wallet, connection, transaction);
+    const confirmation = await confirmTransactionWithBlockhash(connection, {
+      signature, blockhash, lastValidBlockHeight,
+    }, 'confirmed');
+    assertTransactionSucceeded(confirmation, signature);
+    console.log('✅ KEDOLOG discount swap confirmed');
+    return signature;
   } catch (error) {
     console.error('Error swapping with KEDOLOG discount:', error);
     throw error;

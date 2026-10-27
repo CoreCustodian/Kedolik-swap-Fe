@@ -1,4 +1,5 @@
 import { KEDOLIK_STAKE_LOCK_V1 } from './kedolikStakeLockV1';
+import { createRpcFetch } from '../utils/rpcFetch';
 
 /**
  * Single source of truth for RPC endpoints.
@@ -25,6 +26,7 @@ export const RPC_WS_ENDPOINT: string =
 export const getConnectionConfig = () =>
   ({
     commitment: 'confirmed' as const,
+    fetch: createRpcFetch(),
     ...(RPC_WS_ENDPOINT ? { wsEndpoint: RPC_WS_ENDPOINT } : {}),
   });
 

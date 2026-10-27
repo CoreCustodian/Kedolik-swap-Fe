@@ -4,6 +4,7 @@
 import { Connection, PublicKey, VersionedTransaction } from '@solana/web3.js';
 import { TokenInfo } from '../config/tokens';
 import { sendViaWallet, SendCapableWallet } from './txSender';
+import { assertTransactionSucceeded, smartConfirmTransaction } from './transactionConfirmation';
 import {
   getJupiterReferralAccount,
   getJupiterReferralFeeBps,
@@ -288,11 +289,8 @@ export const executeJupiterSwap = async (
 
     const signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 3 });
 
-    try {
-      await connection.confirmTransaction(signature, 'confirmed');
-    } catch {
-      // Confirmation is best-effort; the tx may still land.
-    }
+    const confirmation = await smartConfirmTransaction(connection, signature, 'confirmed');
+    assertTransactionSucceeded(confirmation, signature);
 
     return { signature, order };
   };
@@ -325,8 +323,8 @@ export const executeJupiterSwap = async (
     if (!isJupiterSlippageError(message)) {
       throw error;
     }
-    console.warn('Jupiter slippage exceeded; retrying with a fresh automatic quote...');
-    return await attemptSwap(undefined);
+    console.warn('Jupiter slippage exceeded; retrying with a fresh quote at the same tolerance...');
+    return await attemptSwap(initialSlippageBps);
   }
 };
 

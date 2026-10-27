@@ -20,8 +20,13 @@ import {
   WSOL_MINT,
   isNativeSOL,
 } from '../utils/amm';
-import { formatTokenBalance, debounce, batchGetBalances, clearBalanceCache } from '../utils/balanceCache';
-import { dispatchSwapSuccess } from '../utils/refreshEvents';
+import { formatTokenBalance, batchGetBalances, clearBalanceCache } from '../utils/balanceCache';
+import { dispatchSwapSuccess, onRefreshEvent, REFRESH_EVENTS } from '../utils/refreshEvents';
+import { subscribePoolUpdates } from '../utils/poolSubscriptions';
+import { isPageVisible, onPageVisibilityChange } from '../utils/visibilityControl';
+import { getSwapTradeFeeRate, DISCOUNT_TRADE_FEE_RATE, validateSwapMinimum } from '../utils/swapMath';
+import { withTimeout, TransactionConfirmationError, confirmSignature, assertTransactionSucceeded } from '../utils/transactionConfirmationCore';
+import { isSwapSlippageError } from '../utils/swapErrors';
 import { subscribeWalletBalanceUpdates } from '../utils/walletBalanceSubscriptions';
 import { KEDOLOG_CONFIG } from '../config/fees';
 import { SOL_MINT, KEDOLOG_MINT, USDC_MINT } from '../config/addresses';
@@ -396,7 +401,7 @@ const Swap = () => {
   // Transaction modal state
   const [txModal, setTxModal] = useState<{
     isOpen: boolean;
-    status: 'pending' | 'success' | 'error';
+    status: 'pending' | 'success' | 'error' | 'unknown';
     message: string;
     txSignature?: string;
   }>({
@@ -406,7 +411,13 @@ const Swap = () => {
   });
   
   // Cooldown to prevent rapid-fire transactions
-  const [isTransactionInProgress, setIsTransactionInProgress] = useState(false);
+  const [isTransactionInProgress, setTransactionInProgress] = useState(false);
+  const transactionInProgressRef = useRef(false);
+  const recheckTransactionRef = useRef<(() => Promise<void>) | null>(null);
+  const setIsTransactionInProgress = (value: boolean) => {
+    transactionInProgressRef.current = value;
+    setTransactionInProgress(value);
+  };
   
   // Toast helper functions
   const showToast = (message: string, type: ToastType, txSignature?: string) => {
@@ -515,8 +526,11 @@ const Swap = () => {
   
   // Fetch pool reserves and check for routes (debounced to prevent excessive calls)
   useEffect(() => {
-    // Debounce pool data fetching to prevent rapid successive calls
-    const fetchPoolData = debounce(async () => {
+    let cancelled = false;
+    let loading = false;
+    const fetchPoolData = async (forceRefresh = false) => {
+      if (cancelled || loading || transactionInProgressRef.current || !isPageVisible()) return;
+      loading = true;
       try {
         // Check if trying to swap same token (including WSOL <-> Native SOL)
         const { isNativeSOL } = await import('../utils/amm');
@@ -540,8 +554,8 @@ const Swap = () => {
           poolState: poolState.toString(),
         });
         
-        // fetchPools uses 10s cache, so this won't spam RPC
-        const pools = await fetchPools(connection, wallet);
+        const pools = await withTimeout(fetchPools(connection, wallet, forceRefresh), 15000, 'Pool refresh timed out');
+        if (cancelled || transactionInProgressRef.current) return;
         const pool = pools.find(p => p.address.equals(poolState));
         
         if (pool) {
@@ -578,6 +592,7 @@ const Swap = () => {
               3 // Max 3 hops
             );
             
+            if (cancelled || transactionInProgressRef.current) return;
             if (route) {
               console.log('✅ Multi-hop route found:', {
                 hops: route.hops,
@@ -604,23 +619,34 @@ const Swap = () => {
               }
             }
           } catch (error) {
+            if (cancelled) return;
             console.error('Error finding route:', error);
             setSwapRoute(null);
             setIsMultiHop(false);
           }
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('Error fetching pool data:', error);
         setPoolReserves(null);
         setSwapRoute(null);
         setIsMultiHop(false);
-      }
-    }, 800); // 800ms debounce
-    
-    fetchPoolData();
-    
-    // NO INTERVAL - pool cache (10s TTL) handles refresh automatically
-    // Only refetch when tokens actually change
+      } finally { loading = false; }
+    };
+    const initialRead = setTimeout(() => { void fetchPoolData(); }, 800);
+    const stopSubscription = subscribePoolUpdates(connection);
+    const stopRefresh = onRefreshEvent(REFRESH_EVENTS.POOLS, () => { void fetchPoolData(); });
+    // Refresh even when a configured WebSocket silently disconnects.
+    const fallback = setInterval(() => { void fetchPoolData(true); }, 30000);
+    const stopVisibility = onPageVisibilityChange(visible => { if (visible) void fetchPoolData(true); });
+    return () => {
+      cancelled = true;
+      clearTimeout(initialRead);
+      clearInterval(fallback);
+      stopSubscription();
+      stopRefresh();
+      stopVisibility();
+    };
   }, [fromToken.mint.toString(), toToken.mint.toString(), connection, wallet, poolRefreshTrigger, aggregatorsEnabled, jupiterEnabled]);
 
   // Aggregator routing (Jupiter + OKX):
@@ -888,13 +914,13 @@ const Swap = () => {
           
           // Apply KEDOLOG discount if enabled: only LP fee (0.20%) is taken from input
           // Protocol fee (0.05%) is paid in KEDOLOG, so effective fee is 2000 instead of 2500
-          const effectiveFeeRate = useKedologDiscount ? 2000 : poolReserves.tradeFeeRate;
+          const effectiveFeeRate = getSwapTradeFeeRate(poolReserves.tradeFeeRate, useKedologDiscount);
           
           const quote = calculateSwapOutput(amount, reserveIn, reserveOut, effectiveFeeRate);
           
           // Calculate bonus amount if discount is enabled (for UI display)
           let bonusAmount = 0;
-          if (useKedologDiscount && poolReserves.tradeFeeRate !== 2000) {
+          if (useKedologDiscount && poolReserves.tradeFeeRate !== DISCOUNT_TRADE_FEE_RATE) {
             const normalQuote = calculateSwapOutput(amount, reserveIn, reserveOut, poolReserves.tradeFeeRate);
             bonusAmount = quote.amountOut - normalQuote.amountOut;
           }
@@ -920,7 +946,7 @@ const Swap = () => {
               const reserveOut = isInputToken0 ? pool.token1Reserve : pool.token0Reserve;
               
               // Only LP fee (0.20% = 2000 basis points) is taken from input
-              const lpFeeRate = 2000;
+              const lpFeeRate = getSwapTradeFeeRate(pool.tradeFeeRate, true);
               const quote = calculateSwapOutput(currentAmount, reserveIn, reserveOut, lpFeeRate);
               
               totalFee += quote.fee;
@@ -1295,8 +1321,13 @@ const Swap = () => {
 
   // Handle swap
   const handleSwap = async () => {
+    // Resolve an ambiguous submitted swap before allowing another submission.
+    if (recheckTransactionRef.current) {
+      await recheckTransactionRef.current();
+      return;
+    }
     // Prevent multiple transactions at once
-    if (isTransactionInProgress) {
+    if (transactionInProgressRef.current) {
       showToast('Transaction already in progress. Please wait...', 'warning');
       return;
     }
@@ -1395,7 +1426,7 @@ const Swap = () => {
       }
     }
     
-    if (amountIn <= 0) {
+    if (!Number.isFinite(amountIn) || amountIn <= 0) {
       showToast('Amount must be greater than zero', 'warning');
       return;
     }
@@ -1412,8 +1443,40 @@ const Swap = () => {
     
     try {
       const expectedOut = parseFloat(toAmount);
-      const slippageBps = parseFloat(slippage);
+      const slippageBps = Number(slippage);
+      if (!Number.isFinite(slippageBps) || slippageBps < 0 || slippageBps >= 100) {
+        throw new Error('Enter a slippage tolerance from 0% to less than 100%.');
+      }
       const minimumOut = expectedOut * (1 - slippageBps / 100);
+      let executionRoute = swapRoute;
+      if (swapProvider === 'kedolik') {
+        setTxModal({ isOpen: true, status: 'pending', message: 'Checking the latest swap quote...' });
+        const freshPools = await withTimeout(fetchPools(connection, wallet, true), 15000,
+          'Unable to refresh the swap quote. Please try again.');
+        let freshOutput: number;
+        if (isMultiHop && swapRoute) {
+          executionRoute = { ...swapRoute, pools: swapRoute.pools.map(pool => {
+            const fresh = freshPools.find(candidate => candidate.address.equals(pool.address));
+            if (!fresh) throw new Error('The swap route is no longer available. Refresh the quote.');
+            return fresh;
+          }) };
+          freshOutput = calculateRouteOutput(executionRoute, amountIn, useKedologDiscount).expectedOutput;
+          setSwapRoute(executionRoute);
+        } else {
+          const { token0, token1 } = sortTokenMints(fromToken.mint, toToken.mint);
+          const pool = freshPools.find(candidate => candidate.address.equals(getPoolState(token0, token1)));
+          if (!pool) throw new Error('The swap pool is no longer available. Refresh the quote.');
+          const inputIsToken0 = fromToken.mint.equals(pool.token0Mint);
+          freshOutput = calculateSwapOutput(amountIn,
+            inputIsToken0 ? pool.token0Reserve : pool.token1Reserve,
+            inputIsToken0 ? pool.token1Reserve : pool.token0Reserve,
+            getSwapTradeFeeRate(pool.tradeFeeRate, useKedologDiscount)).amountOut;
+          setPoolReserves({ reserve0: pool.token0Reserve, reserve1: pool.token1Reserve, tradeFeeRate: pool.tradeFeeRate });
+        }
+        // Keep the user's original minimum. A worse quote needs another review.
+        validateSwapMinimum(freshOutput, minimumOut);
+      }
+      setTxModal({ isOpen: true, status: 'pending', message: 'Preparing your swap. Approve it in your wallet when prompted.' });
       
       console.log('🔄 Initiating swap:', {
         type: isMultiHop ? 'multi-hop' : 'direct',
@@ -1425,6 +1488,20 @@ const Swap = () => {
         slippage: slippageBps,
       });
       
+      const swapWallet = {
+        ...wallet,
+        sendTransaction: async (...args: Parameters<typeof wallet.sendTransaction>) => {
+          setTxModal({ isOpen: true, status: 'pending', message: 'Approve or reject the swap in your wallet.' });
+          const reminder = setTimeout(() => {
+            setTxModal({ isOpen: true, status: 'pending', message: 'Still waiting for your wallet. Open it to approve or reject this request.' });
+          }, 45000);
+          try {
+            const signature = await wallet.sendTransaction(...args);
+            setTxModal({ isOpen: true, status: 'pending', message: 'Swap submitted. Waiting for confirmation...', txSignature: signature });
+            return signature;
+          } finally { clearTimeout(reminder); }
+        },
+      };
       let signature: string;
       let outputAmount = parseFloat(toAmount);
 
@@ -1432,7 +1509,7 @@ const Swap = () => {
         console.log('🪐 Executing Jupiter swap...');
         const result = await executeJupiterSwap(
           connection,
-          wallet,
+          swapWallet,
           fromToken.mint,
           toToken.mint,
           amountIn,
@@ -1471,18 +1548,18 @@ const Swap = () => {
           throw new Error('OKX quote expired. Please try again.');
         }
         console.log('⚡ Executing OKX swap...');
-        signature = await executeOkxSwap(connection, wallet, okxSwap);
+        signature = await executeOkxSwap(connection, swapWallet, okxSwap);
         recordSuccessfulTrade('okx', signature, amountIn, outputAmount);
       } else if (useKedologDiscount && estimatedKedologFee) {
-      if (isMultiHop && swapRoute) {
+      if (isMultiHop && executionRoute) {
           // Execute multi-hop swap with KEDOLOG discount
           console.log('🔄💰 Executing multi-hop swap with KEDOLOG discount (atomic transaction)...');
         const signatures = await executeMultiHopSwap(
-          swapRoute,
+          executionRoute,
           amountIn,
           minimumOut,
           connection,
-          wallet,
+          swapWallet,
           publicKey,
             slippageBps,
             true // Enable KEDOLOG discount
@@ -1494,7 +1571,7 @@ const Swap = () => {
           console.log('💰 Executing KEDOLOG discount swap...');
           signature = await swapWithKedologDiscount(
             connection,
-            wallet,
+            swapWallet,
             publicKey,
             fromToken.mint,
             toToken.mint,
@@ -1503,15 +1580,15 @@ const Swap = () => {
           slippageBps
         );
         }
-      } else if (isMultiHop && swapRoute) {
+      } else if (isMultiHop && executionRoute) {
         // Execute normal multi-hop swap (no discount)
         console.log('🔄 Executing multi-hop swap (atomic transaction)...');
         const signatures = await executeMultiHopSwap(
-          swapRoute,
+          executionRoute,
           amountIn,
           minimumOut,
           connection,
-          wallet,
+          swapWallet,
           publicKey,
           slippageBps,
           false // No KEDOLOG discount
@@ -1522,7 +1599,7 @@ const Swap = () => {
         // Execute normal swap
         signature = await swapBaseInput(
           connection,
-          wallet,
+          swapWallet,
           publicKey,
           fromToken.mint,
           toToken.mint,
@@ -1589,46 +1666,46 @@ const Swap = () => {
         name: e?.name,
       });
       
-      // Check if it's "already processed" error - transaction likely succeeded!
-      if (e?.message && e.message.includes('already been processed')) {
-        console.log('✅ Transaction was already processed - treating as success!');
-        
-        // Show success modal (without signature since we don't have it)
-        const outputToken = toToken.mint.equals(WSOL_MINT) ? 'SOL' : toToken.symbol;
-        setTxModal({
-          isOpen: true,
-          status: 'success',
-          message: `Swap completed! ${fromAmount} ${fromToken.symbol} → ${outputToken}. Please check your wallet balance.`,
-        });
-        
-        showToast(`Swap completed! Check your wallet.`, 'success');
-        
-        // Reset form
-        setFromAmount('');
-        setToAmount('');
-        setQuoteData(null);
-        
-        // Refresh data
-        clearPoolCache();
-        const previousToBalance = toBalance;
-        rememberToken(fromToken);
-        rememberToken(toToken);
-        if (publicKey) dispatchSwapSuccess(publicKey.toString());
-        setPoolRefreshTrigger(prev => prev + 1);
-
-        refreshBalancesAfterSwap(fromToken.mint, toToken.mint, previousToBalance);
-
-        setTimeout(() => {
-          setPoolRefreshTrigger(prev => prev + 1);
-        }, 2000);
-        
-        setTimeout(() => {
-          setIsTransactionInProgress(false);
-        }, 3000);
-        
-        return; // Exit early - this is actually a success!
+      clearPoolCache();
+      setPoolRefreshTrigger(prev => prev + 1);
+      if (error instanceof TransactionConfirmationError) {
+        recheckTransactionRef.current = async () => {
+          if (transactionInProgressRef.current) return;
+          setIsTransactionInProgress(true);
+          setTxModal({ isOpen: true, status: 'pending', message: 'Checking the submitted swap...', txSignature: error.signature });
+          try {
+            const confirmation = await confirmSignature(connection, error.signature, 'confirmed', 15000, {
+              lastValidBlockHeight: error.lastValidBlockHeight,
+            });
+            assertTransactionSucceeded(confirmation, error.signature);
+            recheckTransactionRef.current = null;
+            recordSuccessfulTrade(swapProvider, error.signature, amountIn, parseFloat(toAmount));
+            setTxModal({ isOpen: true, status: 'success', message: 'Your swap was confirmed.', txSignature: error.signature });
+            setFromAmount('');
+            setToAmount('');
+            setQuoteData(null);
+            clearPoolCache();
+            setPoolRefreshTrigger(prev => prev + 1);
+            if (publicKey) dispatchSwapSuccess(publicKey.toString());
+            refreshBalancesAfterSwap(fromToken.mint, toToken.mint, toBalance);
+          } catch (checkError) {
+            if (checkError instanceof TransactionConfirmationError && checkError.reason === 'timeout') {
+              setTxModal({ isOpen: true, status: 'unknown', message: checkError.message, txSignature: error.signature });
+            } else {
+              recheckTransactionRef.current = null;
+              setTxModal({ isOpen: true, status: 'error', txSignature: error.signature,
+                message: isSwapSlippageError(checkError, swapProvider)
+                  ? 'The swap exceeded your slippage limit. Review a fresh quote and try again.'
+                  : checkError instanceof Error ? checkError.message : 'Unable to verify the swap.' });
+            }
+          } finally { setIsTransactionInProgress(false); }
+        };
+        if (error.reason === 'expired') recheckTransactionRef.current = null;
+        setTxModal({ isOpen: true, status: 'unknown', message: error.message, txSignature: error.signature });
+        showToast(error.message, 'warning', error.signature);
+        return;
       }
-      
+
       // Parse error message
       let errorMessage = 'Swap failed. Please try again.';
       
@@ -1639,8 +1716,10 @@ const Swap = () => {
           errorMessage = 'Transaction was rejected by user';
         } else if (msg.includes('insufficient')) {
           errorMessage = 'Insufficient balance or liquidity in pool';
-        } else if (msg.includes('slippage')) {
-          errorMessage = 'Price moved too much. Try increasing slippage tolerance.';
+        } else if (isSwapSlippageError(error, swapProvider)) {
+          errorMessage = 'The swap exceeded your slippage limit. Review the refreshed quote and try again.';
+        } else if (msg.includes('already been processed') || msg.includes('already processed')) {
+          errorMessage = 'This transaction was already submitted. Check your wallet activity before trying again.';
         } else if (msg.includes('already in progress')) {
           errorMessage = 'Another transaction is pending. Please wait.';
         } else if (msg.includes('simulation failed')) {
@@ -1674,6 +1753,7 @@ const Swap = () => {
         isOpen: true,
         status: 'error',
         message: errorMessage,
+        txSignature: (error as { signature?: string })?.signature,
       });
       
       showToast(errorMessage, 'error');
@@ -2574,6 +2654,7 @@ const Swap = () => {
       <TransactionModal
         isOpen={txModal.isOpen}
         status={txModal.status}
+        onCheckStatus={recheckTransactionRef.current ? () => { void recheckTransactionRef.current?.(); } : undefined}
         message={txModal.message}
         txSignature={txModal.txSignature}
         onClose={() => setTxModal({ 

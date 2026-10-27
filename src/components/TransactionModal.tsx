@@ -3,10 +3,11 @@ import { getExplorerUrl } from '../config/addresses';
 
 interface TransactionModalProps {
   isOpen: boolean;
-  status: 'pending' | 'success' | 'error';
+  status: 'pending' | 'success' | 'error' | 'unknown';
   message: string;
   txSignature?: string;
   onClose: () => void;
+  onCheckStatus?: () => void;
 }
 
 export const TransactionModal: React.FC<TransactionModalProps> = ({
@@ -15,6 +16,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
   message,
   txSignature,
   onClose,
+  onCheckStatus,
 }) => {
   if (!isOpen) return null;
 
@@ -23,6 +25,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       <div className="bg-dark-800 rounded-2xl border border-white/20 p-6 sm:p-8 max-w-md w-full shadow-2xl animate-scale-in">
         {/* Status Icon */}
         <div className="flex justify-center mb-6">
+          {status === 'unknown' && (
+            <div className="w-20 h-20 rounded-full bg-yellow-500/20 text-yellow-400 flex items-center justify-center text-3xl" aria-hidden="true">?</div>
+          )}
           {status === 'pending' && (
             <div className="relative">
               <div className="w-20 h-20 border-4 border-brand-cyan border-t-transparent rounded-full animate-spin"></div>
@@ -54,6 +59,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           {status === 'pending' && 'Processing Transaction'}
           {status === 'success' && 'Transaction Successful!'}
           {status === 'error' && 'Transaction Failed'}
+          {status === 'unknown' && 'Confirmation Unavailable'}
         </h3>
 
         {/* Message */}
@@ -78,7 +84,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
           </div>
         )}
 
-        {/* Close Button (only for success/error) */}
+        {status === 'unknown' && onCheckStatus && (
+          <button onClick={onCheckStatus} className="w-full border border-white/20 rounded-lg py-3 mb-3 font-semibold">
+            Check transaction status
+          </button>
+        )}
+
+        {/* Close Button */}
         {status !== 'pending' && (
           <button
             onClick={onClose}
@@ -90,7 +102,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
         {/* Pending State Info */}
         {status === 'pending' && (
-          <p className="text-xs text-gray-400 text-center">Please confirm the transaction in your wallet...</p>
+          <p className="text-xs text-gray-400 text-center">Keep this window open while the transaction status updates.</p>
         )}
       </div>
     </div>

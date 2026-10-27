@@ -3,6 +3,8 @@ import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createAssociatedTokenAccou
 import { fetchPools, PoolInfo, calculateSwapOutput, getProgram, getAuthority, getObservationState, AMM_CONFIG, isNativeSOL, createWrapSOLInstructions, createUnwrapSOLInstruction, PROGRAM_ID } from './amm';
 import { KEDOLOG_CONFIG, getProtocolTokenConfigAddress } from '../config/fees';
 import { sendViaWallet } from './txSender';
+import { getSwapTradeFeeRate } from './swapMath';
+import { assertTransactionSucceeded } from './transactionConfirmation';
 import * as anchor from '@coral-xyz/anchor';
 
 export interface SwapRoute {
@@ -137,7 +139,8 @@ export const findSwapRoutes = async (
  */
 export const calculateRouteOutput = (
   route: SwapRoute,
-  amountIn: number
+  amountIn: number,
+  useKedologDiscount = false,
 ): { expectedOutput: number; priceImpact: number } => {
   let currentAmount = amountIn;
   let totalPriceImpact = 0;
@@ -152,7 +155,7 @@ export const calculateRouteOutput = (
     const reserveOut = isToken0Input ? pool.token1Reserve : pool.token0Reserve;
     
     // Calculate output for this hop - USE ACTUAL POOL FEE RATE! ✅
-    const result = calculateSwapOutput(currentAmount, reserveIn, reserveOut, pool.tradeFeeRate);
+    const result = calculateSwapOutput(currentAmount, reserveIn, reserveOut, getSwapTradeFeeRate(pool.tradeFeeRate, useKedologDiscount));
     
     currentAmount = result.amountOut;
     totalPriceImpact += result.priceImpact;
@@ -328,7 +331,9 @@ export const executeMultiHopSwap = async (
       // Calculate expected output and minimum for this hop
       const reserveIn = isInputToken0 ? pool.token0Reserve : pool.token1Reserve;
       const reserveOut = isInputToken0 ? pool.token1Reserve : pool.token0Reserve;
-      const { amountOut } = calculateSwapOutput(currentAmount, reserveIn, reserveOut);
+      const { amountOut } = calculateSwapOutput(
+        currentAmount, reserveIn, reserveOut, getSwapTradeFeeRate(pool.tradeFeeRate, useKedologDiscount),
+      );
       
       // For last hop, use user's minimum. For intermediate hops, use calculated minimum
       const isLastHop = i === route.pools.length - 1;
@@ -455,7 +460,7 @@ export const executeMultiHopSwap = async (
     
     // Get FRESH latest blockhash - CRITICAL for avoiding "already processed" errors
     console.log('🔄 Getting fresh blockhash...');
-    const latestBlockhashInfo = await connection.getLatestBlockhash('finalized');
+    const latestBlockhashInfo = await connection.getLatestBlockhash('confirmed');
     const { blockhash, lastValidBlockHeight } = latestBlockhashInfo;
     transaction.recentBlockhash = blockhash;
     transaction.feePayer = walletPublicKey;
@@ -468,7 +473,7 @@ export const executeMultiHopSwap = async (
     // Hand the UNSIGNED transaction to the wallet's signAndSendTransaction flow so
     // Phantom can inject its Lighthouse guard instructions.
     console.log('📤 Signing + sending transaction via wallet...');
-    signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 0 });
+    signature = await sendViaWallet(wallet, connection, transaction, { maxRetries: 3 });
     
     console.log('✅ Transaction sent:', signature);
     const { getExplorerUrl } = await import('../config/addresses');
@@ -482,9 +487,7 @@ export const executeMultiHopSwap = async (
       lastValidBlockHeight,
     }, 'confirmed');
     
-    if (confirmation.value && confirmation.value.err) {
-      throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-    }
+    assertTransactionSucceeded(confirmation, signature);
     
     console.log('✅ Multi-hop swap completed successfully!');
     
@@ -493,32 +496,7 @@ export const executeMultiHopSwap = async (
   } catch (error: any) {
     console.error('❌ Multi-hop swap failed:', error);
     
-    // Check if transaction actually succeeded (common with "already processed" error)
-    if (error.message?.includes('already been processed') || error.message?.includes('already processed')) {
-      console.log('✅ Transaction succeeded! (Got "already processed" confirmation)');
-      console.log('💡 The "already processed" message confirms the transaction completed.');
-      
-      // Transaction succeeded! Return the signature we sent
-      // The signature variable should still be in scope from the try block
-      // For "already processed", the tx went through, so we return success
-      return [signature];
-    }
-    
-    // Provide helpful error message
-    let errorMsg = 'Multi-hop swap failed';
-    if (error.message?.includes('insufficient')) {
-      errorMsg += ': Insufficient balance or liquidity';
-    } else if (error.message?.includes('slippage') || error.message?.includes('ExceededSlippage')) {
-      errorMsg += ': Slippage tolerance exceeded. Try increasing slippage or reducing amount.';
-    } else if (error.message?.includes('simulation')) {
-      errorMsg += ': Transaction simulation failed. Check pool liquidity and token balances.';
-    } else if (error.message?.includes('blockhash')) {
-      errorMsg += ': Network congestion. Please try again.';
-    } else {
-      errorMsg += `: ${error.message || 'Unknown error'}`;
-    }
-    
-    throw new Error(errorMsg);
+    throw error;
   }
 };
 
