@@ -319,10 +319,9 @@ const Pools = () => {
             </div>
           </div>
 
-          {(statsError || (poolStats && !poolStats.reached24hBoundary)) && (
+          {statsError && (
             <div className="mb-6 rounded-xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-xs text-amber-100">
-              {statsError ||
-                `24h volume is calculated from on-chain SwapEvent logs. The scan loaded ${poolStats?.scannedTransactions ?? 0} program transaction${poolStats?.scannedTransactions === 1 ? '' : 's'} but did not reach the full 24h boundary on this RPC response.`}
+              {statsError}
             </div>
           )}
 
@@ -1168,10 +1167,22 @@ const AddLiquidityModal = ({
     fetchBalances();
   }, [pool.token0Mint.toString(), pool.token1Mint.toString(), publicKey, connection]);
   
-  // Fetch USD prices for tokens
+  // Prefer this pool's ratio when one side is a stablecoin (avoids stale $150 SOL fallback).
   useEffect(() => {
     const fetchUsdPrices = async () => {
       if (!connection) return;
+
+      const isStable = (symbol: string) => symbol === 'USDC' || symbol === 'USDT';
+      if (isStable(pool.token1Symbol) && pool.token0Reserve > 0) {
+        setToken0UsdPrice(pool.token1Reserve / pool.token0Reserve);
+        setToken1UsdPrice(1);
+        return;
+      }
+      if (isStable(pool.token0Symbol) && pool.token1Reserve > 0) {
+        setToken0UsdPrice(1);
+        setToken1UsdPrice(pool.token0Reserve / pool.token1Reserve);
+        return;
+      }
       
       try {
         const { getTokenUsdPrice } = await import('../utils/prices');

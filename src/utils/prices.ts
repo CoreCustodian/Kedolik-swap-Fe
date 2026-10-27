@@ -126,51 +126,47 @@ const SOL_PRICE_CACHE_TTL = 30000; // 30 seconds cache
  * Cached for 30 seconds to improve performance
  */
 export const getSolPrice = async (connection: Connection, forceRefresh: boolean = false): Promise<number> => {
-  // Return cached price if still valid
   const now = Date.now();
   if (!forceRefresh && solPriceCache && (now - solPriceCache.timestamp) < SOL_PRICE_CACHE_TTL) {
     return solPriceCache.price;
   }
 
   try {
-    const { SOL_VAULT, USDC_VAULT_IN_SOL_POOL } = await import('../config/addresses');
-    
-    // Read vault balances
-    const solVaultInfo = await connection.getTokenAccountBalance(SOL_VAULT);
-    const usdcVaultInfo = await connection.getTokenAccountBalance(USDC_VAULT_IN_SOL_POOL);
-    
-    if (!solVaultInfo?.value?.amount || !usdcVaultInfo?.value?.amount) {
-      console.warn('⚠️ Could not read SOL/USDC pool vault balances');
-      const fallbackPrice = 150;
-      solPriceCache = { price: fallbackPrice, timestamp: now };
-      return fallbackPrice;
+    const { fetchPools } = await import('./amm');
+    const { SOL_MINT, USDC_MINT } = await import('../config/addresses');
+    const pools = await fetchPools(connection, null, false);
+    const solMint = SOL_MINT.toString();
+    const usdcMint = USDC_MINT.toString();
+
+    const pool = pools.find((entry) => {
+      const token0 = entry.token0Mint.toString();
+      const token1 = entry.token1Mint.toString();
+      return (
+        (token0 === solMint && token1 === usdcMint) ||
+        (token0 === usdcMint && token1 === solMint)
+      );
+    });
+
+    if (!pool || pool.token0Reserve <= 0 || pool.token1Reserve <= 0) {
+      console.warn('⚠️ Could not read SOL/USDC pool reserves');
+      return solPriceCache?.price ?? 0;
     }
-    
-    // Parse reserves (SOL has 9 decimals, USDC has 6)
-    const solReserve = parseFloat(solVaultInfo.value.amount) / 1e9;
-    const usdcReserve = parseFloat(usdcVaultInfo.value.amount) / 1e6;
-    
-    if (solReserve === 0) {
-      console.warn('⚠️ SOL reserve is zero in pool');
-      const fallbackPrice = 150;
-      solPriceCache = { price: fallbackPrice, timestamp: now };
-      return fallbackPrice;
+
+    const solIsToken0 = pool.token0Mint.toString() === solMint;
+    const solPrice = solIsToken0
+      ? pool.token1Reserve / pool.token0Reserve
+      : pool.token0Reserve / pool.token1Reserve;
+
+    if (!Number.isFinite(solPrice) || solPrice <= 0) {
+      return solPriceCache?.price ?? 0;
     }
-    
-    // Calculate price: USDC / SOL
-    const solPrice = usdcReserve / solReserve;
-    
-    // Cache the price
+
     solPriceCache = { price: solPrice, timestamp: now };
-    
-    console.log(`💰 SOL price from pool: $${solPrice.toFixed(2)} (${solReserve.toFixed(2)} SOL, ${usdcReserve.toFixed(2)} USDC)`);
-    
+    console.log(`💰 SOL price from pool: $${solPrice.toFixed(2)}`);
     return solPrice;
   } catch (error) {
     console.error('Error fetching SOL price from pool:', error);
-    const fallbackPrice = 150;
-    solPriceCache = { price: fallbackPrice, timestamp: now };
-    return fallbackPrice;
+    return solPriceCache?.price ?? 0;
   }
 };
 

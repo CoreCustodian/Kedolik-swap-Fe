@@ -1066,8 +1066,7 @@ const Swap = () => {
               inputTokenPrice = quoteData.amountOut / amount;
               console.log(`💰 SOL price from quote fallback: $${inputTokenPrice.toFixed(2)}`);
             } else {
-              inputTokenPrice = 150; // Conservative fallback
-              console.log(`⚠️ Using fallback SOL price: $150`);
+              inputTokenPrice = 0;
             }
           }
         } else if (fromToken.symbol === 'KEDOLOG' || fromToken.mint.equals(KEDOLOG_MINT)) {
@@ -2540,12 +2539,12 @@ const Swap = () => {
                 <div className="text-xs text-center text-green-400 flex items-center justify-center gap-2">
                   <span>{swapProvider === 'okx' ? '⚡' : '🪐'}</span>
                   {isLoadingAggregatorQuote
-                    ? `Fetching best ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'} route...`
+                    ? `Fetching best aggregator route...`
                     : aggregatorQuoteError
                       ? aggregatorQuoteError
                       : aggregatorRouteReason === 'better-price'
-                        ? `This trade would move the Kedolik pool price too much — routing via ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'} for a better rate.`
-                        : `No Kedolik pool for ${fromToken.symbol}/${toToken.symbol} — routing via ${swapProvider === 'okx' ? 'OKX' : 'Jupiter'}.`}
+                        ? `This trade would move the Kedolik pool price too much — routing via aggregator for a better rate.`
+                        : `No Kedolik pool for ${fromToken.symbol}/${toToken.symbol} — routing via aggregator.`}
                 </div>
               </div>
             )}
